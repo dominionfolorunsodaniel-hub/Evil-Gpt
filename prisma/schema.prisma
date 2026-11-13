@@ -1,0 +1,24 @@
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  password      String?
+  image         String?
+  role          Role      @default(USER)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  // Subscription
+  subscription  Subscription?
+  
+  // 🆕 Manual Payment & Channel Fields
+  channelJoined Boolean   @default(false) // Did they join your channel?
+  channelHandle String?   // Their Telegram/WhatsApp handle for contact
+  paymentRef    String?   // Transaction ID from their bank app
+  isPaid        Boolean   @default(false) // Admin verified payment?
+  
+  // NextAuth fields
+  accounts      Account[]
+  sessions      Session[]
+  verificationTokens VerificationToken[]
+}
