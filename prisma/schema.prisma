@@ -1,24 +1,129 @@
+// Prisma schema for Next.js 14 + NextAuth v4 + PostgreSQL
+// Before running migrations, back up your database and compare this schema
+// with any models already present in your actual database.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum PaymentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  EXPIRED
+  CANCELLED
+}
+
 model User {
   id            String    @id @default(cuid())
   email         String    @unique
+  emailVerified DateTime?
   name          String?
   password      String?
   image         String?
   role          Role      @default(USER)
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
-  
-  // Subscription
-  subscription  Subscription?
-  
-  // 🆕 Manual Payment & Channel Fields
-  channelJoined Boolean   @default(false) // Did they join your channel?
-  channelHandle String?   // Their Telegram/WhatsApp handle for contact
-  paymentRef    String?   // Transaction ID from their bank app
-  isPaid        Boolean   @default(false) // Admin verified payment?
-  
-  // NextAuth fields
-  accounts      Account[]
-  sessions      Session[]
-  verificationTokens VerificationToken[]
+
+  // Telegram details are informational/cache only.
+  // The server must verify membership with Telegram before granting access.
+  channelJoined   Boolean   @default(false)
+  channelHandle   String?
+  telegramUserId  String?   @unique
+  channelCheckedAt DateTime?
+
+  // A user can have payment history, but only one current subscription record.
+  subscription Subscription?
+  payments     Payment[]
+
+  // NextAuth v4 Prisma Adapter relations
+  accounts Account[]
+  sessions Session[]
+}
+
+model Payment {
+  id          String        @id @default(cuid())
+  userId      String
+  reference   String        @unique
+  amount      Decimal       @db.Decimal(12, 2)
+  currency    String        @default("NGN")
+  status      PaymentStatus @default(PENDING)
+  adminNote   String?
+  reviewedBy  String?
+  reviewedAt  DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId, status])
+  @@index([status, createdAt])
+}
+
+model Subscription {
+  id        String             @id @default(cuid())
+  userId    String             @unique
+  plan      String             @default("PREMIUM")
+  status    SubscriptionStatus @default(ACTIVE)
+  startsAt  DateTime           @default(now())
+  expiresAt DateTime
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([status, expiresAt])
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
 }
