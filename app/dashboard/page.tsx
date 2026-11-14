@@ -1,83 +1,91 @@
-"use client";
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 
-export default function Dashboard() {
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const router = useRouter();
+import { getServerSession } from "next-auth";
+import { redirect } from "next/navigation";
+import { authOptions } from "@/lib/auth";
 
-  useEffect(() => {
-    const checkAuth = () => {
-      const adminStatus = localStorage.getItem("isAdmin");
-      if (adminStatus !== "true") {
-        router.push("/login");
-      } else {
-        setIsAdmin(true);
-        setLoading(false);
-      }
-    };
-    checkAuth();
-  }, [router]);
+export default async function Dashboard() {
+  const session = await getServerSession(authOptions);
 
-  if (loading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-black text-red-500">
-        <p className="animate-pulse">Initializing Evil Protocols...</p>
-      </div>
-    );
+  if (!session?.user) {
+    redirect("/login");
   }
 
-  if (!isAdmin) return null;
+  const role = (session.user as { role?: string }).role;
+
+  if (role !== "ADMIN") {
+    redirect("/chat");
+  }
 
   return (
-    <div className="min-h-screen bg-black text-white p-8">
-      <div className="max-w-4xl mx-auto">
+    <div className="min-h-screen bg-black p-8 text-white">
+      <div className="mx-auto max-w-4xl">
         <header className="mb-8 border-b border-red-900 pb-4">
-          <h1 className="text-4xl font-bold text-red-600 tracking-wider">
-            EVIL GPT <span className="text-sm text-gray-500">v1.0 // ADMIN MODE</span>
+          <h1 className="text-4xl font-bold tracking-wider text-red-600">
+            EVIL GPT{" "}
+            <span className="text-sm text-gray-500">
+              v1.0 // ADMIN MODE
+            </span>
           </h1>
-          <p className="text-gray-400 mt-2">System Status: <span className="text-green-500">ONLINE</span></p>
+
+          <p className="mt-2 text-gray-400">
+            System Status:{" "}
+            <span className="text-green-500">ONLINE</span>
+          </p>
+
+          <p className="mt-2 text-sm text-gray-400">
+            Administrator: {session.user.email}
+          </p>
         </header>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Card 1: Broadcast Control */}
-          <div className="p-6 border border-gray-800 bg-gray-900 rounded-lg hover:border-red-500 transition-colors">
-            <h2 className="text-xl font-bold text-red-400 mb-4">📡 Broadcast System</h2>
-            <p className="text-sm text-gray-400 mb-4">Send updates to all connected nodes.</p>
-            <button className="w-full py-2 bg-red-900 hover:bg-red-700 text-white rounded transition">
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+          <div className="rounded-lg border border-gray-800 bg-gray-900 p-6 transition-colors hover:border-red-500">
+            <h2 className="mb-4 text-xl font-bold text-red-400">
+              📡 Broadcast System
+            </h2>
+            <p className="mb-4 text-sm text-gray-400">
+              Send updates to all connected nodes.
+            </p>
+            <button
+              disabled
+              className="w-full rounded bg-red-900 py-2 text-white opacity-60"
+            >
               Send Broadcast
             </button>
           </div>
 
-          {/* Card 2: User Management */}
-          <div className="p-6 border border-gray-800 bg-gray-900 rounded-lg hover:border-red-500 transition-colors">
-            <h2 className="text-xl font-bold text-red-400 mb-4">👥 User Management</h2>
-            <p className="text-sm text-gray-400 mb-4">View and ban users.</p>
-            <button className="w-full py-2 bg-gray-800 hover:bg-gray-700 text-white rounded transition">
+          <div className="rounded-lg border border-gray-800 bg-gray-900 p-6 transition-colors hover:border-red-500">
+            <h2 className="mb-4 text-xl font-bold text-red-400">
+              👥 User Management
+            </h2>
+            <p className="mb-4 text-sm text-gray-400">
+              View and manage users.
+            </p>
+            <button
+              disabled
+              className="w-full rounded bg-gray-800 py-2 text-white opacity-60"
+            >
               Manage Users
             </button>
           </div>
         </div>
 
-        <div className="mt-8 p-4 border border-red-900 bg-black">
-          <h3 className="text-lg font-bold text-red-500 mb-2">📜 Activity Log</h3>
-          <div className="h-32 overflow-y-auto text-sm text-gray-500 font-mono">
-            <p>[20:00:01] System initialized.</p>
-            <p>[20:00:02] Admin session started.</p>
-            <p>[20:00:05] Waiting for commands...</p>
+        <div className="mt-8 border border-red-900 bg-black p-4">
+          <h3 className="mb-2 text-lg font-bold text-red-500">
+            📜 Activity Log
+          </h3>
+          <div className="h-32 overflow-y-auto font-mono text-sm text-gray-500">
+            <p>System initialized.</p>
+            <p>Administrator session verified.</p>
+            <p>Waiting for commands...</p>
           </div>
         </div>
 
-        <button 
-          onClick={() => {
-            localStorage.removeItem("isAdmin");
-            router.push("/login");
-          }}
-          className="mt-8 text-sm text-gray-500 hover:text-red-500"
+        <a
+          href="/api/auth/signout"
+          className="mt-8 inline-block text-sm text-gray-500 hover:text-red-500"
         >
           Logout
-        </button>
+        </a>
       </div>
     </div>
   );

@@ -128,7 +128,9 @@ export class Engine {
 
     } catch (error) {
       console.error('[Engine] Processing Error:', error);
-      return 'Error processing request. Check logs.';
+
+      // Let the Chat API handle the failure.
+      throw error;
     }
   }
 
