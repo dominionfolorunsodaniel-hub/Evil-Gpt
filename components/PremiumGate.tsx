@@ -111,26 +111,6 @@ export default function PremiumGate({ isPaid: initialIsPaid = false }) {
           {loading ? "Verifying..." : isPaid ? "Payment Verified!" : "I Have Paid"}
         </Button>
       </div>
-      Gray-900 font-bold">{PAYMENT_DETAILS.accountNumber}</span></p>
-          <p className="text-sm font-medium text-gray-700">Name: <span className="text-gray-900 font-bold">{PAYMENT_DETAILS.accountName}</span></p>
-        </div>
-        
-        <Button
-          onClick={handlePay}
-          disabled={isPaid || loading}
-          className={`w-full ${isPaid ? 'bg-green-600 hover:bg-green-700' : 'bg-indigo-600 hover:bg-indigo-700'} text-white`}
-        >
-          {loading ? (
-            <span className="animate-pulse">Verifying...</span>
-          ) : isPaid ? (
-            <>
-              <CheckCircle className="w-4 h-4 mr-2" /> Payment Verified
-            </>
-          ) : (
-            "I Have Paid"
-          )}
-        </Button>
-      </div>
 
       {/* Final Status Message */}
       {isPaid && (
