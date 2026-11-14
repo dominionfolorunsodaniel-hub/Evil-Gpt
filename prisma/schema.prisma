@@ -7,10 +7,10 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
-
 enum Role {
   USER
   ADMIN
@@ -28,22 +28,29 @@ enum SubscriptionStatus {
   CANCELLED
 }
 
+enum AccountStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 model User {
-  id            String    @id @default(cuid())
-  email         String    @unique
+  id            String        @id @default(cuid())
+  email         String        @unique
   emailVerified DateTime?
   name          String?
   password      String?
   image         String?
-  role          Role      @default(USER)
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  role          Role          @default(USER)
+  accountStatus AccountStatus @default(PENDING)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
 
   // Telegram details are informational/cache only.
   // The server must verify membership with Telegram before granting access.
-  channelJoined   Boolean   @default(false)
-  channelHandle   String?
-  telegramUserId  String?   @unique
+  channelJoined    Boolean   @default(false)
+  channelHandle    String?
+  telegramUserId   String?   @unique
   channelCheckedAt DateTime?
 
   // A user can have payment history, but only one current subscription record.
@@ -56,17 +63,17 @@ model User {
 }
 
 model Payment {
-  id          String        @id @default(cuid())
-  userId      String
-  reference   String        @unique
-  amount      Decimal       @db.Decimal(12, 2)
-  currency    String        @default("NGN")
-  status      PaymentStatus @default(PENDING)
-  adminNote   String?
-  reviewedBy  String?
-  reviewedAt  DateTime?
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  id         String        @id @default(cuid())
+  userId     String
+  reference  String        @unique
+  amount     Decimal       @db.Decimal(12, 2)
+  currency   String        @default("NGN")
+  status     PaymentStatus @default(PENDING)
+  adminNote  String?
+  reviewedBy String?
+  reviewedAt DateTime?
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Restrict)
 

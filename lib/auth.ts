@@ -21,9 +21,8 @@ export const authOptions: NextAuthOptions = {
       name: 'Evil GPT',
       credentials: {
         email: {
-          label: 'Email',
-          type: 'email',
-          placeholder: 'you@example.com',
+          label: 'Username or Email',
+          type: 'text',
         },
         password: {
           label: 'Password',
@@ -36,7 +35,29 @@ export const authOptions: NextAuthOptions = {
           return null;
         }
 
-        const email = credentials.email.trim().toLowerCase();
+        const identifier = credentials.email.trim();
+        const password = credentials.password;
+
+        // Check the admin credentials configured in Render.
+        const adminUsername = process.env.ADMIN_USERNAME?.trim();
+        const adminPassword = process.env.ADMIN_PASSWORD;
+
+        if (
+          adminUsername &&
+          adminPassword &&
+          identifier.toLowerCase() === adminUsername.toLowerCase() &&
+          password === adminPassword
+        ) {
+          return {
+            id: 'render-admin',
+            name: adminUsername,
+            email: `${adminUsername}@admin.local`,
+            role: 'ADMIN',
+          } as any;
+        }
+
+        // Otherwise, authenticate a registered customer.
+        const email = identifier.toLowerCase();
 
         const user = await prisma.user.findUnique({
           where: { email },
@@ -47,7 +68,7 @@ export const authOptions: NextAuthOptions = {
         }
 
         const passwordValid = await bcrypt.compare(
-          credentials.password,
+          password,
           user.password
         );
 

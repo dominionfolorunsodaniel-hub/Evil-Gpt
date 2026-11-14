@@ -27,7 +27,7 @@ export default function Login() {
       });
 
       if (!result || result.error) {
-        setError("Access Denied. Check your email and password.");
+        setError("Access Denied. Check your username/email and password.");
         return;
       }
 
@@ -53,9 +53,9 @@ export default function Login() {
 
         <form onSubmit={handleLogin} className="space-y-4">
           <input
-            type="email"
-            placeholder="Email"
-            autoComplete="email"
+            type="text"
+            placeholder="Username or Email"
+            autoComplete="username"
             required
             className="w-full border border-gray-700 bg-gray-900 p-2 text-white"
             value={email}
@@ -98,3 +98,4 @@ export default function Login() {
     </div>
   );
 }
+
