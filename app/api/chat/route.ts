@@ -45,7 +45,8 @@ export async function POST(request: Request) {
       );
     }
 
-    if (!process.env.DATABASE_URL || !process.env.OPENAI_API_KEY) {
+    // Check Groq and database configuration.
+    if (!process.env.DATABASE_URL || !process.env.GROQ_API_KEY) {
       return NextResponse.json(
         { error: 'AI service configuration is incomplete.' },
         { status: 503 }
@@ -54,7 +55,7 @@ export async function POST(request: Request) {
 
     // Initialize the existing AI engine for this user.
     const engine = new Engine({
-      modelType: process.env.OPENAI_MODEL || 'gpt-4.1-mini',
+      modelType: process.env.GROQ_MODEL || 'openai/gpt-oss-20b',
       dbUrl: process.env.DATABASE_URL,
       userId: user.id,
     });

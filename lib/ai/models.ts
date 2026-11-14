@@ -48,41 +48,31 @@ export interface ModelResponse {
 export class NeuralNet {
   private config: ModelConfig;
 
-  constructor(modelType: string = 'gpt-4.1-mini') {
+  constructor(
+    modelType: string = process.env.GROQ_MODEL || 'openai/gpt-oss-20b'
+  ) {
     this.config = {
-      name: modelType || 'gpt-4.1-mini',
+      name: modelType || 'openai/gpt-oss-20b',
       contextWindow: 32768,
       temperature: 0.7,
       maxTokens: 2048,
     };
 
-    console.log(`[Models] OpenAI model configured: ${this.config.name}`);
+    console.log(`[Models] Groq model configured: ${this.config.name}`);
   }
 
-  /**
-   * Check whether the OpenAI client has an API key.
-   */
   isReady(): boolean {
-    return Boolean(process.env.OPENAI_API_KEY);
+    return Boolean(process.env.GROQ_API_KEY);
   }
 
-  /**
-   * Get the current model name.
-   */
   getName(): string {
     return this.config.name;
   }
 
-  /**
-   * Get the current configuration.
-   */
   getConfig(): ModelConfig {
     return { ...this.config };
   }
 
-  /**
-   * Update configuration dynamically.
-   */
   updateConfig(newConfig: Partial<ModelConfig>): void {
     const updated = { ...this.config, ...newConfig };
 
@@ -110,26 +100,22 @@ export class NeuralNet {
     console.log(`[Models] Configuration updated: ${this.config.name}`);
   }
 
-  /**
-   * Generate an AI response using OpenAI.
-   */
   async generate(
     messages: ModelMessage[],
     tools?: ModelTool[]
   ): Promise<ModelResponse> {
     if (!this.isReady()) {
-      throw new Error('OPENAI_API_KEY is not configured.');
+      throw new Error('GROQ_API_KEY is not configured.');
     }
 
     if (!messages.length) {
       throw new Error('At least one message is required.');
     }
 
-
     try {
-      const openai = getOpenAIClient();
+      const groq = getOpenAIClient();
 
-      const response = await openai.chat.completions.create({
+      const response = await groq.chat.completions.create({
         model: this.config.name,
         messages: messages as any,
         temperature: this.config.temperature,
@@ -145,7 +131,7 @@ export class NeuralNet {
       const message = response.choices[0]?.message;
 
       if (!message) {
-        throw new Error('OpenAI returned an empty response.');
+        throw new Error('Groq returned an empty response.');
       }
 
       const toolCalls = (message.tool_calls ?? []) as unknown as ModelToolCall[];
@@ -161,11 +147,11 @@ export class NeuralNet {
         content: message.content ?? '',
       };
     } catch (error) {
-      console.error('[Models] Error generating response:', error);
+      console.error('[Models] Groq generation error:', error);
       throw error;
     }
   }
 }
 
-
 export default NeuralNet;
+
