@@ -1,5 +1,5 @@
 
-import openai from '../openai';
+import getOpenAIClient from '../openai';
 
 export interface ModelConfig {
   name: string;
@@ -125,12 +125,13 @@ export class NeuralNet {
       throw new Error('At least one message is required.');
     }
 
+
     try {
+      const openai = getOpenAIClient();
+
       const response = await openai.chat.completions.create({
         model: this.config.name,
-        messages: messages as Parameters<
-          typeof openai.chat.completions.create
-        >[0]['messages'],
+        messages: messages as any,
         temperature: this.config.temperature,
         max_tokens: this.config.maxTokens,
         ...(tools?.length
@@ -159,7 +160,6 @@ export class NeuralNet {
         },
         content: message.content ?? '',
       };
-
     } catch (error) {
       console.error('[Models] Error generating response:', error);
       throw error;
@@ -167,5 +167,5 @@ export class NeuralNet {
   }
 }
 
-export default NeuralNet;
 
+export default NeuralNet;
