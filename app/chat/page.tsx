@@ -4,6 +4,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useSession, signOut } from "next-auth/react";
 import { useRouter } from "next/navigation";
+import CustomerNotifications from "@/components/CustomerNotifications";
 
 interface Message {
   role: "user" | "assistant";
@@ -114,7 +115,7 @@ export default function ChatPage() {
         ...previous,
         {
           role: "assistant",
-          content: data.response,
+          content: data.content,
         },
       ]);
     } catch (error) {
@@ -169,7 +170,9 @@ export default function ChatPage() {
         </div>
       </header>
 
-      <section className="mx-auto flex w-full max-w-4xl flex-1 flex-col p-4">
+      <section className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-6 p-4">
+        <CustomerNotifications />
+
         <div className="flex-1 space-y-5 pb-6">
           {historyLoading && (
             <div className="text-sm text-red-400 animate-pulse">
@@ -238,4 +241,3 @@ export default function ChatPage() {
     </main>
   );
 }
-
