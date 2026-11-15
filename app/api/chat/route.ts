@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { Engine } from '@/lib/ai/engine';
+import prisma from '@/lib/prisma';
 
 export const runtime = 'nodejs';
 
@@ -21,6 +22,7 @@ export async function POST(request: Request) {
     const user = session.user as {
       id?: string;
       email?: string;
+      role?: string;
     };
 
     if (!user.id) {
@@ -60,11 +62,26 @@ export async function POST(request: Request) {
       userId: user.id,
     });
 
+    // Process the message first.
     const response = await engine.process(message);
+
+    // Record successful customer usage.
+    if (user.role === 'USER') {
+      try {
+        await prisma.usageRecord.create({
+          data: {
+            userId: user.id,
+          },
+        });
+      } catch (usageError) {
+        // Usage tracking must not interrupt a successful AI response.
+        console.error('[Usage Tracking Error]:', usageError);
+      }
+    }
 
     return NextResponse.json({
       success: true,
-      response,
+      content: response,
     });
   } catch (error) {
     console.error('[Chat API Error]:', error);
@@ -75,4 +92,3 @@ export async function POST(request: Request) {
     );
   }
 }
-
