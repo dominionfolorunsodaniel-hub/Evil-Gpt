@@ -34,7 +34,7 @@ export default function Login() {
       const session = await getSession();
       const role = (session?.user as { role?: string } | undefined)?.role;
 
-      router.push(role === "ADMIN" ? "/dashboard" : "/chat");
+      router.push(role === "ADMIN" ? "/dashboard" : "/customer");
       router.refresh();
     } catch (err) {
       console.error("Login error:", err);
