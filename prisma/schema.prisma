@@ -1,6 +1,5 @@
+
 // Prisma schema for Next.js 14 + NextAuth v4 + PostgreSQL
-// Before running migrations, back up your database and compare this schema
-// with any models already present in your actual database.
 
 generator client {
   provider = "prisma-client-js"
@@ -11,6 +10,7 @@ datasource db {
   url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
 }
+
 enum Role {
   USER
   ADMIN
@@ -53,13 +53,14 @@ model User {
   telegramUserId   String?   @unique
   channelCheckedAt DateTime?
 
-  // A user can have payment history, but only one current subscription record.
+  // Existing relations
   subscription Subscription?
   payments     Payment[]
+  accounts     Account[]
+  sessions     Session[]
 
-  // NextAuth v4 Prisma Adapter relations
-  accounts Account[]
-  sessions Session[]
+  // Usage tracking
+  usageRecords UsageRecord[]
 }
 
 model Payment {
@@ -94,6 +95,16 @@ model Subscription {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([status, expiresAt])
+}
+
+model UsageRecord {
+  id        String   @id @default(cuid())
+  userId    String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
 }
 
 model Account {
