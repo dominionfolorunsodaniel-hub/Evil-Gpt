@@ -38,6 +38,18 @@ interface AccountResponse {
   error?: string;
 }
 
+const navigation = [
+  { label: "Dashboard", href: "#overview" },
+  { label: "My Account", href: "#account" },
+  { label: "My Subscription", href: "#subscription" },
+  { label: "Usage Statistics", href: "#usage" },
+  { label: "Billing History", href: "#billing" },
+  { label: "Notifications", href: "/chat" },
+  { label: "Upgrade Plan", href: "#upgrade" },
+  { label: "Help & Support", href: "#support" },
+  { label: "Personalization", href: "#personalization" },
+];
+
 function StatusBadge({ status }: { status: string }) {
   const styles: Record<string, string> = {
     APPROVED: "border-green-800 bg-green-950 text-green-400",
@@ -197,213 +209,302 @@ export default function CustomerPage() {
         </div>
       </header>
 
-      <div className="mx-auto max-w-6xl space-y-7 p-5 sm:p-8">
-        <section>
-          <h2 className="text-2xl font-bold">
-            Welcome, {account.name || "Customer"}
-          </h2>
+      <div className="mx-auto max-w-7xl p-4 sm:p-6 lg:p-8">
 
-          <p className="mt-2 text-sm text-gray-400">
-            Manage your account, subscription and payments.
-          </p>
-        </section>
-
-        <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <div className="rounded-xl border border-red-900/60 bg-gray-950 p-5">
-            <p className="text-sm text-gray-400">Account Status</p>
-            <div className="mt-3">
-              <StatusBadge status={account.accountStatus} />
-            </div>
+        {/* Mobile Navigation */}
+        <nav className="mb-6 overflow-x-auto rounded-xl border border-gray-800 bg-gray-950 p-2 lg:hidden">
+          <div className="flex min-w-max gap-2">
+            {navigation.map((item) => (
+              <a
+                key={item.label}
+                href={item.href}
+                className="rounded-lg border border-gray-800 px-3 py-2 text-xs text-gray-300 transition hover:border-red-600 hover:bg-red-950 hover:text-white"
+              >
+                {item.label}
+              </a>
+            ))}
           </div>
+        </nav>
 
-          <div className="rounded-xl border border-red-900/60 bg-gray-950 p-5">
-            <p className="text-sm text-gray-400">Subscription</p>
-            <p className="mt-3 text-xl font-bold text-red-400">
-              {account.subscription?.plan || "No subscription"}
-            </p>
-            <p className="mt-1 text-xs text-gray-500">
-              {account.subscription?.status || "Not subscribed"}
-            </p>
-          </div>
+        <div className="flex flex-col gap-6 lg:flex-row">
 
-          <div className="rounded-xl border border-red-900/60 bg-gray-950 p-5">
-            <p className="text-sm text-gray-400">Payment Records</p>
-            <p className="mt-3 text-2xl font-bold">
-              {account.payments.length}
-            </p>
-            <p className="mt-1 text-xs text-gray-500">
-              Latest 50 records
-            </p>
-          </div>
-        </section>
+          {/* Desktop Sidebar */}
+          <aside className="hidden w-64 shrink-0 lg:block">
+            <nav className="sticky top-6 rounded-xl border border-gray-800 bg-gray-950 p-4">
+              <h2 className="mb-4 px-3 text-xs font-bold tracking-widest text-red-500">
+                CUSTOMER MENU
+              </h2>
 
-        <section className="rounded-xl border border-gray-800 bg-gray-950 p-5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h3 className="text-lg font-bold text-red-400">
-              MY ACCOUNT
-            </h3>
+              <div className="space-y-1">
+                {navigation.map((item) => (
+                  <a
+                    key={item.label}
+                    href={item.href}
+                    className="block rounded-lg px-3 py-3 text-sm text-gray-400 transition hover:bg-red-950 hover:text-white"
+                  >
+                    {item.label}
+                  </a>
+                ))}
+              </div>
+            </nav>
+          </aside>
 
-            <button
-              onClick={() => void loadAccount()}
-              className="rounded-lg border border-gray-700 px-3 py-2 text-xs text-gray-300 hover:border-red-600"
+          {/* Main Dashboard */}
+          <div className="min-w-0 flex-1 space-y-7">
+
+            <section id="overview" className="scroll-mt-6">
+              <h2 className="text-2xl font-bold">
+                Welcome, {account.name || "Customer"}
+              </h2>
+
+              <p className="mt-2 text-sm text-gray-400">
+                Manage your account, subscription and payments.
+              </p>
+            </section>
+
+            <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              <div className="rounded-xl border border-red-900/60 bg-gray-950 p-5">
+                <p className="text-sm text-gray-400">Account Status</p>
+                <div className="mt-3">
+                  <StatusBadge status={account.accountStatus} />
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-red-900/60 bg-gray-950 p-5">
+                <p className="text-sm text-gray-400">Subscription</p>
+                <p className="mt-3 text-xl font-bold text-red-400">
+                  {account.subscription?.plan || "No subscription"}
+                </p>
+                <p className="mt-1 text-xs text-gray-500">
+                  {account.subscription?.status || "Not subscribed"}
+                </p>
+              </div>
+
+              <div className="rounded-xl border border-red-900/60 bg-gray-950 p-5">
+                <p className="text-sm text-gray-400">Payment Records</p>
+                <p className="mt-3 text-2xl font-bold">
+                  {account.payments.length}
+                </p>
+                <p className="mt-1 text-xs text-gray-500">
+                  Latest 50 records
+                </p>
+              </div>
+            </section>
+
+            <section
+              id="account"
+              className="scroll-mt-6 rounded-xl border border-gray-800 bg-gray-950 p-5"
             >
-              Refresh Account
-            </button>
-          </div>
-
-          <div className="mt-5 grid gap-5 sm:grid-cols-2">
-            <div>
-              <p className="text-xs text-gray-500">Full Name</p>
-              <p className="mt-1 break-words">{account.name || "Not provided"}</p>
-            </div>
-
-            <div>
-              <p className="text-xs text-gray-500">Email Address</p>
-              <p className="mt-1 break-words">{account.email}</p>
-            </div>
-
-            <div>
-              <p className="text-xs text-gray-500">Customer ID</p>
-              <p className="mt-1 break-all text-sm">{account.id}</p>
-            </div>
-
-            <div>
-              <p className="text-xs text-gray-500">Registration Date</p>
-              <p className="mt-1">{formatDate(account.createdAt)}</p>
-            </div>
-          </div>
-        </section>
-
-        <section className="rounded-xl border border-gray-800 bg-gray-950 p-5">
-          <h3 className="text-lg font-bold text-red-400">
-            MY SUBSCRIPTION
-          </h3>
-
-          {account.subscription ? (
-            <div className="mt-5 space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p className="text-lg font-bold">
-                    {account.subscription.plan}
-                  </p>
-                  <p className="mt-1 text-xs text-gray-500">
-                    Subscription plan
-                  </p>
-                </div>
+                <h3 className="text-lg font-bold text-red-400">
+                  MY ACCOUNT
+                </h3>
 
-                <StatusBadge
-                  status={
-                    activeSubscription
-                      ? "ACTIVE"
-                      : account.subscription.status === "ACTIVE"
-                        ? "EXPIRED"
-                        : account.subscription.status
-                  }
-                />
+                <button
+                  onClick={() => void loadAccount()}
+                  className="rounded-lg border border-gray-700 px-3 py-2 text-xs text-gray-300 hover:border-red-600"
+                >
+                  Refresh Account
+                </button>
               </div>
 
-              <div className="grid gap-4 sm:grid-cols-2">
+              <div className="mt-5 grid gap-5 sm:grid-cols-2">
                 <div>
-                  <p className="text-xs text-gray-500">Start Date</p>
-                  <p className="mt-1">
-                    {formatDate(account.subscription.startsAt)}
+                  <p className="text-xs text-gray-500">Full Name</p>
+                  <p className="mt-1 break-words">
+                    {account.name || "Not provided"}
                   </p>
                 </div>
 
                 <div>
-                  <p className="text-xs text-gray-500">Expiry Date</p>
-                  <p className="mt-1">
-                    {formatDate(account.subscription.expiresAt)}
-                  </p>
+                  <p className="text-xs text-gray-500">Email Address</p>
+                  <p className="mt-1 break-words">{account.email}</p>
+                </div>
+
+                <div>
+                  <p className="text-xs text-gray-500">Customer ID</p>
+                  <p className="mt-1 break-all text-sm">{account.id}</p>
+                </div>
+
+                <div>
+                  <p className="text-xs text-gray-500">Registration Date</p>
+                  <p className="mt-1">{formatDate(account.createdAt)}</p>
                 </div>
               </div>
-            </div>
-          ) : (
-            <p className="mt-4 text-sm text-gray-400">
-              You don't currently have a subscription record.
-            </p>
-          )}
-        </section>
+            </section>
 
-        <section className="rounded-xl border border-gray-800 bg-gray-950 p-5">
-          <h3 className="text-lg font-bold text-red-400">
-            BILLING HISTORY
-          </h3>
+            <section
+              id="subscription"
+              className="scroll-mt-6 rounded-xl border border-gray-800 bg-gray-950 p-5"
+            >
+              <h3 className="text-lg font-bold text-red-400">
+                MY SUBSCRIPTION
+              </h3>
 
-          {account.payments.length === 0 ? (
-            <p className="mt-4 text-sm text-gray-400">
-              No payment records found.
-            </p>
-          ) : (
-            <div className="mt-5 overflow-x-auto">
-              <table className="w-full min-w-[600px] text-left text-sm">
-                <thead>
-                  <tr className="border-b border-gray-800 text-gray-500">
-                    <th className="p-3">Reference</th>
-                    <th className="p-3">Amount</th>
-                    <th className="p-3">Status</th>
-                    <th className="p-3">Date</th>
-                  </tr>
-                </thead>
+              {account.subscription ? (
+                <div className="mt-5 space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-lg font-bold">
+                        {account.subscription.plan}
+                      </p>
+                      <p className="mt-1 text-xs text-gray-500">
+                        Subscription plan
+                      </p>
+                    </div>
 
-                <tbody>
-                  {account.payments.map((payment) => (
-                    <tr
-                      key={payment.id}
-                      className="border-b border-gray-900"
-                    >
-                      <td className="p-3 break-all">
-                        {payment.reference}
-                      </td>
+                    <StatusBadge
+                      status={
+                        activeSubscription
+                          ? "ACTIVE"
+                          : account.subscription.status === "ACTIVE"
+                            ? "EXPIRED"
+                            : account.subscription.status
+                      }
+                    />
+                  </div>
 
-                      <td className="p-3">
-                        {formatAmount(payment.amount, payment.currency)}
-                      </td>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div>
+                      <p className="text-xs text-gray-500">Start Date</p>
+                      <p className="mt-1">
+                        {formatDate(account.subscription.startsAt)}
+                      </p>
+                    </div>
 
-                      <td className="p-3">
-                        <StatusBadge status={payment.status} />
-                      </td>
+                    <div>
+                      <p className="text-xs text-gray-500">Expiry Date</p>
+                      <p className="mt-1">
+                        {formatDate(account.subscription.expiresAt)}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <p className="mt-4 text-sm text-gray-400">
+                  You don't currently have a subscription record.
+                </p>
+              )}
+            </section>
 
-                      <td className="p-3">
-                        {formatDate(payment.createdAt)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
+            <section
+              id="usage"
+              className="scroll-mt-6 rounded-xl border border-gray-800 bg-gray-950 p-5"
+            >
+              <h3 className="text-lg font-bold text-red-400">
+                USAGE STATISTICS
+              </h3>
 
-        <section className="grid gap-4 md:grid-cols-2">
-          <div className="rounded-xl border border-red-900/60 bg-gray-950 p-5">
-            <h3 className="font-bold text-red-400">
-              UPGRADE PLAN
-            </h3>
+              <p className="mt-3 text-sm leading-6 text-gray-400">
+                Usage tracking has not been configured yet.
+                Your actual usage statistics will appear here
+                once tracking is implemented.
+              </p>
+            </section>
 
-            <p className="mt-3 text-sm leading-6 text-gray-400">
-              Explore subscription options and account upgrades.
-              Available plans and payment options will appear here
-              once they are configured.
-            </p>
+            <section
+              id="billing"
+              className="scroll-mt-6 rounded-xl border border-gray-800 bg-gray-950 p-5"
+            >
+              <h3 className="text-lg font-bold text-red-400">
+                BILLING HISTORY
+              </h3>
+
+              {account.payments.length === 0 ? (
+                <p className="mt-4 text-sm text-gray-400">
+                  No payment records found.
+                </p>
+              ) : (
+                <div className="mt-5 overflow-x-auto">
+                  <table className="w-full min-w-[600px] text-left text-sm">
+                    <thead>
+                      <tr className="border-b border-gray-800 text-gray-500">
+                        <th className="p-3">Reference</th>
+                        <th className="p-3">Amount</th>
+                        <th className="p-3">Status</th>
+                        <th className="p-3">Date</th>
+                      </tr>
+                    </thead>
+
+                    <tbody>
+                      {account.payments.map((payment) => (
+                        <tr
+                          key={payment.id}
+                          className="border-b border-gray-900"
+                        >
+                          <td className="p-3 break-all">
+                            {payment.reference}
+                          </td>
+
+                          <td className="p-3">
+                            {formatAmount(payment.amount, payment.currency)}
+                          </td>
+
+                          <td className="p-3">
+                            <StatusBadge status={payment.status} />
+                          </td>
+
+                          <td className="p-3">
+                            {formatDate(payment.createdAt)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+
+            <section
+              id="upgrade"
+              className="scroll-mt-6 rounded-xl border border-red-900/60 bg-gray-950 p-5"
+            >
+              <h3 className="font-bold text-red-400">
+                UPGRADE PLAN
+              </h3>
+
+              <p className="mt-3 text-sm leading-6 text-gray-400">
+                Explore subscription options and account upgrades.
+                Available plans and payment options will appear here
+                once they are configured.
+              </p>
+            </section>
+
+            <section
+              id="support"
+              className="scroll-mt-6 rounded-xl border border-gray-800 bg-gray-950 p-5"
+            >
+              <h3 className="font-bold text-red-400">
+                HELP & SUPPORT
+              </h3>
+
+              <p className="mt-3 text-sm leading-6 text-gray-400">
+                Need assistance with your account, subscription or
+                payments? Contact the Evil GPT support team through
+                your designated support channel.
+              </p>
+            </section>
+
+            <section
+              id="personalization"
+              className="scroll-mt-6 rounded-xl border border-gray-800 bg-gray-950 p-5"
+            >
+              <h3 className="font-bold text-red-400">
+                PERSONALIZATION
+              </h3>
+
+              <p className="mt-3 text-sm leading-6 text-gray-400">
+                Personalization settings are not available yet.
+                Custom preferences will appear here once implemented.
+              </p>
+            </section>
+
+            <footer className="border-t border-gray-900 py-5 text-center text-xs text-gray-600">
+              EVIL GPT CUSTOMER PORTAL
+            </footer>
+
           </div>
-
-          <div className="rounded-xl border border-gray-800 bg-gray-950 p-5">
-            <h3 className="font-bold text-red-400">
-              HELP & SUPPORT
-            </h3>
-
-            <p className="mt-3 text-sm leading-6 text-gray-400">
-              Need assistance with your account, subscription or
-              payments? Contact the Evil GPT support team through
-              your designated support channel.
-            </p>
-          </div>
-        </section>
-
-        <footer className="border-t border-gray-900 py-5 text-center text-xs text-gray-600">
-          EVIL GPT CUSTOMER PORTAL
-        </footer>
+        </div>
       </div>
     </main>
   );
