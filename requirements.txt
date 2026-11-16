@@ -1,7 +1,4 @@
-
-flask
-flask-cors
-gunicorn
-psycopg2-binary
-openai
-werkzeug
+Flask>=3.0,<4
+gunicorn>=22,<24
+psycopg2-binary>=2.9,<3
+openai>=1.60
