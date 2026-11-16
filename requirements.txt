@@ -1,5 +1,4 @@
 flask
 flask-cors
 gunicorn
-openai
-python-dotenv
+psycopg2-binary # For Neon Database support
