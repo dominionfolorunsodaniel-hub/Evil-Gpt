@@ -3,6 +3,7 @@ import re
 import uuid
 from datetime import datetime, timezone
 from functools import wraps
+from contextlib import contextmanager
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -23,8 +24,8 @@ app.config.update(
 )
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+GROQ_MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-20b")
 ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD")
 
@@ -39,10 +40,24 @@ PLANS = {
     "infinity": {"name": "Infinity", "price": 100000, "monthly_messages": 20000},
 }
 
+
+@contextmanager
 def db():
+    """Open a database connection and always close it after the transaction."""
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL is missing. Add your Neon connection string in Render.")
-    return psycopg2.connect(DATABASE_URL, sslmode="require", cursor_factory=RealDictCursor)
+    conn = psycopg2.connect(
+        DATABASE_URL,
+        sslmode="require",
+        cursor_factory=RealDictCursor,
+        connect_timeout=15,
+    )
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
+
 
 def init_db():
     with db() as conn:
@@ -104,7 +119,8 @@ def init_db():
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 )
             """)
-            # Create/update only the configured admin account; no default credentials.
+            # Create the configured admin only if that username does not exist.
+            # Existing account passwords are deliberately not overwritten.
             if ADMIN_USERNAME and ADMIN_PASSWORD:
                 cur.execute("SELECT id FROM evil_users WHERE username=%s", (ADMIN_USERNAME,))
                 row = cur.fetchone()
@@ -119,15 +135,20 @@ def init_db():
                         INSERT INTO evil_users(username,email,password_hash,plan,is_admin)
                         VALUES (%s,%s,%s,'infinity',TRUE)
                         ON CONFLICT (username) DO NOTHING
-                    """, (ADMIN_USERNAME, admin_email, generate_password_hash(ADMIN_PASSWORD)))
-        conn.commit()
+                    """, (
+                        ADMIN_USERNAME,
+                        admin_email,
+                        generate_password_hash(ADMIN_PASSWORD)
+                    ))
+
 
 def ensure_db():
     try:
         init_db()
-    except Exception as exc:
-        app.logger.exception("Database initialization failed: %s", exc)
+    except Exception:
+        app.logger.exception("Database initialization failed")
         raise
+
 
 def current_user():
     user_id = session.get("user_id")
@@ -135,8 +156,12 @@ def current_user():
         return None
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT id,username,email,plan,is_admin FROM evil_users WHERE id=%s", (user_id,))
+            cur.execute(
+                "SELECT id,username,email,plan,is_admin FROM evil_users WHERE id=%s",
+                (user_id,)
+            )
             return cur.fetchone()
+
 
 def login_required(fn):
     @wraps(fn)
@@ -146,6 +171,7 @@ def login_required(fn):
         return fn(*args, **kwargs)
     return wrapped
 
+
 def admin_required(fn):
     @wraps(fn)
     def wrapped(*args, **kwargs):
@@ -154,6 +180,7 @@ def admin_required(fn):
             return jsonify({"error": "Admin access required."}), 403
         return fn(*args, **kwargs)
     return wrapped
+
 
 def usage_status(user_id, plan):
     plan_data = PLANS.get(plan, PLANS["free"])
@@ -167,11 +194,13 @@ def usage_status(user_id, plan):
             row = cur.fetchone()
             used = row["message_count"] if row else 0
     limit = plan_data["monthly_messages"]
-    return {"used": used, "limit": limit, "remaining": max(0, limit-used)}
+    return {"used": used, "limit": limit, "remaining": max(0, limit - used)}
+
 
 @app.route("/")
 def index():
     return render_template("index.html")
+
 
 @app.get("/api/health")
 def health():
@@ -179,9 +208,11 @@ def health():
         with db() as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT 1")
-        return jsonify({"ok": True, "database": "connected"})
+        return jsonify({"ok": True, "database": "connected", "ai_provider": "groq"})
     except Exception:
+        app.logger.exception("Health check failed")
         return jsonify({"ok": False, "database": "unavailable"}), 503
+
 
 @app.post("/register")
 def register():
@@ -189,12 +220,17 @@ def register():
     username = str(data.get("username", "")).strip()
     email = str(data.get("email", "")).strip().lower()
     password = str(data.get("password", ""))
+
     if not re.fullmatch(r"[A-Za-z0-9_]{3,40}", username):
-        return jsonify({"success": False, "message": "Username must be 3–40 characters using letters, numbers or underscores."}), 400
+        return jsonify({
+            "success": False,
+            "message": "Username must be 3–40 characters using letters, numbers or underscores."
+        }), 400
     if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email) or len(email) > 254:
         return jsonify({"success": False, "message": "Enter a valid email address."}), 400
     if len(password) < 10 or len(password) > 128:
         return jsonify({"success": False, "message": "Password must be at least 10 characters."}), 400
+
     try:
         with db() as conn:
             with conn.cursor() as cur:
@@ -204,48 +240,67 @@ def register():
                 """, (username, email, generate_password_hash(password)))
         return jsonify({"success": True, "message": "Account created. You can now sign in."})
     except psycopg2.errors.UniqueViolation:
-        return jsonify({"success": False, "message": "That username or email is already registered."}), 409
+        return jsonify({
+            "success": False,
+            "message": "That username or email is already registered."
+        }), 409
     except Exception:
         app.logger.exception("Registration failed")
         return jsonify({"success": False, "message": "Registration is temporarily unavailable."}), 500
+
 
 @app.post("/login")
 def login():
     data = request.get_json(silent=True) or {}
     username = str(data.get("username", "")).strip()
     password = str(data.get("password", ""))
+
     try:
         with db() as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT * FROM evil_users WHERE username=%s", (username,))
                 user = cur.fetchone()
+
         if not user or not check_password_hash(user["password_hash"], password):
             return jsonify({"success": False, "message": "Invalid username or password."}), 401
+
         session.clear()
         session["user_id"] = user["id"]
-        return jsonify({"success": True, "user": {
-            "username": user["username"], "email": user["email"],
-            "plan": user["plan"], "isAdmin": user["is_admin"]
-        }})
+        return jsonify({
+            "success": True,
+            "user": {
+                "username": user["username"],
+                "email": user["email"],
+                "plan": user["plan"],
+                "isAdmin": user["is_admin"]
+            }
+        })
     except Exception:
         app.logger.exception("Login failed")
         return jsonify({"success": False, "message": "Login is temporarily unavailable."}), 500
+
 
 @app.post("/logout")
 def logout():
     session.clear()
     return jsonify({"success": True})
 
+
 @app.get("/api/me")
 @login_required
 def me():
     user = current_user()
     return jsonify({
-        "user": {"username": user["username"], "email": user["email"],
-                 "plan": user["plan"], "isAdmin": user["is_admin"]},
+        "user": {
+            "username": user["username"],
+            "email": user["email"],
+            "plan": user["plan"],
+            "isAdmin": user["is_admin"]
+        },
         "usage": usage_status(user["id"], user["plan"]),
         "plans": PLANS
     })
+
 
 @app.get("/api/conversations")
 @login_required
@@ -258,10 +313,18 @@ def conversations():
                 WHERE user_id=%s ORDER BY updated_at DESC LIMIT 50
             """, (user["id"],))
             rows = cur.fetchall()
-    return jsonify({"conversations": [
-        {"id": str(r["id"]), "title": r["title"], "updatedAt": r["updated_at"].isoformat()}
-        for r in rows
-    ]})
+
+    return jsonify({
+        "conversations": [
+            {
+                "id": str(row["id"]),
+                "title": row["title"],
+                "updatedAt": row["updated_at"].isoformat()
+            }
+            for row in rows
+        ]
+    })
+
 
 @app.get("/api/conversations/<uuid:conversation_id>")
 @login_required
@@ -275,34 +338,61 @@ def get_conversation(conversation_id):
             conv = cur.fetchone()
             if not conv:
                 return jsonify({"error": "Conversation not found."}), 404
+
             cur.execute("""
                 SELECT role,content,created_at FROM evil_messages
                 WHERE conversation_id=%s AND user_id=%s ORDER BY id
             """, (str(conversation_id), user["id"]))
             msgs = cur.fetchall()
-    return jsonify({"conversation": {"id": str(conv["id"]), "title": conv["title"]},
-                     "messages": [{"role":m["role"],"content":m["content"]} for m in msgs]})
+
+    return jsonify({
+        "conversation": {"id": str(conv["id"]), "title": conv["title"]},
+        "messages": [
+            {"role": msg["role"], "content": msg["content"]}
+            for msg in msgs
+        ]
+    })
+
 
 @app.post("/ask")
 @login_required
 def ask():
-    if not OPENAI_API_KEY:
-        return jsonify({"error": "AI service is not configured. Add OPENAI_API_KEY in Render."}), 503
+    if not GROQ_API_KEY:
+        return jsonify({
+            "error": "AI service is not configured. Add GROQ_API_KEY in Render Environment."
+        }), 503
+
     data = request.get_json(silent=True) or {}
     question = str(data.get("question", "")).strip()
     conv_id = data.get("conversationId")
     use_web = bool(data.get("webSearch", False))
+
     if not question or len(question) > 12000:
         return jsonify({"error": "Enter a message up to 12,000 characters."}), 400
+
+    # The previous OpenAI Responses web_search tool is not part of this
+    # standard Groq chat-completions request. Do not silently pretend it ran.
+    if use_web:
+        return jsonify({
+            "error": "Web search is not enabled in this Groq chat configuration yet. Turn off Web Search and try again."
+        }), 501
+
     user = current_user()
     status = usage_status(user["id"], user["plan"])
     if status["remaining"] <= 0:
-        return jsonify({"error": "You've reached this month's message limit. Choose a plan to request an upgrade.", "usage": status}), 429
+        return jsonify({
+            "error": "You've reached this month's message limit. Choose a plan to request an upgrade.",
+            "usage": status
+        }), 429
+
     try:
         with db() as conn:
             with conn.cursor() as cur:
                 if conv_id:
-                    cur.execute("SELECT id FROM evil_conversations WHERE id=%s AND user_id=%s", (str(conv_id), user["id"]))
+                    cur.execute("""
+                        SELECT id FROM evil_conversations
+                        WHERE id=%s AND user_id=%s
+                    """, (str(conv_id), user["id"]))
                     conv = cur.fetchone()
                     if not conv:
                         return jsonify({"error": "Conversation not found."}), 404
@@ -311,45 +401,74 @@ def ask():
                     conv_id = str(uuid.uuid4())
                     title = question[:70].strip() or "New conversation"
                     cur.execute("""
-                        INSERT INTO evil_conversations(id,user_id,title) VALUES (%s,%s,%s)
+                        INSERT INTO evil_conversations(id,user_id,title)
+                        VALUES (%s,%s,%s)
                     """, (conv_id, user["id"], title))
+
                 cur.execute("""
                     SELECT role,content FROM evil_messages
-                    WHERE conversation_id=%s AND user_id=%s ORDER BY id DESC LIMIT 16
+                    WHERE conversation_id=%s AND user_id=%s
+                    ORDER BY id DESC LIMIT 16
                 """, (conv_id, user["id"]))
                 history = list(reversed(cur.fetchall()))
-        input_items = [{"role": m["role"], "content": m["content"]} for m in history]
-        input_items.append({"role": "user", "content": question})
-        tools = [{"type": "web_search"}] if use_web else []
-        client = OpenAI(api_key=OPENAI_API_KEY)
-        response = client.responses.create(
-            model=OPENAI_MODEL,
-            instructions="You are Evil GPT Assistant, a helpful, accurate, safe AI assistant. Be clear about uncertainty. Do not claim to have performed actions you have not performed.",
-            input=input_items,
-            tools=tools or None,
+
+        messages = [{
+            "role": "system",
+            "content": (
+                "You are Evil GPT Assistant, a helpful, accurate and safe AI assistant. "
+                "Be clear about uncertainty. Do not claim to have performed actions "
+                "you have not performed. Keep answers useful and well organised."
+            )
+        }]
+        messages.extend(
+            {"role": msg["role"], "content": msg["content"]}
+            for msg in history
         )
-        answer = (response.output_text or "").strip()
+        messages.append({"role": "user", "content": question})
+
+        client = OpenAI(
+            api_key=GROQ_API_KEY,
+            base_url="https://api.groq.com/openai/v1",
+            timeout=60.0,
+            max_retries=1,
+        )
+        response = client.chat.completions.create(
+            model=GROQ_MODEL,
+            messages=messages,
+        )
+        answer = (response.choices[0].message.content or "").strip()
         if not answer:
             answer = "I couldn't produce a response. Please try again."
+
         with db() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
                     INSERT INTO evil_messages(conversation_id,user_id,role,content)
                     VALUES (%s,%s,'user',%s),(%s,%s,'assistant',%s)
-                """, (conv_id,user["id"],question,conv_id,user["id"],answer))
-                cur.execute("UPDATE evil_conversations SET updated_at=NOW() WHERE id=%s", (conv_id,))
+                """, (conv_id, user["id"], question, conv_id, user["id"], answer))
+                cur.execute("""
+                    UPDATE evil_conversations SET updated_at=NOW() WHERE id=%s
+                """, (conv_id,))
                 month = datetime.now(timezone.utc).strftime("%Y-%m")
                 cur.execute("""
                     INSERT INTO evil_usage(user_id,usage_month,message_count)
                     VALUES (%s,%s,1)
                     ON CONFLICT (user_id,usage_month)
                     DO UPDATE SET message_count=evil_usage.message_count+1
-                """, (user["id"],month))
-        return jsonify({"answer": answer, "conversationId": conv_id,
-                        "usage": usage_status(user["id"], user["plan"])})
+                """, (user["id"], month))
+
+        return jsonify({
+            "answer": answer,
+            "conversationId": conv_id,
+            "usage": usage_status(user["id"], user["plan"])
+        })
+
     except Exception as exc:
-        app.logger.exception("AI request failed")
-        return jsonify({"error": "The AI request failed. Check your model setting and API account, then try again."}), 502
+        app.logger.exception("Groq AI request failed: %s", type(exc).__name__)
+        return jsonify({
+            "error": "Evil GPT could not get a response from Groq. Check the GROQ_MODEL and Groq API account, then try again."
+        }), 502
+
 
 @app.post("/api/upgrade")
 @login_required
@@ -358,14 +477,20 @@ def upgrade_request():
     plan = str(data.get("plan", ""))
     if plan not in PLANS or plan == "free":
         return jsonify({"error": "Choose a valid paid plan."}), 400
+
     user = current_user()
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
                 INSERT INTO evil_payment_requests(user_id,plan,amount_ngn)
                 VALUES (%s,%s,%s)
-            """, (user["id"],plan,PLANS[plan]["price"]))
-    return jsonify({"success": True, "message": "Upgrade request submitted for admin review. No payment has been verified yet."})
+            """, (user["id"], plan, PLANS[plan]["price"]))
+
+    return jsonify({
+        "success": True,
+        "message": "Upgrade request submitted for admin review. No payment has been verified yet."
+    })
+
 
 @app.get("/api/admin/users")
 @login_required
@@ -375,11 +500,17 @@ def admin_users():
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT u.id,u.username,u.email,u.plan,
-                  (SELECT p.plan FROM evil_payment_requests p WHERE p.user_id=u.id AND p.status='pending' ORDER BY p.id DESC LIMIT 1) AS requested_plan
-                FROM evil_users u WHERE u.is_admin=FALSE ORDER BY u.created_at DESC LIMIT 200
+                  (SELECT p.plan FROM evil_payment_requests p
+                   WHERE p.user_id=u.id AND p.status='pending'
+                   ORDER BY p.id DESC LIMIT 1) AS requested_plan
+                FROM evil_users u
+                WHERE u.is_admin=FALSE
+                ORDER BY u.created_at DESC LIMIT 200
             """)
             users = cur.fetchall()
-    return jsonify({"users": [dict(r) for r in users]})
+
+    return jsonify({"users": [dict(row) for row in users]})
+
 
 @app.post("/api/admin/approve/<int:user_id>")
 @login_required
@@ -389,16 +520,22 @@ def admin_approve(user_id):
     plan = str(data.get("plan", ""))
     if plan not in PLANS or plan == "free":
         return jsonify({"error": "Invalid plan."}), 400
+
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute("UPDATE evil_users SET plan=%s WHERE id=%s AND is_admin=FALSE", (plan,user_id))
+            cur.execute("""
+                UPDATE evil_users SET plan=%s
+                WHERE id=%s AND is_admin=FALSE
+            """, (plan, user_id))
             if cur.rowcount == 0:
                 return jsonify({"error": "User not found."}), 404
             cur.execute("""
                 UPDATE evil_payment_requests SET status='approved'
                 WHERE user_id=%s AND status='pending'
             """, (user_id,))
+
     return jsonify({"success": True})
+
 
 @app.post("/api/admin/announcement")
 @login_required
@@ -408,20 +545,36 @@ def announcement():
     message = str(data.get("message", "")).strip()
     if not message or len(message) > 2000:
         return jsonify({"error": "Announcement must be 1–2,000 characters."}), 400
+
     user = current_user()
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute("INSERT INTO evil_announcements(admin_user_id,message) VALUES (%s,%s)", (user["id"],message))
+            cur.execute("""
+                INSERT INTO evil_announcements(admin_user_id,message)
+                VALUES (%s,%s)
+            """, (user["id"], message))
+
     return jsonify({"success": True})
+
 
 @app.get("/api/announcements")
 @login_required
 def get_announcements():
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT message,created_at FROM evil_announcements ORDER BY id DESC LIMIT 10")
+            cur.execute("""
+                SELECT message,created_at FROM evil_announcements
+                ORDER BY id DESC LIMIT 10
+            """)
             rows = cur.fetchall()
-    return jsonify({"announcements": [{"message":r["message"],"createdAt":r["created_at"].isoformat()} for r in rows]})
+
+    return jsonify({
+        "announcements": [
+            {"message": row["message"], "createdAt": row["created_at"].isoformat()}
+            for row in rows
+        ]
+    })
+
 
 @app.before_request
 def initialize_database_once():
