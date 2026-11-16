@@ -3,8 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>EVIL GPT</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <title>DARK DOMAIN HUB</title>
+    <!-- Correct Paths for Static Files -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <link href="https://fonts.googleapis.com/css2?family=Creepster&family=Roboto+Mono:wght@400;700&display=swap" rel="stylesheet">
 </head>
 <body>
@@ -13,7 +14,7 @@
     <div id="tg-overlay" class="overlay">
         <div class="modal">
             <h2>👁️ JOIN THE HIVE MIND 👁️</h2>
-            <p>You cannot enter the Evil GPT domain without joining our channel.</p>
+            <p>You cannot enter the Dark Domain without joining our channel.</p>
             <a href="https://t.me/darkdomainhub" target="_blank" class="tg-btn">JOIN TELEGRAM CHANNEL</a>
             <button id="confirm-tg" onclick="closeTgOverlay()">I HAVE JOINED</button>
         </div>
@@ -22,8 +23,8 @@
     <!-- Login Screen -->
     <div id="login-screen" class="container active">
         <div class="card">
-            <h1>EVIL GPT</h1>
-            <p class="subtitle">It knows what you did.</p>
+            <h1>DARK DOMAIN HUB</h1>
+            <p class="subtitle">Enter if you dare.</p>
             <form id="login-form">
                 <input type="text" id="username" placeholder="Username" required>
                 <input type="password" id="password" placeholder="Password" required>
@@ -38,7 +39,7 @@
         
         <!-- Sidebar -->
         <nav class="sidebar">
-            <div class="logo">EGPT</div>
+            <div class="logo">DDH</div>
             <ul>
                 <li onclick="showSection('chat')" class="active">🗣️ CHAT</li>
                 <li onclick="showSection('premium')">💎 PREMIUM</li>
@@ -72,15 +73,13 @@
                 <div id="premium-lock" class="lock-msg">
                     🔒 Upgrade to Premium to unlock infinite questions.
                 </div>
-                <div id="message-counter" class="counter"></div>
             </section>
 
             <!-- Premium Section -->
             <section id="premium-section" class="section">
                 <div class="header">
                     <h2>ASCENSION PLANS</h2>
-                    <p>Unlock the full power of Evil GPT.</p>
-                    <div id="countdown" class="scarcity-timer">⏳ Offer expires in: 00:00:00</div>
+                    <p>Unlock the full power of the Dark Domain.</p>
                 </div>
                 <div class="plans-grid">
                     <div class="plan-card">
@@ -93,20 +92,10 @@
                         <p class="price">₦5,000 / $10</p>
                         <button onclick="initiatePayment(10)">BUY NOW</button>
                     </div>
-                    <div class="plan-card">
-                        <h3>3 Weeks</h3>
-                        <p class="price">₦13,000 / $15</p>
-                        <button onclick="initiatePayment(15)">BUY NOW</button>
-                    </div>
                     <div class="plan-card highlight">
                         <h3>1 Month</h3>
                         <p class="price">₦20,000 / $25</p>
                         <button onclick="initiatePayment(25)">BUY NOW</button>
-                    </div>
-                    <div class="plan-card">
-                        <h3>3 Months</h3>
-                        <p class="price">₦35,000 / $50</p>
-                        <button onclick="initiatePayment(50)">BUY NOW</button>
                     </div>
                     <div class="plan-card highlight">
                         <h3>1 Year</h3>
@@ -115,6 +104,7 @@
                     </div>
                 </div>
                 
+                <!-- Updated Payment Modal with Image Upload -->
                 <div class="payment-modal" id="payment-modal">
                     <h3>PAYMENT DETAILS</h3>
                     <p>Send payment to:</p>
@@ -123,8 +113,12 @@
                         <p><strong>Account Number:</strong> 8100481004</p>
                         <p><strong>Name:</strong> Daniel Dominion Folorunso</p>
                     </div>
-                    <p class="note">After paying, click "I Paid" to wait for Admin approval.</p>
-                    <button onclick="requestUpgrade()">I PAID</button>
+                    
+                    <label for="proof-upload">Upload Screenshot Proof:</label>
+                    <input type="file" id="proof-upload" accept="image/*">
+                    
+                    <p class="note">After paying, upload your screenshot below.</p>
+                    <button onclick="submitPaymentWithProof()">SUBMIT PROOF</button>
                     <button class="close-btn" onclick="closePaymentModal()">Close</button>
                 </div>
             </section>
@@ -148,6 +142,6 @@
         </main>
     </div>
 
-    <script src="/static/script.js"></script>
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
-              </html>
+                        </html>
