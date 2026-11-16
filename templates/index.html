@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EVIL GPT</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Creepster&family=Roboto+Mono:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body>
+
+    <!-- Forced Telegram Join Overlay -->
+    <div id="tg-overlay" class="overlay">
+        <div class="modal">
+            <h2>👁️ JOIN THE HIVE MIND 👁️</h2>
+            <p>You cannot enter the Evil GPT domain without joining our channel.</p>
+            <a href="https://t.me/darkdomainhub" target="_blank" class="tg-btn">JOIN TELEGRAM CHANNEL</a>
+            <button id="confirm-tg" onclick="closeTgOverlay()">I HAVE JOINED</button>
+        </div>
+    </div>
+
+    <!-- Login Screen -->
+    <div id="login-screen" class="container active">
+        <div class="card">
+            <h1>EVIL GPT</h1>
+            <p class="subtitle">It knows what you did.</p>
+            <form id="login-form">
+                <input type="text" id="username" placeholder="Username" required>
+                <input type="password" id="password" placeholder="Password" required>
+                <button type="submit">ENTER THE VOID</button>
+            </form>
+            <div id="error-msg" class="error"></div>
+        </div>
+    </div>
+
+    <!-- Main Dashboard -->
+    <div id="dashboard" class="container hidden">
+        
+        <!-- Sidebar -->
+        <nav class="sidebar">
+            <div class="logo">EGPT</div>
+            <ul>
+                <li onclick="showSection('chat')" class="active">🗣️ CHAT</li>
+                <li onclick="showSection('premium')">💎 PREMIUM</li>
+                <li id="admin-link" onclick="showSection('admin')" style="display:none;">⚙️ ADMIN</li>
+                <li onclick="logout()">🚪 EXIT</li>
+            </ul>
+            <div class="user-info">
+                <span id="current-user">User</span>
+                <span id="plan-badge">FREE</span>
+            </div>
+        </nav>
+
+        <!-- Content Area -->
+        <main class="content">
+            
+            <!-- Chat Section -->
+            <section id="chat-section" class="section active">
+                <div class="header">
+                    <h2>THE ORACLE</h2>
+                    <p>Ask anything. It knows everything.</p>
+                </div>
+                <div id="chat-box" class="chat-window">
+                    <div class="message ai">
+                        <p>I am listening... what do you seek?</p>
+                    </div>
+                </div>
+                <div class="input-area">
+                    <input type="text" id="user-input" placeholder="Type your question..." disabled>
+                    <button id="send-btn" onclick="sendMessage()" disabled>SPEAK</button>
+                </div>
+                <div id="premium-lock" class="lock-msg">
+                    🔒 Upgrade to Premium to unlock infinite questions.
+                </div>
+                <div id="message-counter" class="counter"></div>
+            </section>
+
+            <!-- Premium Section -->
+            <section id="premium-section" class="section">
+                <div class="header">
+                    <h2>ASCENSION PLANS</h2>
+                    <p>Unlock the full power of Evil GPT.</p>
+                    <div id="countdown" class="scarcity-timer">⏳ Offer expires in: 00:00:00</div>
+                </div>
+                <div class="plans-grid">
+                    <div class="plan-card">
+                        <h3>2 Days</h3>
+                        <p class="price">₦1,500 / $5</p>
+                        <button onclick="initiatePayment(5)">BUY NOW</button>
+                    </div>
+                    <div class="plan-card">
+                        <h3>1 Week</h3>
+                        <p class="price">₦5,000 / $10</p>
+                        <button onclick="initiatePayment(10)">BUY NOW</button>
+                    </div>
+                    <div class="plan-card">
+                        <h3>3 Weeks</h3>
+                        <p class="price">₦13,000 / $15</p>
+                        <button onclick="initiatePayment(15)">BUY NOW</button>
+                    </div>
+                    <div class="plan-card highlight">
+                        <h3>1 Month</h3>
+                        <p class="price">₦20,000 / $25</p>
+                        <button onclick="initiatePayment(25)">BUY NOW</button>
+                    </div>
+                    <div class="plan-card">
+                        <h3>3 Months</h3>
+                        <p class="price">₦35,000 / $50</p>
+                        <button onclick="initiatePayment(50)">BUY NOW</button>
+                    </div>
+                    <div class="plan-card highlight">
+                        <h3>1 Year</h3>
+                        <p class="price">₦50,000 / $70</p>
+                        <button onclick="initiatePayment(70)">BUY NOW</button>
+                    </div>
+                </div>
+                
+                <div class="payment-modal" id="payment-modal">
+                    <h3>PAYMENT DETAILS</h3>
+                    <p>Send payment to:</p>
+                    <div class="bank-details">
+                        <p><strong>Bank:</strong> Moniepoint</p>
+                        <p><strong>Account Number:</strong> 8100481004</p>
+                        <p><strong>Name:</strong> Daniel Dominion Folorunso</p>
+                    </div>
+                    <p class="note">After paying, click "I Paid" to wait for Admin approval.</p>
+                    <button onclick="requestUpgrade()">I PAID</button>
+                    <button class="close-btn" onclick="closePaymentModal()">Close</button>
+                </div>
+            </section>
+
+            <!-- Admin Section -->
+            <section id="admin-section" class="section">
+                <div class="header">
+                    <h2>ADMIN CONSOLE</h2>
+                </div>
+                <div class="admin-controls">
+                    <button onclick="broadcastMessage()">📢 BROADCAST TO ALL USERS</button>
+                    <textarea id="broadcast-text" placeholder="Enter broadcast message..."></textarea>
+                    
+                    <h3>Pending Approvals</h3>
+                    <div id="pending-users-list">
+                        <!-- Populated by JS -->
+                    </div>
+                </div>
+            </section>
+
+        </main>
+    </div>
+
+    <script src="/static/script.js"></script>
+</body>
+              </html>
