@@ -3,54 +3,83 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DARK DOMAIN HUB</title>
-    <!-- Correct Paths for Static Files -->
+    <title>EVIl GPT HUB</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <link href="https://fonts.googleapis.com/css2?family=Creepster&family=Roboto+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <!-- Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 </head>
 <body>
 
     <!-- Forced Telegram Join Overlay -->
     <div id="tg-overlay" class="overlay">
         <div class="modal">
-            <h2>👁️ JOIN THE HIVE MIND 👁️</h2>
+            <i class="fas fa-eye fa-3x" style="color: #ff003c; margin-bottom: 20px;"></i>
+            <h2>JOIN THE HIVE MIND</h2>
             <p>You cannot enter the Dark Domain without joining our channel.</p>
-            <a href="https://t.me/darkdomainhub" target="_blank" class="tg-btn">JOIN TELEGRAM CHANNEL</a>
+            <a href="https://t.me/darkdomainhub" target="_blank" class="tg-btn"><i class="fab fa-telegram"></i> JOIN TELEGRAM CHANNEL</a>
             <button id="confirm-tg" onclick="closeTgOverlay()">I HAVE JOINED</button>
         </div>
     </div>
 
+    <!-- Floating Support Button -->
+    <a href="https://t.me/COLDFX26" target="_blank" class="support-btn">
+        <i class="fab fa-telegram-plane"></i>
+    </a>
+
     <!-- Login Screen -->
     <div id="login-screen" class="container active">
         <div class="card">
-            <h1>DARK DOMAIN HUB</h1>
+            <h1>EVIL GPT</h1>
             <p class="subtitle">Enter if you dare.</p>
-            <form id="login-form">
-                <input type="text" id="username" placeholder="Username" required>
-                <input type="password" id="password" placeholder="Password" required>
+            
+            <div class="auth-toggle">
+                <button type="button" id="show-login-btn" onclick="toggleAuth('login')">LOGIN</button>
+                <button type="button" id="show-reg-btn" onclick="toggleAuth('register')">SIGN UP</button>
+            </div>
+
+            <!-- Login Form -->
+            <form id="login-form" class="auth-form hidden">
+                <input type="text" id="login-username" placeholder="Username" required>
+                <input type="password" id="login-password" placeholder="Password" required>
                 <button type="submit">ENTER THE VOID</button>
             </form>
+
+            <!-- Register Form -->
+            <form id="register-form" class="auth-form hidden">
+                <input type="text" id="reg-username" placeholder="Choose Username" required>
+                <input type="email" id="reg-email" placeholder="Email Address" required>
+                <input type="password" id="reg-password" placeholder="Create Password" required>
+                <button type="submit">CREATE ACCOUNT</button>
+            </form>
+
             <div id="error-msg" class="error"></div>
+            <div id="success-msg" class="success"></div>
         </div>
     </div>
 
     <!-- Main Dashboard -->
     <div id="dashboard" class="container hidden">
         
-        <!-- Sidebar -->
-        <nav class="sidebar">
+        <!-- Sidebar (Mobile Responsive) -->
+        <nav class="sidebar" id="sidebar">
             <div class="logo">DDH</div>
             <ul>
-                <li onclick="showSection('chat')" class="active">🗣️ CHAT</li>
-                <li onclick="showSection('premium')">💎 PREMIUM</li>
-                <li id="admin-link" onclick="showSection('admin')" style="display:none;">⚙️ ADMIN</li>
-                <li onclick="logout()">🚪 EXIT</li>
+                <li onclick="showSection('chat')" class="active"><i class="fas fa-comment-dots"></i> CHAT</li>
+                <li onclick="showSection('premium')"><i class="fas fa-crown"></i> PREMIUM</li>
+                <li id="admin-link" onclick="showSection('admin')" style="display:none;"><i class="fas fa-cog"></i> ADMIN</li>
+                <li onclick="logout()"><i class="fas fa-sign-out-alt"></i> EXIT</li>
             </ul>
             <div class="user-info">
                 <span id="current-user">User</span>
-                <span id="plan-badge">FREE</span>
+                <span id="plan-badge" class="badge">FREE</span>
             </div>
         </nav>
+
+        <!-- Mobile Menu Toggle -->
+        <div class="mobile-menu-btn" onclick="toggleSidebar()">
+            <i class="fas fa-bars"></i>
+        </div>
 
         <!-- Content Area -->
         <main class="content">
@@ -61,11 +90,19 @@
                     <h2>THE ORACLE</h2>
                     <p>Ask anything. It knows everything.</p>
                 </div>
+                
+                <!-- Live Stats -->
+                <div class="stats-bar">
+                    <span><i class="fas fa-users"></i> <span id="online-count">1,337</span> Online</span>
+                    <span><i class="fas fa-question-circle"></i> <span id="questions-count">99K+</span> Asked</span>
+                </div>
+
                 <div id="chat-box" class="chat-window">
                     <div class="message ai">
                         <p>I am listening... what do you seek?</p>
                     </div>
                 </div>
+                
                 <div class="input-area">
                     <input type="text" id="user-input" placeholder="Type your question..." disabled>
                     <button id="send-btn" onclick="sendMessage()" disabled>SPEAK</button>
@@ -104,7 +141,7 @@
                     </div>
                 </div>
                 
-                <!-- Updated Payment Modal with Image Upload -->
+                <!-- Payment Modal -->
                 <div class="payment-modal" id="payment-modal">
                     <h3>PAYMENT DETAILS</h3>
                     <p>Send payment to:</p>
@@ -113,12 +150,8 @@
                         <p><strong>Account Number:</strong> 8100481004</p>
                         <p><strong>Name:</strong> Daniel Dominion Folorunso</p>
                     </div>
-                    
-                    <label for="proof-upload">Upload Screenshot Proof:</label>
-                    <input type="file" id="proof-upload" accept="image/*">
-                    
-                    <p class="note">After paying, upload your screenshot below.</p>
-                    <button onclick="submitPaymentWithProof()">SUBMIT PROOF</button>
+                    <p class="note">After paying, click "I Paid" to wait for Admin approval.</p>
+                    <button onclick="requestUpgrade()">I PAID</button>
                     <button class="close-btn" onclick="closePaymentModal()">Close</button>
                 </div>
             </section>
@@ -129,8 +162,11 @@
                     <h2>ADMIN CONSOLE</h2>
                 </div>
                 <div class="admin-controls">
-                    <button onclick="broadcastMessage()">📢 BROADCAST TO ALL USERS</button>
-                    <textarea id="broadcast-text" placeholder="Enter broadcast message..."></textarea>
+                    <div class="broadcast-box">
+                        <h3>📢 Broadcast to All Users</h3>
+                        <textarea id="broadcast-text" placeholder="Enter broadcast message..."></textarea>
+                        <button onclick="broadcastMessage()">SEND BROADCAST</button>
+                    </div>
                     
                     <h3>Pending Approvals</h3>
                     <div id="pending-users-list">
@@ -144,4 +180,4 @@
 
     <script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
-                        </html>
+</html>
