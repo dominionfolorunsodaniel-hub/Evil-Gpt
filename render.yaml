@@ -11,14 +11,4 @@ services:
         value: "your_secure_password"
       - key: SECRET_KEY
         generateValue: true
-      - key: DB_HOST
-        sync: false
-      - key: DB_NAME
-        sync: false
-      - key: DB_USER
-        sync: false
-      - key: DB_PASSWORD
-        sync: false
-      - key: DB_PORT
-        value: "5432"
     plan: free
