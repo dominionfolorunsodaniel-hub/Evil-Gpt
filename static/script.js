@@ -1,307 +1,121 @@
-// State
+const $ = (id) => document.getElementById(id);
 let currentUser = null;
-let isAdmin = false;
-let userPlan = 'free'; 
-let premiumDays = 0;
+let currentConversation = null;
+let usage = {used:0, limit:20, remaining:20};
+let plans = {};
 
-// DOM Elements
-const tgOverlay = document.getElementById('tg-overlay');
-const loginScreen = document.getElementById('login-screen');
-const dashboard = document.getElementById('dashboard');
-const chatBox = document.getElementById('chat-box');
-const userInput = document.getElementById('user-input');
-const sendBtn = document.getElementById('send-btn');
-const premiumLock = document.getElementById('premium-lock');
-const adminLink = document.getElementById('admin-link');
-const pendingList = document.getElementById('pending-users-list');
-const sidebar = document.getElementById('sidebar');
-
-// Initialization
-window.onload = function() {
-    if(sessionStorage.getItem('tg_joined')) {
-        closeTgOverlay();
-    }
-    updateStats();
-};
-
-function closeTgOverlay() {
-    sessionStorage.setItem('tg_joined', 'true');
-    tgOverlay.style.display = 'none';
+async function api(url, options={}) {
+  const response = await fetch(url, {credentials:"same-origin", ...options,
+    headers: {"Content-Type":"application/json", ...(options.headers||{})}});
+  const data = await response.json().catch(()=>({error:"Unexpected server response."}));
+  if (!response.ok) throw new Error(data.error || data.message || "Request failed.");
+  return data;
 }
-
-// --- AUTH LOGIC ---
-function toggleAuth(type) {
-    const loginForm = document.getElementById('login-form');
-    const regForm = document.getElementById('register-form');
-    const loginBtn = document.getElementById('show-login-btn');
-    const regBtn = document.getElementById('show-reg-btn');
-    const errorMsg = document.getElementById('error-msg');
-    const successMsg = document.getElementById('success-msg');
-    
-    errorMsg.innerText = "";
-    successMsg.innerText = "";
-
-    if (type === 'login') {
-        loginForm.classList.remove('hidden');
-        regForm.classList.add('hidden');
-        loginBtn.classList.add('active-tab');
-        regBtn.classList.remove('active-tab');
-    } else {
-        loginForm.classList.add('hidden');
-        regForm.classList.remove('hidden');
-        regBtn.classList.add('active-tab');
-        loginBtn.classList.remove('active-tab');
-    }
+function message(text, kind="") {
+  const box=$("auth-message"); box.textContent=text; box.className="notice "+kind;
 }
-
-// Initialize default view
-document.addEventListener('DOMContentLoaded', () => {
-    toggleAuth('login');
+function authMode(mode) {
+  $("login-form").classList.toggle("hidden",mode!=="login");
+  $("register-form").classList.toggle("hidden",mode!=="register");
+  $("login-tab").classList.toggle("active",mode==="login");
+  $("register-tab").classList.toggle("active",mode==="register");
+  message("");
+}
+$("login-tab").addEventListener("click",()=>authMode("login"));
+$("register-tab").addEventListener("click",()=>authMode("register"));
+$("login-form").addEventListener("submit", async e=>{
+  e.preventDefault(); message("Signing in…");
+  try { const d=await api("/login",{method:"POST",body:JSON.stringify({username:$("login-username").value,password:$("login-password").value})}); await enterApp(d.user); }
+  catch(err){message(err.message,"error");}
 });
-
-// Register
-document.getElementById('register-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const username = document.getElementById('reg-username').value;
-    const email = document.getElementById('reg-email').value;
-    const password = document.getElementById('reg-password').value;
-    const successMsg = document.getElementById('success-msg');
-
-    try {
-        const res = await fetch('/register', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({username, email, password})
-        });
-        const data = await res.json();
-        
-        if(data.success) {
-            successMsg.innerText = "Account created! Please wait for Admin approval.";
-            document.getElementById('register-form').reset();
-            setTimeout(() => {
-                toggleAuth('login');
-                successMsg.innerText = "";
-            }, 2000);
-        } else {
-            document.getElementById('error-msg').innerText = data.message || "Registration failed";
-        }
-    } catch (err) {
-        document.getElementById('error-msg').innerText = "Connection Error";
-    }
+$("register-form").addEventListener("submit",async e=>{
+  e.preventDefault(); message("Creating account…");
+  try {
+    const d=await api("/register",{method:"POST",body:JSON.stringify({username:$("reg-username").value,email:$("reg-email").value,password:$("reg-password").value})});
+    message(d.message+" You can sign in now.","success"); authMode("login");
+  } catch(err){message(err.message,"error");}
 });
-
-// Login
-document.getElementById('login-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const username = document.getElementById('login-username').value;
-    const password = document.getElementById('login-password').value;
-
-    try {
-        const res = await fetch('/login', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({username, password})
-        });
-        const data = await res.json();
-        
-        if(data.success) {
-            currentUser = data.user.username;
-            isAdmin = data.user.isAdmin;
-            userPlan = data.user.plan;
-            premiumDays = data.user.premiumDays || 0;
-            
-            setupDashboard();
-        } else {
-            document.getElementById('error-msg').innerText = "ACCESS DENIED";
-        }
-    } catch (err) {
-        document.getElementById('error-msg').innerText = "CONNECTION ERROR";
-    }
+async function enterApp(user) {
+  currentUser=user;
+  $("auth-view").classList.add("hidden"); $("app-view").classList.remove("hidden");
+  $("side-username").textContent=user.username; $("avatar").textContent=user.username.slice(0,1).toUpperCase();
+  $("admin-nav").classList.toggle("hidden",!user.isAdmin);
+  await refreshMe(); await loadHistory(); await loadAnnouncements();
+  newChat();
+}
+async function refreshMe(){
+  const d=await api("/api/me"); currentUser=d.user; usage=d.usage; plans=d.plans;
+  $("side-plan").textContent=(plans[currentUser.plan]?.name||"Free")+" plan";
+  $("top-plan").textContent=(plans[currentUser.plan]?.name||"FREE").toUpperCase();
+  $("usage-label").textContent=`${usage.remaining} of ${usage.limit} messages left`;
+  $("usage-number").textContent=`${usage.used} / ${usage.limit}`;
+  $("usage-progress").style.width=Math.min(100,usage.used/usage.limit*100)+"%";
+}
+function addMessage(role,text){
+  const wrap=document.createElement("article"); wrap.className="message "+role;
+  const tag=document.createElement("div"); tag.className="message-tag"; tag.textContent=role==="user"?"YOU":"EVIL GPT";
+  const body=document.createElement("div"); body.className="message-body"; body.textContent=text;
+  wrap.append(tag,body); $("chat-messages").append(wrap); wrap.scrollIntoView({behavior:"smooth",block:"end"});
+}
+function newChat(){currentConversation=null;$("chat-messages").replaceChildren();$("welcome").classList.remove("hidden");$("message-input").value="";showPage("chat");}
+$("new-chat").addEventListener("click",newChat);
+$("chat-form").addEventListener("submit",async e=>{
+  e.preventDefault(); const input=$("message-input"); const text=input.value.trim(); if(!text)return;
+  $("welcome").classList.add("hidden"); input.value=""; addMessage("user",text);
+  const send=$("chat-form").querySelector("button"); send.disabled=true; send.textContent="…";
+  const pending=document.createElement("article"); pending.className="message assistant"; pending.textContent="Evil GPT is thinking…"; $("chat-messages").append(pending);
+  try{
+    const d=await api("/ask",{method:"POST",body:JSON.stringify({question:text,conversationId:currentConversation,webSearch:$("web-search").checked})});
+    pending.remove(); currentConversation=d.conversationId; addMessage("assistant",d.answer); usage=d.usage;
+    $("usage-label").textContent=`${usage.remaining} of ${usage.limit} messages left`; await loadHistory();
+  }catch(err){pending.remove();addMessage("assistant",err.message);}
+  finally{send.disabled=false;send.textContent="↑";}
 });
-
-function setupDashboard() {
-    loginScreen.classList.add('hidden');
-    dashboard.classList.remove('hidden');
-    document.getElementById('current-user').innerText = currentUser;
-    
-    if(isAdmin) {
-        adminLink.style.display = 'flex';
-    }
-
-    updatePlanUI();
+$("message-input").addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();$("chat-form").requestSubmit();}});
+document.querySelectorAll("[data-prompt]").forEach(b=>b.addEventListener("click",()=>{$("message-input").value=b.dataset.prompt;$("message-input").focus();}));
+async function loadHistory(){
+  const d=await api("/api/conversations"); const list=$("history-list"); list.replaceChildren();
+  d.conversations.forEach(c=>{const b=document.createElement("button");b.className="history-item";b.textContent=c.title;b.addEventListener("click",()=>openConversation(c.id));list.append(b);});
 }
-
-function updatePlanUI() {
-    const badge = document.getElementById('plan-badge');
-    
-    if(userPlan === 'paid') {
-        badge.innerText = `PREMIUM (${premiumDays}d)`;
-        badge.style.background = '#00ff41';
-        badge.style.color = 'black';
-        premiumLock.style.display = 'none';
-        userInput.disabled = false;
-        sendBtn.disabled = false;
-    } else if (userPlan === 'pending') {
-        badge.innerText = 'PENDING';
-        badge.style.background = '#ffff00';
-        badge.style.color = 'black';
-        premiumLock.style.display = 'block';
-        userInput.disabled = true;
-        sendBtn.disabled = true;
-    } else {
-        badge.innerText = 'FREE';
-        badge.style.background = '#333';
-        badge.style.color = '#fff';
-        premiumLock.style.display = 'block';
-        userInput.disabled = true;
-        sendBtn.disabled = true;
-    }
+async function openConversation(id){
+  try{const d=await api("/api/conversations/"+id);currentConversation=id;$("welcome").classList.add("hidden");$("chat-messages").replaceChildren();d.messages.forEach(m=>addMessage(m.role,m.content));showPage("chat");}
+  catch(e){addMessage("assistant",e.message);}
 }
-
-// Navigation
-function showSection(sectionId) {
-    document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
-    document.getElementById(sectionId + '-section').classList.add('active');
-    
-    // Update sidebar active state
-    document.querySelectorAll('.sidebar li').forEach(li => li.classList.remove('active'));
-    event.currentTarget.classList.add('active');
-    
-    // Close sidebar on mobile after selection
-    if(window.innerWidth <= 768) {
-        sidebar.classList.remove('open');
-    }
-
-    if(sectionId === 'admin' && isAdmin) {
-        loadPendingUsers();
-    }
+function showPage(page){
+  ["chat","plans","admin"].forEach(p=>$(p+"-page").classList.toggle("hidden",p!==page));
+  document.querySelectorAll(".nav-item").forEach(b=>b.classList.toggle("active",b.dataset.page===page));
+  $("page-heading").textContent=page==="chat"?"Your thinking partner":page==="plans"?"Plans & usage":"Admin console";
+  if(page==="plans")renderPlans(); if(page==="admin"&&currentUser.isAdmin)loadAdmin();
+  $("sidebar").classList.remove("open");
 }
-
-function toggleSidebar() {
-    sidebar.classList.toggle('open');
+document.querySelectorAll(".nav-item").forEach(b=>b.addEventListener("click",()=>showPage(b.dataset.page)));
+$("mobile-menu").addEventListener("click",()=>$("sidebar").classList.toggle("open"));
+function renderPlans(){
+  const grid=$("plans-grid");grid.replaceChildren();
+  Object.entries(plans).forEach(([key,p])=>{
+    const card=document.createElement("article");card.className="plan-card"+(key==="pro"?" featured":"");
+    const name=document.createElement("h3");name.textContent=p.name;
+    const price=document.createElement("div");price.className="plan-price";price.textContent=p.price===0?"Free":`₦${p.price.toLocaleString("en-NG")} / month`;
+    const limit=document.createElement("p");limit.textContent=`${p.monthly_messages.toLocaleString()} messages each month`;
+    const btn=document.createElement("button");btn.className=key===currentUser.plan?"secondary":"primary";btn.textContent=key===currentUser.plan?"Current plan":key==="free"?"Included":"Request upgrade";btn.disabled=key===currentUser.plan||key==="free";
+    btn.addEventListener("click",async()=>{try{const d=await api("/api/upgrade",{method:"POST",body:JSON.stringify({plan:key})});alert(d.message);}catch(e){alert(e.message);}});
+    card.append(name,price,limit,btn);grid.append(card);
+  });
 }
-
-// Chat Logic
-async function sendMessage() {
-    const text = userInput.value;
-    if(!text) return;
-
-    addMessage(text, 'user');
-    userInput.value = '';
-
-    sendBtn.innerText = "THINKING...";
-    sendBtn.disabled = true;
-    
-    setTimeout(async () => {
-        try {
-            const res = await fetch('/ask', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({question: text, user: currentUser})
-            });
-            const data = await res.json();
-            addMessage(data.answer, 'ai');
-        } catch (e) {
-            addMessage("The void remains silent...", 'ai');
-        }
-        sendBtn.innerText = "SPEAK";
-        sendBtn.disabled = false;
-    }, 1000);
-}
-
-function addMessage(text, sender) {
-    const div = document.createElement('div');
-    div.className = `message ${sender}`;
-    div.innerHTML = `<p>${text}</p>`;
-    chatBox.appendChild(div);
-    chatBox.scrollTop = chatBox.scrollHeight;
-}
-
-// Premium Logic
-function initiatePayment(amount) {
-    document.getElementById('payment-modal').style.display = 'block';
-    window.currentPaymentAmount = amount;
-}
-
-function closePaymentModal() {
-    document.getElementById('payment-modal').style.display = 'none';
-}
-
-async function requestUpgrade() {
-    try {
-        const res = await fetch('/upgrade_request', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({amount: window.currentPaymentAmount})
-        });
-        const data = await res.json();
-        if(data.success) {
-            alert("Request sent! Wait for Admin approval.");
-            userPlan = 'pending';
-            updatePlanUI();
-            closePaymentModal();
-        }
-    } catch(e) {
-        alert("Error sending request.");
-    }
-}
-
-// Admin Logic
-async function broadcastMessage() {
-    const text = document.getElementById('broadcast-text').value;
-    if(!text) return;
-    
-    const res = await fetch('/broadcast', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({message: text})
+async function loadAdmin(){
+  try{const d=await api("/api/admin/users");const root=$("admin-users");root.replaceChildren();
+    if(!d.users.length){root.textContent="No registered users yet.";return;}
+    d.users.forEach(u=>{const row=document.createElement("div");row.className="admin-user";
+      const info=document.createElement("div");const title=document.createElement("strong");title.textContent=u.username;const detail=document.createElement("small");detail.textContent=`${u.email} · Current: ${u.plan} · Requested: ${u.requested_plan||"None"}`;info.append(title,detail);
+      const select=document.createElement("select");Object.entries(plans).filter(([k])=>k!=="free").forEach(([k,p])=>{const o=document.createElement("option");o.value=k;o.textContent=p.name;select.append(o);});if(u.requested_plan)select.value=u.requested_plan;
+      const btn=document.createElement("button");btn.className="secondary";btn.textContent="Approve";btn.addEventListener("click",async()=>{try{await api(`/api/admin/approve/${u.id}`,{method:"POST",body:JSON.stringify({plan:select.value})});loadAdmin();}catch(e){alert(e.message);}});
+      row.append(info,select,btn);root.append(row);
     });
-    alert("Broadcast Sent!");
-    document.getElementById('broadcast-text').value = '';
+  }catch(e){$("admin-users").textContent=e.message;}
 }
-
-async function loadPendingUsers() {
-    try {
-        const res = await fetch('/admin/users');
-        const data = await res.json();
-        pendingList.innerHTML = '';
-        
-        if(data.users.length === 0) {
-            pendingList.innerHTML = '<p>No pending users.</p>';
-            return;
-        }
-
-        data.users.forEach(user => {
-            const div = document.createElement('div');
-            div.className = 'pending-item';
-            div.innerHTML = `
-                <span>${user.username} (${user.plan})</span>
-                <button onclick="approveUser('${user.username}')">Approve</button>
-            `;
-            pendingList.appendChild(div);
-        });
-    } catch(e) {
-        console.error("Failed to load users");
-    }
+$("send-announcement").addEventListener("click",async()=>{try{const msg=$("announcement-text").value.trim();await api("/api/admin/announcement",{method:"POST",body:JSON.stringify({message:msg})});$("announcement-text").value="";alert("Announcement published.");}catch(e){alert(e.message);}});
+async function loadAnnouncements(){
+  try{const d=await api("/api/announcements");if(d.announcements.length){const latest=d.announcements[0];const bar=document.createElement("div");bar.className="announcement";bar.textContent="Announcement: "+latest.message;$("chat-page").prepend(bar);}}catch(e){}
 }
-
-async function approveUser(username) {
-    try {
-        await fetch(`/admin/approve/${username}`, { method: 'POST' });
-        loadPendingUsers();
-    } catch(e) {
-        alert("Error approving user");
-    }
-}
-
-function logout() {
-    location.reload();
-}
-
-// Fake Stats
-function updateStats() {
-    setInterval(() => {
-        const online = Math.floor(Math.random() * (1500 - 1000) + 1000);
-        document.getElementById('online-count').innerText = online.toLocaleString();
-    }, 5000);
-}
+$("logout").addEventListener("click",async()=>{try{await api("/logout",{method:"POST",body:"{}"});}finally{location.reload();}});
+(async()=>{try{const d=await api("/api/me");await enterApp(d.user);}catch(e){}})();
