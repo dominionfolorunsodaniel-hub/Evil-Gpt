@@ -1,0 +1,4 @@
+flask
+flask-cors
+gunicorn
+openai==0.28.0 # Use this specific version for compatibility
