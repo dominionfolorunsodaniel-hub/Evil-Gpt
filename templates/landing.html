@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Evil GPT — The smartest AI workspace</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <div class="auth-shell" style="text-align: center; padding-top: 10vh;">
+    <div style="max-width: 600px;">
+      <div class="brand-mark" style="margin: 0 auto 20px; width: 60px; height: 60px; font-size: 35px; border-radius: 20px;">✦</div>
+      <h1 style="font: 700 48px/1.1 'Space Grotesk'; margin-bottom: 20px;">Think beyond<br><span style="color:var(--accent)">the ordinary.</span></h1>
+      <p class="muted" style="font-size: 18px; margin-bottom: 30px;">A smarter space for ideas, research, writing and building. Powered by Groq.</p>
+      
+      <div style="display: flex; gap: 10px; justify-content: center;">
+        <a href="/?force_login=1" class="primary" style="text-decoration:none; padding: 15px 30px; font-size: 16px;">Start for free →</a>
+        <a href="/privacy" class="secondary" style="text-decoration:none; padding: 15px 30px; font-size: 16px;">Privacy</a>
+      </div>
+
+      <div style="margin-top: 60px; display: flex; gap: 20px; justify-content: center; text-align: left;">
+        <div class="admin-card" style="flex: 1;">
+          <h3 style="color: var(--accent); margin-top:0;">⚡ Blazing Fast</h3>
+          <p class="muted tiny">Get answers in milliseconds. Switch between Fast and Deep thinking models.</p>
+        </div>
+        <div class="admin-card" style="flex: 1;">
+          <h3 style="color: var(--accent); margin-top:0;">🧠 Smart Personas</h3>
+          <p class="muted tiny">Choose from a Tutor, Code Reviewer, or Business Advisor.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
