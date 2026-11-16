@@ -1,10 +1,17 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#090b12">
   <title>Evil GPT — Your AI workspace</title>
+  <meta name="description" content="Ask anything and get clear, honest AI answers. A smarter space for ideas, research, writing and building.">
+  <meta property="og:title" content="Evil GPT — Your AI workspace">
+  <meta property="og:description" content="Clear, honest answers. Ask anything, explore ideas, write, learn or solve problems.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://evil-gpt-j2rx.onrender.com/">
+  <meta property="og:image" content="https://evil-gpt-j2rx.onrender.com/static/og.png">
+  <meta name="twitter:card" content="summary_large_image">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
@@ -32,7 +39,7 @@
         <button class="primary full" type="submit">Create account <span>→</span></button>
       </form>
       <p id="auth-message" class="notice" role="status"></p>
-      <p class="fine-print">By continuing, use the service responsibly and protect your account credentials.</p>
+      <p class="fine-print">By continuing, use the service responsibly and protect your account credentials. AI can make mistakes — verify important information.</p>
     </div>
   </div>
 
@@ -41,25 +48,77 @@
       <a class="brand" href="#"><span class="brand-mark">E</span> EVIL GPT</a>
       <button id="new-chat" class="new-chat">＋ New chat</button>
       <div class="side-label">WORKSPACE</div>
-      <nav><button class="nav-item active" data-page="chat">◈ <span>AI Assistant</span></button><button class="nav-item" data-page="plans">✦ <span>Plans & usage</span></button><button class="nav-item hidden" id="admin-nav" data-page="admin">⚙ <span>Admin console</span></button></nav>
+      <nav>
+        <button class="nav-item active" data-page="chat">◈ <span>AI Assistant</span></button>
+        <button class="nav-item" data-page="prompts">✧ <span>Prompt library</span></button>
+        <button class="nav-item" data-page="plans">✦ <span>Plans & usage</span></button>
+        <button class="nav-item hidden" id="admin-nav" data-page="admin">⚙ <span>Admin console</span></button>
+      </nav>
       <div class="side-label history-label">RECENT CHATS</div>
       <div id="history-list" class="history-list"></div>
-      <div class="sidebar-bottom"><div class="user-chip"><div class="avatar" id="avatar">U</div><div><strong id="side-username">User</strong><small id="side-plan">Free plan</small></div></div><button id="logout" class="logout">Sign out ↗</button></div>
+      <div class="sidebar-bottom">
+        <div class="user-chip"><div class="avatar" id="avatar">U</div><div><strong id="side-username">User</strong><small id="side-plan">Free plan</small></div></div>
+        <button id="logout" class="logout">Sign out ↗</button>
+        <div class="footer-links">
+          <a href="/privacy" target="_blank">Privacy</a> · <a href="/terms" target="_blank">Terms</a> · <a href="/changelog" target="_blank">Changelog</a>
+        </div>
+      </div>
     </aside>
 
     <main class="main">
-      <header class="topbar"><button id="mobile-menu" class="mobile-menu">☰</button><div><span class="eyebrow">EVIL GPT ASSISTANT</span><strong id="page-heading">Your thinking partner</strong></div><div class="top-actions"><span class="plan-pill" id="top-plan">FREE</span></div></header>
+      <header class="topbar">
+        <button id="mobile-menu" class="mobile-menu">☰</button>
+        <div><span class="eyebrow">EVIL GPT ASSISTANT</span><strong id="page-heading">Your thinking partner</strong></div>
+        <div class="top-actions">
+          <button id="theme-toggle" class="icon-btn" title="Toggle theme">☀</button>
+          <span class="plan-pill" id="top-plan">FREE</span>
+        </div>
+      </header>
+
       <section id="chat-page" class="page">
         <div class="welcome" id="welcome">
-          <div class="orb">✦</div><p class="eyebrow">WELCOME TO EVIL GPT</p><h1>What are we<br><span>creating today?</span></h1><p class="muted">Ask questions, explore ideas, write, learn or solve problems.</p>
-          <div class="suggestions"><button data-prompt="Help me create a clear project plan.">✧ Create a project plan</button><button data-prompt="Explain a difficult topic in simple terms.">⌘ Learn something</button><button data-prompt="Review and improve this piece of writing:">✎ Improve my writing</button></div>
+          <div class="orb">✦</div><p class="eyebrow">WELCOME TO EVIL GPT</p>
+          <h1>What are we<br><span>creating today?</span></h1>
+          <p class="muted">Ask questions, explore ideas, write, learn or solve problems.</p>
+          <div class="suggestions">
+            <button data-prompt="Help me create a clear project plan.">✧ Create a project plan</button>
+            <button data-prompt="Explain a difficult topic in simple terms.">⌘ Learn something</button>
+            <button data-prompt="Review and improve this piece of writing:">✎ Improve my writing</button>
+            <button data-prompt="Debug this Python error and suggest a fix:">⌗ Debug code</button>
+            <button id="surprise-btn" class="surprise">✦ Surprise me</button>
+          </div>
         </div>
         <div id="chat-messages" class="chat-messages"></div>
-        <div class="composer-wrap"><div class="composer-tools"><label class="web-toggle"><input type="checkbox" id="web-search"> <span>Web research</span></label><span class="muted tiny" id="usage-label">Loading usage…</span></div><form id="chat-form" class="composer"><textarea id="message-input" rows="1" maxlength="12000" placeholder="Message Evil GPT…" required></textarea><button class="send-btn" type="submit" aria-label="Send message">↑</button></form><p class="fine-print center">AI can make mistakes. Check important information.</p></div>
+        <div class="composer-wrap">
+          <div class="composer-tools">
+            <label class="web-toggle"><input type="checkbox" id="web-search"> <span>Web research</span></label>
+            <select id="persona-select" class="persona-select" title="Choose a persona"></select>
+            <span class="muted tiny" id="usage-label">Loading usage…</span>
+          </div>
+          <form id="chat-form" class="composer">
+            <button type="button" id="mic-btn" class="icon-btn" title="Voice input">🎙</button>
+            <textarea id="message-input" rows="1" maxlength="12000" placeholder="Message Evil GPT…" required></textarea>
+            <button class="send-btn" type="submit" aria-label="Send message">↑</button>
+          </form>
+          <p class="fine-print center">AI can make mistakes. Check important information.</p>
+        </div>
+      </section>
+
+      <section id="prompts-page" class="page hidden">
+        <div class="section-intro">
+          <p class="eyebrow">PROMPT LIBRARY</p>
+          <h1>Start with a great prompt.</h1>
+          <p class="muted">Click any prompt to load it into the chat composer.</p>
+        </div>
+        <div id="prompts-grid" class="prompts-grid"></div>
       </section>
 
       <section id="plans-page" class="page hidden">
-        <div class="section-intro"><p class="eyebrow">PLANS & USAGE</p><h1>Choose your pace.</h1><p class="muted">Every plan has a monthly message allowance. Upgrade requests are reviewed by an administrator.</p><div class="usage-card"><div><span class="muted">Messages used this month</span><strong id="usage-number">—</strong></div><div class="progress"><span id="usage-progress"></span></div></div></div>
+        <div class="section-intro">
+          <p class="eyebrow">PLANS & USAGE</p><h1>Choose your pace.</h1>
+          <p class="muted">Every plan has a monthly message allowance. Upgrade requests are reviewed by an administrator.</p>
+          <div class="usage-card"><div><span class="muted">Messages used this month</span><strong id="usage-number">—</strong></div><div class="progress"><span id="usage-progress"></span></div></div>
+        </div>
         <div id="plans-grid" class="plans-grid"></div>
         <p class="fine-print">Prices are monthly in Nigerian naira. Upgrade requests do not confirm payment or activate a plan automatically.</p>
       </section>
@@ -67,6 +126,7 @@
       <section id="admin-page" class="page hidden">
         <div class="section-intro"><p class="eyebrow">CONTROL CENTRE</p><h1>Admin console</h1><p class="muted">Review upgrade requests and publish announcements.</p></div>
         <div class="admin-card"><h2>Users & upgrade requests</h2><div id="admin-users">Loading…</div></div>
+        <div class="admin-card"><h2>Payment requests & proofs</h2><div id="admin-payments">Loading…</div></div>
         <div class="admin-card"><h2>Announcement</h2><textarea id="announcement-text" rows="4" placeholder="Write an update for users…"></textarea><button id="send-announcement" class="primary">Publish announcement</button></div>
       </section>
     </main>
