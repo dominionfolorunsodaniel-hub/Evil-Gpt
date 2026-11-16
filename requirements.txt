@@ -1,4 +1,7 @@
+
 flask
 flask-cors
 gunicorn
-psycopg2-binary # For Neon Database support
+psycopg2-binary
+openai
+werkzeug
