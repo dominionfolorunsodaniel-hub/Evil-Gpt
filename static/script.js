@@ -1,6 +1,7 @@
+// State
 let currentUser = null;
 let isAdmin = false;
-let userPlan = 'free';
+let userPlan = 'free'; 
 let premiumDays = 0;
 
 // DOM Elements
@@ -13,11 +14,14 @@ const sendBtn = document.getElementById('send-btn');
 const premiumLock = document.getElementById('premium-lock');
 const adminLink = document.getElementById('admin-link');
 const pendingList = document.getElementById('pending-users-list');
+const sidebar = document.getElementById('sidebar');
 
+// Initialization
 window.onload = function() {
     if(sessionStorage.getItem('tg_joined')) {
         closeTgOverlay();
     }
+    updateStats();
 };
 
 function closeTgOverlay() {
@@ -25,11 +29,72 @@ function closeTgOverlay() {
     tgOverlay.style.display = 'none';
 }
 
-// Login Logic
+// --- AUTH LOGIC ---
+function toggleAuth(type) {
+    const loginForm = document.getElementById('login-form');
+    const regForm = document.getElementById('register-form');
+    const loginBtn = document.getElementById('show-login-btn');
+    const regBtn = document.getElementById('show-reg-btn');
+    const errorMsg = document.getElementById('error-msg');
+    const successMsg = document.getElementById('success-msg');
+    
+    errorMsg.innerText = "";
+    successMsg.innerText = "";
+
+    if (type === 'login') {
+        loginForm.classList.remove('hidden');
+        regForm.classList.add('hidden');
+        loginBtn.classList.add('active-tab');
+        regBtn.classList.remove('active-tab');
+    } else {
+        loginForm.classList.add('hidden');
+        regForm.classList.remove('hidden');
+        regBtn.classList.add('active-tab');
+        loginBtn.classList.remove('active-tab');
+    }
+}
+
+// Initialize default view
+document.addEventListener('DOMContentLoaded', () => {
+    toggleAuth('login');
+});
+
+// Register
+document.getElementById('register-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const username = document.getElementById('reg-username').value;
+    const email = document.getElementById('reg-email').value;
+    const password = document.getElementById('reg-password').value;
+    const successMsg = document.getElementById('success-msg');
+
+    try {
+        const res = await fetch('/register', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({username, email, password})
+        });
+        const data = await res.json();
+        
+        if(data.success) {
+            successMsg.innerText = "Account created! Please wait for Admin approval.";
+            document.getElementById('register-form').reset();
+            setTimeout(() => {
+                toggleAuth('login');
+                successMsg.innerText = "";
+            }, 2000);
+        } else {
+            document.getElementById('error-msg').innerText = data.message || "Registration failed";
+        }
+    } catch (err) {
+        document.getElementById('error-msg').innerText = "Connection Error";
+    }
+});
+
+// Login
 document.getElementById('login-form').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const username = document.getElementById('username').value;
-    const password = document.getElementById('password').value;
+    const username = document.getElementById('login-username').value;
+    const password = document.getElementById('login-password').value;
 
     try {
         const res = await fetch('/login', {
@@ -60,71 +125,88 @@ function setupDashboard() {
     document.getElementById('current-user').innerText = currentUser;
     
     if(isAdmin) {
-        adminLink.style.display = 'block';
+        adminLink.style.display = 'flex';
     }
+
     updatePlanUI();
 }
 
 function updatePlanUI() {
     const badge = document.getElementById('plan-badge');
-    const lockMsg = document.getElementById('premium-lock');
     
     if(userPlan === 'paid') {
         badge.innerText = `PREMIUM (${premiumDays}d)`;
-        badge.style.color = '#00ff41';
-        lockMsg.style.display = 'none';
+        badge.style.background = '#00ff41';
+        badge.style.color = 'black';
+        premiumLock.style.display = 'none';
         userInput.disabled = false;
         sendBtn.disabled = false;
     } else if (userPlan === 'pending') {
-        badge.innerText = 'PENDING APPROVAL';
-        badge.style.color = '#ffff00';
-        lockMsg.style.display = 'block';
+        badge.innerText = 'PENDING';
+        badge.style.background = '#ffff00';
+        badge.style.color = 'black';
+        premiumLock.style.display = 'block';
         userInput.disabled = true;
         sendBtn.disabled = true;
     } else {
         badge.innerText = 'FREE';
-        badge.style.color = '#ff003c';
-        lockMsg.style.display = 'block';
+        badge.style.background = '#333';
+        badge.style.color = '#fff';
+        premiumLock.style.display = 'block';
         userInput.disabled = true;
         sendBtn.disabled = true;
     }
 }
 
+// Navigation
 function showSection(sectionId) {
     document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
     document.getElementById(sectionId + '-section').classList.add('active');
     
+    // Update sidebar active state
     document.querySelectorAll('.sidebar li').forEach(li => li.classList.remove('active'));
-    event.target.classList.add('active');
+    event.currentTarget.classList.add('active');
+    
+    // Close sidebar on mobile after selection
+    if(window.innerWidth <= 768) {
+        sidebar.classList.remove('open');
+    }
 
     if(sectionId === 'admin' && isAdmin) {
         loadPendingUsers();
     }
 }
 
+function toggleSidebar() {
+    sidebar.classList.toggle('open');
+}
+
+// Chat Logic
 async function sendMessage() {
     const text = userInput.value;
     if(!text) return;
 
     addMessage(text, 'user');
     userInput.value = '';
+
     sendBtn.innerText = "THINKING...";
     sendBtn.disabled = true;
-
-    try {
-        const res = await fetch('/ask', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({question: text, user: currentUser})
-        });
-        const data = await res.json();
-        addMessage(data.answer, 'ai');
-    } catch (e) {
-        addMessage("The void remains silent...", 'ai');
-    }
     
-    sendBtn.innerText = "SPEAK";
-    sendBtn.disabled = false;
+    setTimeout(async () => {
+        try {
+            const res = await fetch('/ask', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({question: text, user: currentUser})
+            });
+            const data = await res.json();
+            addMessage(data.answer, 'ai');
+        } catch (e) {
+            addMessage("The void remains silent...", 'ai');
+        }
+        sendBtn.innerText = "SPEAK";
+        sendBtn.disabled = false;
+    }, 1000);
 }
 
 function addMessage(text, sender) {
@@ -135,6 +217,7 @@ function addMessage(text, sender) {
     chatBox.scrollTop = chatBox.scrollHeight;
 }
 
+// Premium Logic
 function initiatePayment(amount) {
     document.getElementById('payment-modal').style.display = 'block';
     window.currentPaymentAmount = amount;
@@ -144,38 +227,30 @@ function closePaymentModal() {
     document.getElementById('payment-modal').style.display = 'none';
 }
 
-async function submitPaymentWithProof() {
-    const fileInput = document.getElementById('proof-upload');
-    if(fileInput.files.length === 0) {
-        alert("Please upload a screenshot of your payment!");
-        return;
-    }
-
-    const formData = new FormData();
-    formData.append('file', fileInput.files[0]);
-
+async function requestUpgrade() {
     try {
-        const res = await fetch('/upload_payment', {
+        const res = await fetch('/upgrade_request', {
             method: 'POST',
-            body: formData // Don't set Content-Type header manually when sending FormData
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({amount: window.currentPaymentAmount})
         });
         const data = await res.json();
         if(data.success) {
-            alert("Proof sent! Wait for Admin approval.");
+            alert("Request sent! Wait for Admin approval.");
             userPlan = 'pending';
             updatePlanUI();
             closePaymentModal();
-        } else {
-            alert("Error: " + data.message);
         }
     } catch(e) {
-        alert("Connection Error");
+        alert("Error sending request.");
     }
 }
 
+// Admin Logic
 async function broadcastMessage() {
     const text = document.getElementById('broadcast-text').value;
     if(!text) return;
+    
     const res = await fetch('/broadcast', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
@@ -191,20 +266,16 @@ async function loadPendingUsers() {
         const data = await res.json();
         pendingList.innerHTML = '';
         
+        if(data.users.length === 0) {
+            pendingList.innerHTML = '<p>No pending users.</p>';
+            return;
+        }
+
         data.users.forEach(user => {
             const div = document.createElement('div');
             div.className = 'pending-item';
-            
-            let proofLink = '';
-            if(user.proof) {
-                proofLink = `<br><small><a href="/static/uploads/${user.proof}" target="_blank">View Proof</a></small>`;
-            }
-
             div.innerHTML = `
-                <div>
-                    <strong>${user.username}</strong> (${user.plan})
-                    ${proofLink}
-                </div>
+                <span>${user.username} (${user.plan})</span>
                 <button onclick="approveUser('${user.username}')">Approve</button>
             `;
             pendingList.appendChild(div);
@@ -214,12 +285,23 @@ async function loadPendingUsers() {
     }
 }
 
-function approveUser(username) {
-    fetch(`/admin/approve/${username}`, { method: 'POST' })
-        .then(() => loadPendingUsers())
-        .catch(err => alert("Error approving user"));
+async function approveUser(username) {
+    try {
+        await fetch(`/admin/approve/${username}`, { method: 'POST' });
+        loadPendingUsers();
+    } catch(e) {
+        alert("Error approving user");
+    }
 }
 
 function logout() {
     location.reload();
+}
+
+// Fake Stats
+function updateStats() {
+    setInterval(() => {
+        const online = Math.floor(Math.random() * (1500 - 1000) + 1000);
+        document.getElementById('online-count').innerText = online.toLocaleString();
+    }, 5000);
 }
