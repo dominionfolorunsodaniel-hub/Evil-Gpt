@@ -1,23 +1,25 @@
 import os
-from flask import Flask, render_template, request, jsonify, session
+import json
+from flask import Flask, render_template, request, jsonify, session, send_from_directory
 from flask_cors import CORS
-import openai
+from openai import OpenAI
+from dotenv import load_dotenv
+import base64
 
-# Initialize Flask App
-app = Flask(__name__)
+# Load Environment Variables
+load_dotenv()
+
+app = Flask(__name__, static_folder='static')
 CORS(app)
-app.secret_key = os.environ.get('SECRET_KEY', 'supersecret')
 
-# --- CONFIGURATION ---
-# Set your OpenAI Key here for local testing, or use Environment Variable on Render
-OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', 'YOUR_OPENAI_KEY_HERE') 
-openai.api_key = OPENAI_API_KEY
-
-# Admin Credentials from Environment Variables
+# Configuration
 ADMIN_USER = os.environ.get('ADMIN_USERNAME', 'admin')
 ADMIN_PASS = os.environ.get('ADMIN_PASSWORD', 'password')
+OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY') # Set this in Render Env Vars!
 
-# In-memory database (Replace with Neon DB later)
+client = OpenAI(api_key=OPENAI_API_KEY)
+
+# In-memory DB (For production, replace with Neon/PostgreSQL)
 users_db = {
     ADMIN_USER: {
         'password': ADMIN_PASS,
@@ -37,11 +39,7 @@ def login():
     username = data.get('username')
     password = data.get('password')
     
-    # Check if user exists, if not, create them as free
-    if username not in users_db:
-        users_db[username] = {'password': 'temp', 'plan': 'free', 'premium_days': 0, 'is_admin': False}
-        
-    if users_db[username]['password'] == password:
+    if username in users_db and users_db[username]['password'] == password:
         user_data = users_db[username]
         session['user'] = username
         return jsonify({
@@ -57,62 +55,80 @@ def login():
 
 @app.route('/ask', methods=['POST'])
 def ask():
-    """Connects to OpenAI to answer ANY question"""
     data = request.json
     question = data.get('question', '')
+    user = session.get('user')
     
+    if not user:
+        return jsonify({'error': 'Not logged in'}), 401
+        
+    user_data = users_db.get(user)
+    if user_data['plan'] != 'paid' and user_data['plan'] != 'pending':
+        return jsonify({'answer': "🔒 Upgrade to Premium to continue talking to the Oracle."}), 200
+
     try:
-        # Call OpenAI API
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo", # You can upgrade to gpt-4 if you want
+        # Call Real OpenAI API
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
             messages=[
-                {"role": "system", "content": "You are a dark, evil AI entity known as the Oracle of Dark Domain. Answer questions in a spooky, mysterious, and slightly ominous tone. Keep answers concise but creepy."},
+                {"role": "system", "content": "You are an evil, mysterious AI named Dark Domain. You speak in short, creepy, and slightly ominous sentences. You answer any question but always with a dark twist."},
                 {"role": "user", "content": question}
             ],
             max_tokens=150
         )
-        
-        ai_answer = response.choices[0].message.content
-        return jsonify({'answer': ai_answer})
-        
+        ai_text = response.choices[0].message.content
+        return jsonify({'answer': ai_text})
     except Exception as e:
-        return jsonify({'answer': f"The void whispers: Error - {str(e)}"}), 500
+        return jsonify({'answer': f"The void whispers: Error occurred. ({str(e)})"}), 500
 
-@app.route('/upgrade_request', methods=['POST'])
-def upgrade_request():
+@app.route('/upload_payment', methods=['POST'])
+def upload_payment():
+    """Handles image upload for payment proof"""
+    if 'file' not in request.files:
+        return jsonify({'success': False, 'message': 'No file part'})
+    
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'success': False, 'message': 'No selected file'})
+    
+    # Save file temporarily or to S3 (for now, save locally in demo)
+    filename = f"{session.get('user')}_{file.filename}"
+    filepath = os.path.join('static/uploads', filename)
+    os.makedirs('static/uploads', exist_ok=True)
+    file.save(filepath)
+    
+    # Update user status to pending
     username = session.get('user')
-    if username:
-        if username not in users_db:
-            users_db[username] = {'password': 'temp', 'plan': 'free', 'premium_days': 0, 'is_admin': False}
+    if username in users_db:
         users_db[username]['plan'] = 'pending'
-        return jsonify({'success': True})
-    return jsonify({'success': False}), 401
+        users_db[username]['payment_proof'] = filename # Store reference
+    
+    return jsonify({'success': True, 'message': 'Proof sent! Wait for Admin approval.'})
 
+# ... [Keep get_users, approve_user, broadcast from previous code] ...
 @app.route('/admin/users', methods=['GET'])
 def get_users():
     if session.get('user') != ADMIN_USER:
         return jsonify({'error': 'Unauthorized'}), 403
-    
     user_list = []
     for u, details in users_db.items():
         if u != ADMIN_USER:
-            user_list.append({'username': u, 'plan': details['plan']})
+            user_list.append({
+                'username': u,
+                'plan': details['plan'],
+                'proof': details.get('payment_proof', None)
+            })
     return jsonify({'users': user_list})
 
 @app.route('/admin/approve/<username>', methods=['POST'])
 def approve_user(username):
     if session.get('user') != ADMIN_USER:
         return jsonify({'error': 'Unauthorized'}), 403
-        
     if username in users_db:
         users_db[username]['plan'] = 'paid'
         users_db[username]['premium_days'] = 30
         return jsonify({'success': True})
     return jsonify({'success': False}), 404
-
-@app.route('/broadcast', methods=['POST'])
-def broadcast():
-    return jsonify({'success': True})
 
 if __name__ == '__main__':
     app.run(debug=True)
