@@ -1,0 +1,358 @@
+:root {
+    --bg-color: #050505;
+    --card-bg: #0a0a0a;
+    --neon-green: #00ff41;
+    --neon-red: #ff003c;
+    --neon-purple: #b026ff;
+    --text-color: #e0e0e0;
+}
+
+body {
+    margin: 0;
+    padding: 0;
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    font-family: 'Roboto Mono', monospace;
+    overflow-x: hidden;
+}
+
+/* Animations */
+@keyframes flicker {
+    0% { opacity: 1; }
+    3% { opacity: 0.4; }
+    6% { opacity: 1; }
+    7% { opacity: 0.4; }
+    9% { opacity: 1; }
+    100% { opacity: 1; }
+}
+
+@keyframes breathe {
+    0% { opacity: 0.3; transform: scale(1); }
+    50% { opacity: 0.8; transform: scale(1.1); }
+    100% { opacity: 0.3; transform: scale(1); }
+}
+
+.container {
+    display: flex;
+    height: 100vh;
+    width: 100vw;
+}
+
+.hidden { display: none !important; }
+.active { display: flex !important; }
+
+/* Background Effect */
+body::before {
+    content: "";
+    position: fixed;
+    top: 0; left: 0; width: 100%; height: 100%;
+    background: radial-gradient(circle at center, rgba(0, 255, 65, 0.05) 0%, transparent 70%);
+    pointer-events: none;
+    animation: breathe 4s infinite ease-in-out;
+    z-index: -1;
+}
+
+/* Login Screen */
+#login-screen {
+    justify-content: center;
+    align-items: center;
+    flex-direction: column;
+    position: relative;
+    z-index: 10;
+}
+
+.card {
+    background: var(--card-bg);
+    border: 1px solid var(--neon-green);
+    padding: 40px;
+    text-align: center;
+    box-shadow: 0 0 15px rgba(0, 255, 65, 0.2);
+    max-width: 400px;
+    width: 100%;
+}
+
+h1 {
+    font-family: 'Creepster', cursive;
+    font-size: 3rem;
+    color: var(--neon-green);
+    animation: flicker 3s infinite;
+    margin-bottom: 10px;
+}
+
+.subtitle {
+    color: var(--neon-red);
+    margin-bottom: 30px;
+}
+
+input {
+    width: 90%;
+    padding: 15px;
+    margin: 10px 0;
+    background: #111;
+    border: 1px solid #333;
+    color: var(--neon-green);
+    font-family: inherit;
+}
+
+input:focus {
+    outline: none;
+    border-color: var(--neon-purple);
+    box-shadow: 0 0 10px var(--neon-purple);
+}
+
+button {
+    width: 100%;
+    padding: 15px;
+    background: transparent;
+    border: 1px solid var(--neon-green);
+    color: var(--neon-green);
+    font-weight: bold;
+    cursor: pointer;
+    transition: 0.3s;
+    text-transform: uppercase;
+}
+
+button:hover {
+    background: var(--neon-green);
+    color: black;
+    box-shadow: 0 0 20px var(--neon-green);
+}
+
+.error { color: var(--neon-red); margin-top: 10px; }
+
+/* Dashboard Layout */
+.sidebar {
+    width: 250px;
+    background: #080808;
+    border-right: 1px solid #222;
+    display: flex;
+    flex-direction: column;
+    padding: 20px;
+}
+
+.logo {
+    font-family: 'Creepster', cursive;
+    font-size: 2rem;
+    color: var(--neon-purple);
+    text-align: center;
+    margin-bottom: 40px;
+}
+
+.sidebar ul { list-style: none; padding: 0; }
+.sidebar li {
+    padding: 15px;
+    cursor: pointer;
+    border-bottom: 1px solid #111;
+    transition: 0.3s;
+}
+.sidebar li:hover, .sidebar li.active {
+    background: rgba(0, 255, 65, 0.1);
+    color: var(--neon-green);
+    padding-left: 25px;
+}
+
+.user-info {
+    margin-top: auto;
+    padding-top: 20px;
+    border-top: 1px solid #333;
+    font-size: 0.8rem;
+}
+
+.plan-badge {
+    color: var(--neon-red);
+    font-weight: bold;
+}
+
+.content {
+    flex: 1;
+    padding: 40px;
+    overflow-y: auto;
+}
+
+.section { display: none; width: 100%; }
+.section.active { display: block; }
+
+/* Chat */
+.chat-window {
+    height: 60vh;
+    border: 1px solid #333;
+    padding: 20px;
+    overflow-y: auto;
+    background: #0a0a0a;
+    margin-bottom: 20px;
+    position: relative;
+}
+
+.message {
+    margin-bottom: 15px;
+    padding: 10px;
+    border-radius: 5px;
+    max-width: 80%;
+}
+
+.message.ai {
+    background: #1a1a1a;
+    border-left: 3px solid var(--neon-purple);
+    color: #ccc;
+}
+
+.message.user {
+    background: rgba(0, 255, 65, 0.1);
+    border-right: 3px solid var(--neon-green);
+    margin-left: auto;
+    text-align: right;
+}
+
+.input-area { display: flex; gap: 10px; }
+.input-area input { flex: 1; margin: 0; }
+
+.lock-msg {
+    text-align: center;
+    color: var(--neon-red);
+    margin-top: 20px;
+    display: none;
+}
+
+.counter {
+    text-align: right;
+    font-size: 0.8rem;
+    color: #555;
+    margin-top: 5px;
+}
+
+/* Locked State Intimidation */
+.chat-window.locked {
+    border-color: var(--neon-red);
+    background: #1a0000;
+}
+
+.chat-window.locked::after {
+    content: "ACCESS DENIED";
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 2rem;
+    color: var(--neon-red);
+    font-weight: bold;
+    text-shadow: 0 0 10px red;
+    pointer-events: none;
+}
+
+/* Premium */
+.plans-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 20px;
+}
+
+.plan-card {
+    border: 1px solid #333;
+    padding: 20px;
+    text-align: center;
+    transition: 0.3s;
+}
+
+.plan-card:hover {
+    border-color: var(--neon-purple);
+    transform: translateY(-5px);
+}
+
+.plan-card.highlight {
+    border-color: var(--neon-green);
+    box-shadow: 0 0 10px rgba(0, 255, 65, 0.2);
+}
+
+.price {
+    font-size: 1.5rem;
+    color: var(--neon-green);
+    margin: 15px 0;
+}
+
+.payment-modal {
+    display: none;
+    position: fixed;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    background: #111;
+    border: 2px solid var(--neon-green);
+    padding: 30px;
+    z-index: 100;
+    text-align: center;
+    width: 300px;
+}
+
+.bank-details {
+    background: #000;
+    padding: 10px;
+    margin: 15px 0;
+    border: 1px dashed #555;
+}
+
+.close-btn {
+    margin-top: 10px;
+    border-color: #555;
+    color: #888;
+}
+
+.scarcity-timer {
+    color: var(--neon-red);
+    font-weight: bold;
+    margin-bottom: 20px;
+    animation: flicker 2s infinite;
+}
+
+/* Admin */
+.admin-controls textarea {
+    width: 100%;
+    height: 100px;
+    background: #111;
+    color: white;
+    border: 1px solid #333;
+    margin-bottom: 10px;
+}
+
+.pending-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 10px;
+    border-bottom: 1px solid #333;
+}
+
+/* Overlay */
+.overlay {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    background: rgba(0,0,0,0.95);
+    z-index: 999;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.modal {
+    background: #000;
+    border: 2px solid var(--neon-red);
+    padding: 40px;
+    text-align: center;
+    max-width: 500px;
+}
+
+.tg-btn {
+    display: block;
+    background: #0088cc;
+    color: white;
+    text-decoration: none;
+    padding: 15px;
+    margin: 20px 0;
+    font-weight: bold;
+}
+
+#confirm-tg {
+    border-color: var(--neon-red);
+    color: var(--neon-red);
+}
+#confirm-tg:hover {
+    background: var(--neon-red);
+    color: black;
+}
