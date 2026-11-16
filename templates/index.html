@@ -1,183 +1,76 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>EVIl GPT HUB</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-    <link href="https://fonts.googleapis.com/css2?family=Creepster&family=Roboto+Mono:wght@400;700&display=swap" rel="stylesheet">
-    <!-- Icons -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#090b12">
+  <title>Evil GPT — Your AI workspace</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
-
-    <!-- Forced Telegram Join Overlay -->
-    <div id="tg-overlay" class="overlay">
-        <div class="modal">
-            <i class="fas fa-eye fa-3x" style="color: #ff003c; margin-bottom: 20px;"></i>
-            <h2>JOIN THE HIVE MIND</h2>
-            <p>You cannot enter the Dark Domain without joining our channel.</p>
-            <a href="https://t.me/darkdomainhub" target="_blank" class="tg-btn"><i class="fab fa-telegram"></i> JOIN TELEGRAM CHANNEL</a>
-            <button id="confirm-tg" onclick="closeTgOverlay()">I HAVE JOINED</button>
-        </div>
+  <div id="auth-view" class="auth-shell">
+    <div class="auth-card">
+      <a class="brand brand-large" href="#"><span class="brand-mark">E</span> EVIL GPT</a>
+      <p class="eyebrow">YOUR AI WORKSPACE</p>
+      <h1>Think beyond<br><span>the ordinary.</span></h1>
+      <p class="muted">A smarter space for ideas, research, writing and building.</p>
+      <div class="auth-tabs">
+        <button class="tab active" id="login-tab">Sign in</button>
+        <button class="tab" id="register-tab">Create account</button>
+      </div>
+      <form id="login-form">
+        <label>Username<input id="login-username" autocomplete="username" required maxlength="40"></label>
+        <label>Password<input id="login-password" type="password" autocomplete="current-password" required></label>
+        <button class="primary full" type="submit">Sign in <span>→</span></button>
+      </form>
+      <form id="register-form" class="hidden">
+        <label>Username<input id="reg-username" autocomplete="username" required minlength="3" maxlength="40"></label>
+        <label>Email<input id="reg-email" type="email" autocomplete="email" required></label>
+        <label>Password<input id="reg-password" type="password" autocomplete="new-password" minlength="10" required></label>
+        <button class="primary full" type="submit">Create account <span>→</span></button>
+      </form>
+      <p id="auth-message" class="notice" role="status"></p>
+      <p class="fine-print">By continuing, use the service responsibly and protect your account credentials.</p>
     </div>
+  </div>
 
-    <!-- Floating Support Button -->
-    <a href="https://t.me/COLDFX26" target="_blank" class="support-btn">
-        <i class="fab fa-telegram-plane"></i>
-    </a>
+  <div id="app-view" class="app hidden">
+    <aside class="sidebar" id="sidebar">
+      <a class="brand" href="#"><span class="brand-mark">E</span> EVIL GPT</a>
+      <button id="new-chat" class="new-chat">＋ New chat</button>
+      <div class="side-label">WORKSPACE</div>
+      <nav><button class="nav-item active" data-page="chat">◈ <span>AI Assistant</span></button><button class="nav-item" data-page="plans">✦ <span>Plans & usage</span></button><button class="nav-item hidden" id="admin-nav" data-page="admin">⚙ <span>Admin console</span></button></nav>
+      <div class="side-label history-label">RECENT CHATS</div>
+      <div id="history-list" class="history-list"></div>
+      <div class="sidebar-bottom"><div class="user-chip"><div class="avatar" id="avatar">U</div><div><strong id="side-username">User</strong><small id="side-plan">Free plan</small></div></div><button id="logout" class="logout">Sign out ↗</button></div>
+    </aside>
 
-    <!-- Login Screen -->
-    <div id="login-screen" class="container active">
-        <div class="card">
-            <h1>EVIL GPT</h1>
-            <p class="subtitle">Enter if you dare.</p>
-            
-            <div class="auth-toggle">
-                <button type="button" id="show-login-btn" onclick="toggleAuth('login')">LOGIN</button>
-                <button type="button" id="show-reg-btn" onclick="toggleAuth('register')">SIGN UP</button>
-            </div>
-
-            <!-- Login Form -->
-            <form id="login-form" class="auth-form hidden">
-                <input type="text" id="login-username" placeholder="Username" required>
-                <input type="password" id="login-password" placeholder="Password" required>
-                <button type="submit">ENTER THE VOID</button>
-            </form>
-
-            <!-- Register Form -->
-            <form id="register-form" class="auth-form hidden">
-                <input type="text" id="reg-username" placeholder="Choose Username" required>
-                <input type="email" id="reg-email" placeholder="Email Address" required>
-                <input type="password" id="reg-password" placeholder="Create Password" required>
-                <button type="submit">CREATE ACCOUNT</button>
-            </form>
-
-            <div id="error-msg" class="error"></div>
-            <div id="success-msg" class="success"></div>
+    <main class="main">
+      <header class="topbar"><button id="mobile-menu" class="mobile-menu">☰</button><div><span class="eyebrow">EVIL GPT ASSISTANT</span><strong id="page-heading">Your thinking partner</strong></div><div class="top-actions"><span class="plan-pill" id="top-plan">FREE</span></div></header>
+      <section id="chat-page" class="page">
+        <div class="welcome" id="welcome">
+          <div class="orb">✦</div><p class="eyebrow">WELCOME TO EVIL GPT</p><h1>What are we<br><span>creating today?</span></h1><p class="muted">Ask questions, explore ideas, write, learn or solve problems.</p>
+          <div class="suggestions"><button data-prompt="Help me create a clear project plan.">✧ Create a project plan</button><button data-prompt="Explain a difficult topic in simple terms.">⌘ Learn something</button><button data-prompt="Review and improve this piece of writing:">✎ Improve my writing</button></div>
         </div>
-    </div>
+        <div id="chat-messages" class="chat-messages"></div>
+        <div class="composer-wrap"><div class="composer-tools"><label class="web-toggle"><input type="checkbox" id="web-search"> <span>Web research</span></label><span class="muted tiny" id="usage-label">Loading usage…</span></div><form id="chat-form" class="composer"><textarea id="message-input" rows="1" maxlength="12000" placeholder="Message Evil GPT…" required></textarea><button class="send-btn" type="submit" aria-label="Send message">↑</button></form><p class="fine-print center">AI can make mistakes. Check important information.</p></div>
+      </section>
 
-    <!-- Main Dashboard -->
-    <div id="dashboard" class="container hidden">
-        
-        <!-- Sidebar (Mobile Responsive) -->
-        <nav class="sidebar" id="sidebar">
-            <div class="logo">DDH</div>
-            <ul>
-                <li onclick="showSection('chat')" class="active"><i class="fas fa-comment-dots"></i> CHAT</li>
-                <li onclick="showSection('premium')"><i class="fas fa-crown"></i> PREMIUM</li>
-                <li id="admin-link" onclick="showSection('admin')" style="display:none;"><i class="fas fa-cog"></i> ADMIN</li>
-                <li onclick="logout()"><i class="fas fa-sign-out-alt"></i> EXIT</li>
-            </ul>
-            <div class="user-info">
-                <span id="current-user">User</span>
-                <span id="plan-badge" class="badge">FREE</span>
-            </div>
-        </nav>
+      <section id="plans-page" class="page hidden">
+        <div class="section-intro"><p class="eyebrow">PLANS & USAGE</p><h1>Choose your pace.</h1><p class="muted">Every plan has a monthly message allowance. Upgrade requests are reviewed by an administrator.</p><div class="usage-card"><div><span class="muted">Messages used this month</span><strong id="usage-number">—</strong></div><div class="progress"><span id="usage-progress"></span></div></div></div>
+        <div id="plans-grid" class="plans-grid"></div>
+        <p class="fine-print">Prices are monthly in Nigerian naira. Upgrade requests do not confirm payment or activate a plan automatically.</p>
+      </section>
 
-        <!-- Mobile Menu Toggle -->
-        <div class="mobile-menu-btn" onclick="toggleSidebar()">
-            <i class="fas fa-bars"></i>
-        </div>
-
-        <!-- Content Area -->
-        <main class="content">
-            
-            <!-- Chat Section -->
-            <section id="chat-section" class="section active">
-                <div class="header">
-                    <h2>THE ORACLE</h2>
-                    <p>Ask anything. It knows everything.</p>
-                </div>
-                
-                <!-- Live Stats -->
-                <div class="stats-bar">
-                    <span><i class="fas fa-users"></i> <span id="online-count">1,337</span> Online</span>
-                    <span><i class="fas fa-question-circle"></i> <span id="questions-count">99K+</span> Asked</span>
-                </div>
-
-                <div id="chat-box" class="chat-window">
-                    <div class="message ai">
-                        <p>I am listening... what do you seek?</p>
-                    </div>
-                </div>
-                
-                <div class="input-area">
-                    <input type="text" id="user-input" placeholder="Type your question..." disabled>
-                    <button id="send-btn" onclick="sendMessage()" disabled>SPEAK</button>
-                </div>
-                <div id="premium-lock" class="lock-msg">
-                    🔒 Upgrade to Premium to unlock infinite questions.
-                </div>
-            </section>
-
-            <!-- Premium Section -->
-            <section id="premium-section" class="section">
-                <div class="header">
-                    <h2>ASCENSION PLANS</h2>
-                    <p>Unlock the full power of the Dark Domain.</p>
-                </div>
-                <div class="plans-grid">
-                    <div class="plan-card">
-                        <h3>2 Days</h3>
-                        <p class="price">₦1,500 / $5</p>
-                        <button onclick="initiatePayment(5)">BUY NOW</button>
-                    </div>
-                    <div class="plan-card">
-                        <h3>1 Week</h3>
-                        <p class="price">₦5,000 / $10</p>
-                        <button onclick="initiatePayment(10)">BUY NOW</button>
-                    </div>
-                    <div class="plan-card highlight">
-                        <h3>1 Month</h3>
-                        <p class="price">₦20,000 / $25</p>
-                        <button onclick="initiatePayment(25)">BUY NOW</button>
-                    </div>
-                    <div class="plan-card highlight">
-                        <h3>1 Year</h3>
-                        <p class="price">₦50,000 / $70</p>
-                        <button onclick="initiatePayment(70)">BUY NOW</button>
-                    </div>
-                </div>
-                
-                <!-- Payment Modal -->
-                <div class="payment-modal" id="payment-modal">
-                    <h3>PAYMENT DETAILS</h3>
-                    <p>Send payment to:</p>
-                    <div class="bank-details">
-                        <p><strong>Bank:</strong> Moniepoint</p>
-                        <p><strong>Account Number:</strong> 8100481004</p>
-                        <p><strong>Name:</strong> Daniel Dominion Folorunso</p>
-                    </div>
-                    <p class="note">After paying, click "I Paid" to wait for Admin approval.</p>
-                    <button onclick="requestUpgrade()">I PAID</button>
-                    <button class="close-btn" onclick="closePaymentModal()">Close</button>
-                </div>
-            </section>
-
-            <!-- Admin Section -->
-            <section id="admin-section" class="section">
-                <div class="header">
-                    <h2>ADMIN CONSOLE</h2>
-                </div>
-                <div class="admin-controls">
-                    <div class="broadcast-box">
-                        <h3>📢 Broadcast to All Users</h3>
-                        <textarea id="broadcast-text" placeholder="Enter broadcast message..."></textarea>
-                        <button onclick="broadcastMessage()">SEND BROADCAST</button>
-                    </div>
-                    
-                    <h3>Pending Approvals</h3>
-                    <div id="pending-users-list">
-                        <!-- Populated by JS -->
-                    </div>
-                </div>
-            </section>
-
-        </main>
-    </div>
-
-    <script src="{{ url_for('static', filename='script.js') }}"></script>
+      <section id="admin-page" class="page hidden">
+        <div class="section-intro"><p class="eyebrow">CONTROL CENTRE</p><h1>Admin console</h1><p class="muted">Review upgrade requests and publish announcements.</p></div>
+        <div class="admin-card"><h2>Users & upgrade requests</h2><div id="admin-users">Loading…</div></div>
+        <div class="admin-card"><h2>Announcement</h2><textarea id="announcement-text" rows="4" placeholder="Write an update for users…"></textarea><button id="send-announcement" class="primary">Publish announcement</button></div>
+      </section>
+    </main>
+  </div>
+  <script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
 </html>
