@@ -1,5 +1,5 @@
 const $ = (id) => document.getElementById(id);
-let currentUser = null, currentConversation = null, usage = {}, plans = {}, allChats = [], pendingFile = null;
+let currentUser = null, currentConversation = null, usage = {}, plans = {}, allChats = [];
 
 async function api(url, options={}) {
   const res = await fetch(url, {credentials:"same-origin", ...options, headers: {"Content-Type":"application/json", ...(options.headers||{})}});
@@ -60,7 +60,46 @@ async function refreshMe(){
   $("usage-number").textContent = usage.trial ? "∞ / ∞" : `${usage.used} / ${usage.limit}`;
   $("usage-progress").style.width = usage.trial ? "100%" : Math.min(100,usage.used/usage.limit*100)+"%";
   $("streak-label").textContent = currentUser.streak || 0;
+  
+  const currentPlanData = plans[currentUser.plan] || plans["free"];
+  $("image-limit-label").textContent = `Your plan (${currentPlanData.name}) allows ${currentPlanData.daily_images} images per day.`;
 }
+
+// --- NAVIGATION (FIXED BUG) ---
+function showPage(page){
+  ["chat","images","plans","admin"].forEach(p=>{ $(p+"-page").classList.toggle("hidden",p!==page); });
+  document.querySelectorAll(".nav-item").forEach(b=>b.classList.toggle("active",b.dataset.page===page));
+  
+  if(page==="plans") { renderPlans(); loadLeaderboard(); } 
+  if(page==="admin") switchAdminTab('users');
+  $("sidebar").classList.remove("open");
+}
+// THIS WAS MISSING:
+document.querySelectorAll(".nav-item").forEach(b=>b.addEventListener("click",()=>showPage(b.dataset.page)));
+$("mobile-menu").addEventListener("click",()=>$("sidebar").classList.toggle("open"));
+
+
+// --- NEW: IMAGE STUDIO ---
+$("generate-img-btn").addEventListener("click", async () => {
+  const prompt = $("image-prompt").value;
+  if(!prompt) return alert("Please enter a prompt.");
+  
+  const btn = $("generate-img-btn");
+  btn.textContent = "Generating... Please wait.";
+  btn.disabled = true;
+  
+  try {
+    const d = await api("/api/generate-image", {method:"POST", body:JSON.stringify({prompt})});
+    $("generated-image-container").classList.remove("hidden");
+    $("generated-image-result").src = d.image_url;
+    $("download-img-link").href = d.image_url;
+  } catch(err) {
+    alert(err.message);
+  } finally {
+    btn.textContent = "✨ Generate Image";
+    btn.disabled = false;
+  }
+});
 
 // --- CHECKIN & LEADERBOARD ---
 $("checkin-btn").addEventListener("click", async () => {
@@ -83,15 +122,7 @@ async function loadNotifs() {
 $("notif-btn").addEventListener("click", () => $("notif-panel").classList.toggle("hidden"));
 async function markNotifsRead() { await api("/api/notifications/read",{method:"POST"}); loadNotifs(); }
 
-// --- ATTACHMENT ---
-$("attach-btn").addEventListener("click", () => $("file-input").click());
-$("file-input").addEventListener("change", (e) => {
-  pendingFile = e.target.files[0];
-  $("attachment-preview").classList.toggle("hidden", !pendingFile);
-  $("attachment-preview").textContent = pendingFile ? `📎 ${pendingFile.name}` : "";
-});
-
-// --- CHAT & IMAGE ---
+// --- CHAT ---
 function addMessage(role, text, attachmentUrl = null, attachmentType = null){
   const wrap = document.createElement("article"); wrap.className = "message " + role;
   let content = `<div class="message-tag">${role==="user"?"YOU":"EVIL GPT"}</div><div class="message-body">${role==="assistant"?renderMarkdown(text):text}</div>`;
@@ -99,50 +130,31 @@ function addMessage(role, text, attachmentUrl = null, attachmentType = null){
   wrap.innerHTML = content;
   $("chat-messages").append(wrap); wrap.scrollIntoView({behavior:"smooth"});
 }
-function newChat(){currentConversation=null;$("chat-messages").replaceChildren();$("welcome").classList.remove("hidden");$("message-input").value="";pendingFile=null;$("attachment-preview").classList.add("hidden");}
+function newChat(){currentConversation=null;$("chat-messages").replaceChildren();$("welcome").classList.remove("hidden");$("message-input").value="";}
 $("new-chat").addEventListener("click",newChat);
 
 $("chat-form").addEventListener("submit", async e => {
   e.preventDefault();
-  const mode = $("mode-select").value;
-  let text = $("message-input").value.trim();
-  if (!text && !pendingFile) return;
+  const text = $("message-input").value.trim();
+  if (!text) return;
   $("welcome").classList.add("hidden"); $("message-input").value="";
   
-  if (mode === "text") {
-    if (pendingFile) {
-      text += "\n\n[User uploaded a PDF document for context. Summarize the following text:]\n\n";
-      const fd = new FormData(); fd.append("file", pendingFile);
-      try {
-        const res = await fetch("/api/extract-text", {method:"POST", body:fd});
-        const d = await res.json();
-        if (d.text) { text += d.text; } else { alert(d.error); }
-      } catch(e) { alert("Failed to read PDF."); }
-      pendingFile = null; $("attachment-preview").classList.add("hidden");
+  addMessage("user", text);
+  const pending = document.createElement("article"); pending.className="message assistant";
+  pending.innerHTML = `<div class="skeleton-loader"><div class="skeleton-line"></div></div>`; $("chat-messages").append(pending);
+  
+  try {
+    const res = await fetch("/ask/stream", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({question:text, conversationId:currentConversation, persona:$("persona-select")?.value, modelType:$("model-select")?.value, temperature:$("temp-slider")?.value})});
+    if (!res.ok) throw new Error("Failed");
+    const reader = res.body.getReader(); const dec = new TextDecoder(); let acc="";
+    pending.innerHTML = `<div class="message-tag">EVIL GPT</div><div class="message-body"></div>`;
+    const body = pending.querySelector(".message-body");
+    while (true) {
+      const {done, value} = await reader.read(); if (done) break;
+      dec.decode(value).split("\n").forEach(line => { if (line.startsWith("data: ")) { const p = line.slice(6); if (p.startsWith("[DONE:")) currentConversation = p.slice(6,-1); else { acc += p; body.innerHTML = renderMarkdown(acc); } } });
     }
-    
-    addMessage("user", text);
-    const pending = document.createElement("article"); pending.className="message assistant";
-    pending.innerHTML = `<div class="skeleton-loader"><div class="skeleton-line"></div></div>`; $("chat-messages").append(pending);
-    try {
-      const res = await fetch("/ask/stream", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({question:text, conversationId:currentConversation, persona:$("persona-select")?.value, modelType:$("model-select")?.value, temperature:$("temp-slider")?.value})});
-      if (!res.ok) throw new Error("Failed");
-      const reader = res.body.getReader(); const dec = new TextDecoder(); let acc="";
-      pending.innerHTML = `<div class="message-tag">EVIL GPT</div><div class="message-body"></div>`;
-      const body = pending.querySelector(".message-body");
-      while (true) {
-        const {done, value} = await reader.read(); if (done) break;
-        dec.decode(value).split("\n").forEach(line => { if (line.startsWith("data: ")) { const p = line.slice(6); if (p.startsWith("[DONE:")) currentConversation = p.slice(6,-1); else { acc += p; body.innerHTML = renderMarkdown(acc); } } });
-      }
-      await refreshMe(); await loadHistory();
-    } catch(err) { pending.remove(); addMessage("assistant","⚠ "+err.message); }
-  } else if (mode === "image") {
-    addMessage("user", `Generate image: ${text}`);
-    const pending = document.createElement("article"); pending.className="message assistant";
-    pending.innerHTML = `<div class="skeleton-loader"><div class="skeleton-line"></div></div>`; $("chat-messages").append(pending);
-    try { const d = await api("/api/generate-image", {method:"POST", body:JSON.stringify({prompt:text})}); pending.remove(); addMessage("assistant", `Here is your image for "${text}"`, d.image_url, "image"); }
-    catch(err) { pending.remove(); addMessage("assistant", "⚠ " + err.message); }
-  }
+    await refreshMe(); await loadHistory();
+  } catch(err) { pending.remove(); addMessage("assistant","⚠ "+err.message); }
 });
 
 // --- HISTORY & SEARCH ---
@@ -162,13 +174,6 @@ async function openConversation(id){
 }
 
 // --- ADMIN ---
-function showPage(page){
-  ["chat","plans","admin"].forEach(p=>{ $(p+"-page").classList.toggle("hidden",p!==page); });
-  if(page==="plans") { renderPlans(); loadLeaderboard(); } if(page==="admin") switchAdminTab('users');
-  $("sidebar").classList.remove("open");
-}
-$("mobile-menu").addEventListener("click",()=>$("sidebar").classList.toggle("open"));
-
 async function switchAdminTab(tab) {
   ["users","payments","otps","broadcast"].forEach(t => $("admin-"+t).classList.toggle("hidden", t!==tab));
   if(tab==="users") { const d = await api("/api/admin/users"); $("admin-users-list").innerHTML = d.users.map(u=>`<div class="admin-user"><strong>${u.username}</strong><small>${u.email}</small></div>`).join(""); }
