@@ -9,25 +9,21 @@
   <div id="auth-view" class="auth-shell">
     <div class="auth-card">
       <a class="brand brand-large" href="#"><span class="brand-mark">E</span> EVIL GPT</a>
-      
       <div class="auth-tabs" id="auth-tabs">
         <button class="tab active" id="login-tab">Sign In</button>
         <button class="tab" id="register-tab">Create Account</button>
       </div>
-
       <form id="login-form">
         <label>Username<input id="login-username" required></label>
         <label>Password<input id="login-password" type="password" required></label>
         <button class="primary full" type="submit">Sign In →</button>
       </form>
-
       <form id="register-form" class="hidden">
         <label>Username<input id="reg-username" required></label>
         <label>Email<input id="reg-email" type="email" required></label>
         <label>Password<input id="reg-password" type="password" minlength="10" required></label>
         <button class="primary full" type="submit">Register (Get 2-Day Trial!)</button>
       </form>
-
       <form id="otp-form" class="hidden">
         <h3 style="margin-top:0; color:var(--accent);">Verify Your Email</h3>
         <p class="muted tiny">Your account is pending Admin approval. Once approved, enter the 6-digit code sent to your email.</p>
@@ -35,7 +31,6 @@
         <button type="button" id="verify-otp-btn" class="primary full">Verify Account</button>
         <button type="button" onclick="location.reload()" class="secondary full" style="margin-top:10px;">Back to Login</button>
       </form>
-
       <p id="auth-message" class="notice"></p>
     </div>
   </div>
@@ -44,7 +39,12 @@
     <aside class="sidebar" id="sidebar">
       <a class="brand" href="#"><span class="brand-mark">E</span> EVIL GPT</a>
       <button id="new-chat" class="new-chat">＋ New chat</button>
-      <nav><button class="nav-item active" data-page="chat">◈ Chat</button><button class="nav-item" data-page="plans">✦ Plans</button><button class="nav-item hidden" id="admin-nav" data-page="admin">⚙ Admin</button></nav>
+      <nav>
+        <button class="nav-item active" data-page="chat">◈ Chat</button>
+        <button class="nav-item" data-page="images">🎨 Image Studio</button>
+        <button class="nav-item" data-page="plans">✦ Plans</button>
+        <button class="nav-item hidden" id="admin-nav" data-page="admin">⚙ Admin</button>
+      </nav>
       
       <input type="text" id="search-chats" placeholder="Search chats..." style="margin-top:15px; padding:8px; border-radius:8px; border:1px solid var(--line); background:var(--panel); color:white;">
       <div id="history-list" class="history-list" style="margin-top:10px;"></div>
@@ -75,6 +75,7 @@
         <button class="secondary full" onclick="markNotifsRead()" style="margin-top:10px;">Mark all as read</button>
       </div>
 
+      <!-- CHAT PAGE -->
       <section id="chat-page" class="page">
         <div class="welcome" id="welcome">
           <h1>What are we creating today?</h1>
@@ -85,23 +86,34 @@
           <div class="composer-tools">
             <select id="persona-select" class="persona-select"></select>
             <select id="model-select" class="persona-select"><option value="deep">🧠 Deep</option><option value="fast">⚡ Fast</option></select>
-            <select id="mode-select" class="persona-select">
-              <option value="text">💬 Text</option>
-              <option value="image">🎨 Generate Image</option>
-            </select>
             <input type="range" id="temp-slider" min="0" max="1" step="0.1" value="0.7" title="Creativity" style="width:60px;">
             <span class="muted tiny" id="usage-label">Loading…</span>
           </div>
           <form id="chat-form" class="composer">
-            <input type="file" id="file-input" class="hidden" accept=".pdf">
-            <button type="button" id="attach-btn" class="icon-btn" title="Upload PDF for summarization">📎</button>
             <textarea id="message-input" rows="1" placeholder="Message..." required></textarea>
             <button class="send-btn">↑</button>
           </form>
-          <div id="attachment-preview" class="hidden" style="margin-top:5px; font-size:12px; color:var(--accent);">File attached</div>
+        </div>
+      </section>
+
+      <!-- NEW: IMAGE STUDIO PAGE -->
+      <section id="images-page" class="page hidden">
+        <div class="welcome">
+          <h1>🎨 Image Studio</h1>
+          <p class="muted">Generate stunning images for free.</p>
+          <p class="tiny muted" id="image-limit-label" style="margin-top:10px;">Loading your daily limit...</p>
+        </div>
+        <div class="admin-card" style="max-width:600px; margin: auto;">
+          <textarea id="image-prompt" rows="3" placeholder="Describe the image you want to see... (e.g., A cyberpunk city at night)" style="margin-bottom:15px;"></textarea>
+          <button id="generate-img-btn" class="primary full">✨ Generate Image</button>
+        </div>
+        <div id="generated-image-container" class="admin-card hidden" style="max-width:600px; margin: 20px auto; text-align:center;">
+          <img id="generated-image-result" src="" style="max-width:100%; border-radius:10px;">
+          <a id="download-img-link" download="evil-gpt-image.jpg" class="primary full" style="display:block; text-decoration:none; margin-top:15px; text-align:center;">⬇ Download Image</a>
         </div>
       </section>
       
+      <!-- PLANS PAGE -->
       <section id="plans-page" class="page hidden">
         <h1>Plans</h1>
         <div class="usage-card"><strong id="usage-number">—</strong><div class="progress"><span id="usage-progress"></span></div></div>
@@ -110,6 +122,7 @@
         <div id="leaderboard-list" class="admin-card"></div>
       </section>
 
+      <!-- ADMIN PAGE -->
       <section id="admin-page" class="page hidden">
         <h1>Admin Console</h1>
         <div class="admin-tabs" style="display:flex; gap:10px; margin-bottom:20px;">
