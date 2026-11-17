@@ -10,27 +10,18 @@
   <div id="auth-view" class="auth-shell">
     <div class="auth-card">
       <a class="brand brand-large" href="#"><span class="brand-mark">E</span> EVIL GPT</a>
-      <h1>Sign In</h1>
-      <div class="auth-tabs"><button class="tab active" id="login-tab">Password</button><button class="tab" id="otp-tab">Email Code</button><button class="tab" id="register-tab">Register</button></div>
+      <h1>Welcome</h1>
+      <p class="muted" style="margin-bottom:20px;">Enter your email to log in or create an account.</p>
       
       <form id="login-form">
-        <label>Username<input id="login-username" required></label>
-        <label>Password<input id="login-password" type="password" required></label>
-        <button class="primary full">Go</button>
+        <label>Email Address<input id="auth-email" type="email" required placeholder="you@example.com"></label>
+        <button type="button" id="request-otp-btn" class="primary full">Send Login Code →</button>
       </form>
 
       <form id="otp-form" class="hidden">
-        <label>Email<input id="otp-email" type="email" required></label>
-        <button type="button" id="request-otp-btn" class="secondary full">Request Login Code</button>
-        <label>Enter 6-digit Code<input id="otp-code" maxlength="6" required></label>
-        <button type="button" id="verify-otp-btn" class="primary full">Verify & Login</button>
-      </form>
-
-      <form id="register-form" class="hidden">
-        <label>Username<input id="reg-username" required></label>
-        <label>Email<input id="reg-email" type="email" required></label>
-        <label>Password<input id="reg-password" type="password" minlength="10" required></label>
-        <button class="primary full">Register (Get 2-Day Trial!)</button>
+        <label>Enter 6-digit Code<input id="otp-code" maxlength="6" required placeholder="123456"></label>
+        <button type="button" id="verify-otp-btn" class="primary full">Verify & Log In</button>
+        <button type="button" onclick="location.reload()" class="secondary full" style="margin-top:10px;">Use a different email</button>
       </form>
       <p id="auth-message" class="notice"></p>
     </div>
@@ -41,9 +32,14 @@
       <a class="brand" href="#"><span class="brand-mark">E</span> EVIL GPT</a>
       <button id="new-chat" class="new-chat">＋ New chat</button>
       <nav><button class="nav-item active" data-page="chat">◈ Chat</button><button class="nav-item" data-page="plans">✦ Plans</button><button class="nav-item hidden" id="admin-nav" data-page="admin">⚙ Admin</button></nav>
-      <div id="history-list" class="history-list"></div>
+      
+      <input type="text" id="search-chats" placeholder="Search chats..." style="margin-top:15px; padding:8px; border-radius:8px; border:1px solid var(--line); background:var(--panel); color:white;">
+      <div id="history-list" class="history-list" style="margin-top:10px;"></div>
+      
       <div class="sidebar-bottom">
-        <div class="user-chip"><div class="avatar" id="avatar">U</div><div><strong id="side-username">User</strong><small id="side-plan">Free</small></div></div>
+        <div class="user-chip" onclick="openProfile()" style="cursor:pointer;">
+          <div class="avatar" id="avatar">U</div><div><strong id="side-username">User</strong><small id="side-plan">Free</small></div>
+        </div>
         <div id="user-stats-label" class="tiny muted" style="margin-top:10px;">Loading stats...</div>
         <button id="logout" class="logout">Sign out ↗</button>
       </div>
@@ -53,8 +49,20 @@
       <header class="topbar">
         <button id="mobile-menu" class="mobile-menu" style="background:none; border:0; color:white; font-size:24px; cursor:pointer; margin-right:15px;">☰</button>
         <div><strong id="page-heading">AI Assistant</strong></div>
-        <div class="top-actions"><span class="plan-pill" id="top-plan">FREE</span></div>
+        <div class="top-actions">
+          <!-- NOTIFICATION BELL -->
+          <button id="notif-btn" class="icon-btn" style="position:relative;">🔔<span id="notif-dot" class="hidden" style="position:absolute; top:0; right:0; width:8px; height:8px; background:red; border-radius:50%;"></span></button>
+          <span class="plan-pill" id="top-plan">FREE</span>
+        </div>
       </header>
+      
+      <!-- NOTIFICATIONS DROPDOWN -->
+      <div id="notif-panel" class="hidden" style="position:absolute; top:70px; right:20px; width:300px; background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:15px; z-index:20; box-shadow:0 10px 30px #000;">
+        <h3 style="margin-top:0;">Notifications</h3>
+        <div id="notif-list" style="max-height:300px; overflow-y:auto; font-size:13px;">No notifications yet.</div>
+        <button class="secondary full" onclick="markNotifsRead()" style="margin-top:10px;">Mark all as read</button>
+      </div>
+
       <section id="chat-page" class="page">
         <div class="welcome" id="welcome">
           <h1>What are we creating today?</h1>
@@ -64,9 +72,8 @@
         <div class="composer-wrap">
           <div class="composer-tools">
             <select id="persona-select" class="persona-select"></select>
-            <select id="model-select" class="persona-select" title="Deep = Smarter, Fast = Quicker">
-              <option value="deep">🧠 Deep</option><option value="fast">⚡ Fast</option>
-            </select>
+            <select id="model-select" class="persona-select"><option value="deep">🧠 Deep</option><option value="fast">⚡ Fast</option></select>
+            <input type="range" id="temp-slider" min="0" max="1" step="0.1" value="0.7" title="Creativity" style="width:60px;">
             <span class="muted tiny" id="usage-label">Loading…</span>
           </div>
           <form id="chat-form" class="composer"><textarea id="message-input" rows="1" placeholder="Message..." required></textarea><button class="send-btn">↑</button></form>
@@ -82,20 +89,19 @@
       <section id="admin-page" class="page hidden">
         <h1>Admin Console</h1>
         <div class="admin-tabs" style="display:flex; gap:10px; margin-bottom:20px;">
-          <button class="secondary active" onclick="switchAdminTab('analytics')">Analytics</button>
           <button class="secondary" onclick="switchAdminTab('users')">Users</button>
           <button class="secondary" onclick="switchAdminTab('payments')">Payments</button>
-          <button class="secondary" onclick="switchAdminTab('otps')">OTP Requests</button>
+          <button class="secondary" onclick="switchAdminTab('otps')">OTPs</button>
+          <button class="secondary" onclick="switchAdminTab('broadcast')">Broadcast</button>
         </div>
-
-        <div id="admin-analytics" class="admin-card">
-          <h2>Platform Analytics</h2>
-          <p>Total Users: <strong id="stat-users">—</strong></p>
-          <p>Total Messages Sent: <strong id="stat-messages">—</strong></p>
+        <div id="admin-users" class="admin-card hidden"><div id="admin-users-list"></div></div>
+        <div id="admin-payments" class="admin-card hidden"><div id="admin-payments-list"></div></div>
+        <div id="admin-otps" class="admin-card hidden"><div id="admin-otps-list"></div></div>
+        <div id="admin-broadcast" class="admin-card hidden">
+          <h2>Broadcast Notification</h2>
+          <textarea id="broadcast-msg" placeholder="Type message here..." style="margin-bottom:10px;"></textarea>
+          <button class="primary" onclick="sendBroadcast()">Send to All Users</button>
         </div>
-        <div id="admin-users" class="admin-card hidden"><h2>User Management</h2><div id="admin-users-list"></div></div>
-        <div id="admin-payments" class="admin-card hidden"><h2>Payment Requests</h2><div id="admin-payments-list"></div></div>
-        <div id="admin-otps" class="admin-card hidden"><h2>Pending OTP Logins</h2><div id="admin-otps-list"></div></div>
       </section>
     </main>
   </div>
