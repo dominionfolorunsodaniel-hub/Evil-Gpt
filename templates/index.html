@@ -3,26 +3,39 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Evil GPT</title>
-  <link rel="manifest" href="/static/manifest.json">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
   <div id="auth-view" class="auth-shell">
     <div class="auth-card">
       <a class="brand brand-large" href="#"><span class="brand-mark">E</span> EVIL GPT</a>
-      <h1>Welcome</h1>
-      <p class="muted" style="margin-bottom:20px;">Enter your email to log in or create an account.</p>
       
+      <div class="auth-tabs" id="auth-tabs">
+        <button class="tab active" id="login-tab">Sign In</button>
+        <button class="tab" id="register-tab">Create Account</button>
+      </div>
+
       <form id="login-form">
-        <label>Email Address<input id="auth-email" type="email" required placeholder="you@example.com"></label>
-        <button type="button" id="request-otp-btn" class="primary full">Send Login Code →</button>
+        <label>Username<input id="login-username" required></label>
+        <label>Password<input id="login-password" type="password" required></label>
+        <button class="primary full" type="submit">Sign In →</button>
+      </form>
+
+      <form id="register-form" class="hidden">
+        <label>Username<input id="reg-username" required></label>
+        <label>Email<input id="reg-email" type="email" required></label>
+        <label>Password<input id="reg-password" type="password" minlength="10" required></label>
+        <button class="primary full" type="submit">Register (Get 2-Day Trial!)</button>
       </form>
 
       <form id="otp-form" class="hidden">
-        <label>Enter 6-digit Code<input id="otp-code" maxlength="6" required placeholder="123456"></label>
-        <button type="button" id="verify-otp-btn" class="primary full">Verify & Log In</button>
-        <button type="button" onclick="location.reload()" class="secondary full" style="margin-top:10px;">Use a different email</button>
+        <h3 style="margin-top:0; color:var(--accent);">Verify Your Email</h3>
+        <p class="muted tiny">Your account is pending Admin approval. Once approved, enter the 6-digit code sent to your email.</p>
+        <label>6-Digit Code<input id="otp-code" maxlength="6" required placeholder="123456"></label>
+        <button type="button" id="verify-otp-btn" class="primary full">Verify Account</button>
+        <button type="button" onclick="location.reload()" class="secondary full" style="margin-top:10px;">Back to Login</button>
       </form>
+
       <p id="auth-message" class="notice"></p>
     </div>
   </div>
@@ -41,6 +54,7 @@
           <div class="avatar" id="avatar">U</div><div><strong id="side-username">User</strong><small id="side-plan">Free</small></div>
         </div>
         <div id="user-stats-label" class="tiny muted" style="margin-top:10px;">Loading stats...</div>
+        <button id="checkin-btn" class="secondary full" style="margin-top:10px; font-size:12px;">Daily Check-in 🔥 <span id="streak-label">0</span></button>
         <button id="logout" class="logout">Sign out ↗</button>
       </div>
     </aside>
@@ -50,13 +64,11 @@
         <button id="mobile-menu" class="mobile-menu" style="background:none; border:0; color:white; font-size:24px; cursor:pointer; margin-right:15px;">☰</button>
         <div><strong id="page-heading">AI Assistant</strong></div>
         <div class="top-actions">
-          <!-- NOTIFICATION BELL -->
           <button id="notif-btn" class="icon-btn" style="position:relative;">🔔<span id="notif-dot" class="hidden" style="position:absolute; top:0; right:0; width:8px; height:8px; background:red; border-radius:50%;"></span></button>
           <span class="plan-pill" id="top-plan">FREE</span>
         </div>
       </header>
       
-      <!-- NOTIFICATIONS DROPDOWN -->
       <div id="notif-panel" class="hidden" style="position:absolute; top:70px; right:20px; width:300px; background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:15px; z-index:20; box-shadow:0 10px 30px #000;">
         <h3 style="margin-top:0;">Notifications</h3>
         <div id="notif-list" style="max-height:300px; overflow-y:auto; font-size:13px;">No notifications yet.</div>
@@ -73,10 +85,20 @@
           <div class="composer-tools">
             <select id="persona-select" class="persona-select"></select>
             <select id="model-select" class="persona-select"><option value="deep">🧠 Deep</option><option value="fast">⚡ Fast</option></select>
+            <select id="mode-select" class="persona-select">
+              <option value="text">💬 Text</option>
+              <option value="image">🎨 Generate Image</option>
+            </select>
             <input type="range" id="temp-slider" min="0" max="1" step="0.1" value="0.7" title="Creativity" style="width:60px;">
             <span class="muted tiny" id="usage-label">Loading…</span>
           </div>
-          <form id="chat-form" class="composer"><textarea id="message-input" rows="1" placeholder="Message..." required></textarea><button class="send-btn">↑</button></form>
+          <form id="chat-form" class="composer">
+            <input type="file" id="file-input" class="hidden" accept=".pdf">
+            <button type="button" id="attach-btn" class="icon-btn" title="Upload PDF for summarization">📎</button>
+            <textarea id="message-input" rows="1" placeholder="Message..." required></textarea>
+            <button class="send-btn">↑</button>
+          </form>
+          <div id="attachment-preview" class="hidden" style="margin-top:5px; font-size:12px; color:var(--accent);">File attached</div>
         </div>
       </section>
       
@@ -84,6 +106,8 @@
         <h1>Plans</h1>
         <div class="usage-card"><strong id="usage-number">—</strong><div class="progress"><span id="usage-progress"></span></div></div>
         <div id="plans-grid" class="plans-grid"></div>
+        <h2 style="margin-top:40px;">Leaderboard 🏆</h2>
+        <div id="leaderboard-list" class="admin-card"></div>
       </section>
 
       <section id="admin-page" class="page hidden">
@@ -105,6 +129,17 @@
       </section>
     </main>
   </div>
+  
+  <div id="persona-modal" class="hidden" style="position:fixed; inset:0; background:#000a; display:grid; place-items:center; z-index:100;">
+    <div class="payment-card">
+      <h2>Custom Persona</h2>
+      <p class="muted tiny">Define how the AI should behave. Leave blank for default.</p>
+      <textarea id="persona-text" rows="4" style="margin:10px 0;"></textarea>
+      <button class="primary full" onclick="savePersona()">Save</button>
+      <button class="secondary full" style="margin-top:10px;" onclick="document.getElementById('persona-modal').classList.add('hidden')">Cancel</button>
+    </div>
+  </div>
+
   <script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
 </html>
