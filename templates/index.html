@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Evil GPT</title>
+  <link rel="manifest" href="/static/manifest.json">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
@@ -10,9 +11,27 @@
     <div class="auth-card">
       <a class="brand brand-large" href="#"><span class="brand-mark">E</span> EVIL GPT</a>
       <h1>Sign In</h1>
-      <div class="auth-tabs"><button class="tab active" id="login-tab">Sign in</button><button class="tab" id="register-tab">Register</button></div>
-      <form id="login-form"><label>Username<input id="login-username" required></label><label>Password<input id="login-password" type="password" required></label><button class="primary full">Go</button></form>
-      <form id="register-form" class="hidden"><label>Username<input id="reg-username" required></label><label>Email<input id="reg-email" type="email" required></label><label>Password<input id="reg-password" type="password" minlength="10" required></label><button class="primary full">Register (Get 2-Day Trial!)</button></form>
+      <div class="auth-tabs"><button class="tab active" id="login-tab">Password</button><button class="tab" id="otp-tab">Email Code</button><button class="tab" id="register-tab">Register</button></div>
+      
+      <form id="login-form">
+        <label>Username<input id="login-username" required></label>
+        <label>Password<input id="login-password" type="password" required></label>
+        <button class="primary full">Go</button>
+      </form>
+
+      <form id="otp-form" class="hidden">
+        <label>Email<input id="otp-email" type="email" required></label>
+        <button type="button" id="request-otp-btn" class="secondary full">Request Login Code</button>
+        <label>Enter 6-digit Code<input id="otp-code" maxlength="6" required></label>
+        <button type="button" id="verify-otp-btn" class="primary full">Verify & Login</button>
+      </form>
+
+      <form id="register-form" class="hidden">
+        <label>Username<input id="reg-username" required></label>
+        <label>Email<input id="reg-email" type="email" required></label>
+        <label>Password<input id="reg-password" type="password" minlength="10" required></label>
+        <button class="primary full">Register (Get 2-Day Trial!)</button>
+      </form>
       <p id="auth-message" class="notice"></p>
     </div>
   </div>
@@ -31,21 +50,53 @@
     </aside>
 
     <main class="main">
-      <header class="topbar"><div><strong id="page-heading">AI Assistant</strong></div><div class="top-actions"><span class="plan-pill" id="top-plan">FREE</span></div></header>
+      <header class="topbar">
+        <button id="mobile-menu" class="mobile-menu" style="background:none; border:0; color:white; font-size:24px; cursor:pointer; margin-right:15px;">☰</button>
+        <div><strong id="page-heading">AI Assistant</strong></div>
+        <div class="top-actions"><span class="plan-pill" id="top-plan">FREE</span></div>
+      </header>
       <section id="chat-page" class="page">
-        <div class="welcome" id="welcome"><h1>What are we creating today?</h1></div>
+        <div class="welcome" id="welcome">
+          <h1>What are we creating today?</h1>
+          <p class="muted" id="daily-prompt-text" style="margin-top:10px; font-style:italic;"></p>
+        </div>
         <div id="chat-messages" class="chat-messages"></div>
         <div class="composer-wrap">
           <div class="composer-tools">
             <select id="persona-select" class="persona-select"></select>
-            <select id="model-select" class="persona-select"><option value="deep">🧠 Deep</option><option value="fast">⚡ Fast</option></select>
+            <select id="model-select" class="persona-select" title="Deep = Smarter, Fast = Quicker">
+              <option value="deep">🧠 Deep</option><option value="fast">⚡ Fast</option>
+            </select>
             <span class="muted tiny" id="usage-label">Loading…</span>
           </div>
           <form id="chat-form" class="composer"><textarea id="message-input" rows="1" placeholder="Message..." required></textarea><button class="send-btn">↑</button></form>
         </div>
       </section>
-      <section id="plans-page" class="page hidden"><div class="section-intro"><h1>Plans</h1><div class="usage-card"><strong id="usage-number">—</strong><div class="progress"><span id="usage-progress"></span></div></div></div><div id="plans-grid" class="plans-grid"></div></section>
-      <section id="admin-page" class="page hidden"><h1>Admin</h1><div id="admin-users" class="admin-card"></div></section>
+      
+      <section id="plans-page" class="page hidden">
+        <h1>Plans</h1>
+        <div class="usage-card"><strong id="usage-number">—</strong><div class="progress"><span id="usage-progress"></span></div></div>
+        <div id="plans-grid" class="plans-grid"></div>
+      </section>
+
+      <section id="admin-page" class="page hidden">
+        <h1>Admin Console</h1>
+        <div class="admin-tabs" style="display:flex; gap:10px; margin-bottom:20px;">
+          <button class="secondary active" onclick="switchAdminTab('analytics')">Analytics</button>
+          <button class="secondary" onclick="switchAdminTab('users')">Users</button>
+          <button class="secondary" onclick="switchAdminTab('payments')">Payments</button>
+          <button class="secondary" onclick="switchAdminTab('otps')">OTP Requests</button>
+        </div>
+
+        <div id="admin-analytics" class="admin-card">
+          <h2>Platform Analytics</h2>
+          <p>Total Users: <strong id="stat-users">—</strong></p>
+          <p>Total Messages Sent: <strong id="stat-messages">—</strong></p>
+        </div>
+        <div id="admin-users" class="admin-card hidden"><h2>User Management</h2><div id="admin-users-list"></div></div>
+        <div id="admin-payments" class="admin-card hidden"><h2>Payment Requests</h2><div id="admin-payments-list"></div></div>
+        <div id="admin-otps" class="admin-card hidden"><h2>Pending OTP Logins</h2><div id="admin-otps-list"></div></div>
+      </section>
     </main>
   </div>
   <script src="{{ url_for('static', filename='script.js') }}"></script>
