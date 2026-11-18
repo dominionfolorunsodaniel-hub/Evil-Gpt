@@ -101,6 +101,7 @@ LANGUAGES = {"English": "", "Nigerian Pidgin": "Reply in Nigerian Pidgin English
 # ----------------------------------------------------------------------------- database
 _pool = None
 _pool_lock = threading.Lock()
+_last_used = {}  # id(connection) -> last use time (psycopg2 connections cannot hold custom attributes)
 TODAY = "(NOW() AT TIME ZONE 'Africa/Lagos')::date"  # streaks and daily limits roll over at midnight Nigerian time
 
 
@@ -122,7 +123,7 @@ def db():
     """Pooled connection. Commits on success, rolls back on error. Replaces dead Neon connections."""
     pool = _get_pool()
     conn = pool.getconn()
-    if time.time() - getattr(conn, "_vyra_last", 0) > 20:  # idle a while: make sure Neon didn't close it
+    if time.time() - _last_used.get(id(conn), 0) > 20:  # idle a while: make sure Neon didn't close it
         try:
             with conn.cursor() as c: c.execute("SELECT 1")
             conn.rollback()
@@ -138,8 +139,10 @@ def db():
         except Exception: bad = True
         raise
     finally:
-        conn._vyra_last = time.time()
-        pool.putconn(conn, close=bad or bool(conn.closed))
+        dead = bad or bool(conn.closed)
+        if dead: _last_used.pop(id(conn), None)
+        else: _last_used[id(conn)] = time.time()
+        pool.putconn(conn, close=dead)
 
 
 def q_one(sql, params=None):
@@ -241,8 +244,8 @@ def init_db():
                         cur.execute("INSERT INTO evil_settings(key,value) VALUES ('migration_trial_fix','done')")
                 _db_ready = True
                 return
-            except Exception:
-                log.exception("Database init failed (attempt %s)", attempt)
+            except Exception as exc:
+                log.exception("Database init failed (attempt %s): %s", attempt, exc)
                 if attempt == 2: raise
                 time.sleep(1)
 
