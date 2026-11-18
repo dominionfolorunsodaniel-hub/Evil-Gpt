@@ -2,6 +2,7 @@ services:
   - type: web
     name: evil-gpt
     env: python
+    healthCheckPath: /healthz
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn --workers 2 --threads 4 --timeout 120 app:app
     envVars:
@@ -22,4 +23,18 @@ services:
       - key: SMTP_EMAIL
         sync: false
       - key: SMTP_PASSWORD
+        sync: false
+      - key: SITE_URL
+        sync: false
+      - key: BREVO_API_KEY
+        sync: false
+      - key: MAIL_FROM
+        sync: false
+      - key: PAYSTACK_SECRET_KEY
+        sync: false
+      - key: PAYMENT_BANK_NAME
+        sync: false
+      - key: PAYMENT_ACCOUNT_NUMBER
+        sync: false
+      - key: PAYMENT_ACCOUNT_NAME
         sync: false
