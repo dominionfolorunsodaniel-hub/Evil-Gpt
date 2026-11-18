@@ -1,15 +1,15 @@
 {
-  "name": "Evil GPT",
-  "short_name": "EvilGPT",
-  "start_url": "/",
+  "name": "Vyra AI",
+  "short_name": "Vyra",
+  "description": "Chat with AI and make images. Free to start, pay in naira.",
+  "start_url": "/?login=1",
+  "scope": "/",
   "display": "standalone",
-  "background_color": "#090b12",
-  "theme_color": "#090b12",
+  "background_color": "#0e0b14",
+  "theme_color": "#0e0b14",
   "icons": [
-    {
-      "src": "/static/icon.png",
-      "sizes": "192x192",
-      "type": "image/png"
-    }
+    { "src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/static/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ]
 }
