@@ -1,51 +1,75 @@
 <!doctype html>
 <html lang="en" data-theme="dark">
 <head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Evil GPT — The smartest AI workspace</title>
-  <link rel="manifest" href="/static/manifest.json">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>{{ brand }}: chat with AI and make images</title>
+  <meta name="description" content="{{ brand }} is an AI assistant for chat and image making. Start with a free trial and pay in naira by card or bank transfer.">
+  <meta property="og:title" content="{{ brand }}"><meta property="og:description" content="Chat with AI and make images. Free trial, pay in naira.">
+  <meta name="theme-color" content="#0e0b14">
+  <link rel="manifest" href="/manifest.webmanifest"><link rel="icon" href="/static/icon-192.png" type="image/png"><link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Figtree:wght@400;500;600;700&display=swap">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script src="{{ url_for('static', filename='theme.js') }}"></script>
 </head>
-<body>
-  <div class="auth-shell" style="text-align: center; padding-top: 10vh;">
-    <div style="max-width: 800px;">
-      <div class="brand-mark" style="margin: 0 auto 20px; width: 60px; height: 60px; font-size: 35px; border-radius: 20px;">✦</div>
-      <h1 style="font: 700 48px/1.1 'Space Grotesk'; margin-bottom: 20px;">Think beyond<br><span style="color:var(--accent)">the ordinary.</span></h1>
-      <p class="muted" style="font-size: 18px; margin-bottom: 30px;">A smarter space for ideas, research, writing and building.</p>
-      
-      <div style="display: flex; gap: 10px; justify-content: center;">
-        <a href="/?force_login=1" class="primary" style="text-decoration:none; padding: 15px 30px; font-size: 16px;">Start for free →</a>
-        <a href="/privacy" class="secondary" style="text-decoration:none; padding: 15px 30px; font-size: 16px;">Privacy</a>
-      </div>
+<body class="land">
+{% include "_icons.html" %}
+{% set start = '/?login=1' ~ ('&ref=' ~ ref if ref else '') %}
+<div class="wrap">
+  <header class="l-nav">
+    <a class="brand" href="/"><span class="mark"><svg class="ico"><use href="#i-v"/></svg></span>{{ brand }}</a>
+    <nav><a class="btn ghost sm" href="{{ start }}">Sign in</a><a class="btn primary sm" href="{{ start }}">Start free</a></nav>
+  </header>
 
-      <div style="margin-top: 60px; display: flex; gap: 20px; justify-content: center; text-align: left; flex-wrap: wrap;">
-        <div class="admin-card" style="flex: 1; min-width: 200px;">
-          <h3 style="color: var(--accent); margin-top:0;">⚡ Fast</h3>
-          <p class="muted tiny">Switch between Fast and Deep models.</p>
-        </div>
-        <div class="admin-card" style="flex: 1; min-width: 200px;">
-          <h3 style="color: var(--accent); margin-top:0;">🧠 Smart</h3>
-          <p class="muted tiny">Choose Tutors, Code Reviewers, or Advisors.</p>
-        </div>
-        <div class="admin-card" style="flex: 1; min-width: 200px;">
-          <h3 style="color: var(--accent); margin-top:0;">🎁 Free Trial</h3>
-          <p class="muted tiny">Get 2 days of Infinity access on signup.</p>
-        </div>
-      </div>
-
-      <h2 style="margin-top: 60px; font-family: 'Space Grotesk';">What people are saying</h2>
-      <div style="display: flex; gap: 20px; justify-content: center; margin-top: 20px; flex-wrap: wrap;">
-        <div class="admin-card" style="flex: 1; min-width: 250px; font-size: 13px;">
-          "This is faster than ChatGPT and the personas are actually useful." <br><br><strong>— Tunde A.</strong>
-        </div>
-        <div class="admin-card" style="flex: 1; min-width: 250px; font-size: 13px;">
-          "I love that I can just use my email code to log in. No passwords!" <br><br><strong>— Sarah M.</strong>
-        </div>
-        <div class="admin-card" style="flex: 1; min-width: 250px; font-size: 13px;">
-          "The 2-day free trial convinced me to upgrade to Pro immediately." <br><br><strong>— David O.</strong>
-        </div>
-      </div>
+  <section class="hero">
+    <div>
+      <h1>Ask anything.<br>Make anything.</h1>
+      <p class="lead">{{ brand }} answers questions, writes and fixes code, explains hard topics and turns your words into images. Start free, pay in naira when you need more.</p>
+      <div class="cta"><a class="btn primary" href="{{ start }}">Start your free trial</a><a class="btn" href="#plans">See plans</a></div>
+      <small>2 days of full access. No card needed.</small>
     </div>
-  </div>
+    <div class="demo" aria-label="Example conversation">
+      <div class="demo-bar"><span class="mark" style="width:26px;height:26px;border-radius:9px"><svg class="ico" style="width:14px;height:14px"><use href="#i-v"/></svg></span>{{ brand }}</div>
+      <div class="demo-body">
+        <div class="bubble me">Help me write a polite message asking my landlord to fix the generator.</div>
+        <div class="bubble ai"><b>Here's a short, respectful version:</b><br>"Good evening sir, I hope you're well. The generator has been faulty for a week now. Could you please arrange a repair this week? I can be home any day to let the technician in. Thank you."</div>
+        <div class="bubble me">Make it firmer, but still polite.</div>
+      </div>
+      <div class="demo-input"><span>Message {{ brand }}</span><span class="send"><svg class="ico"><use href="#i-arrow-up"/></svg></span></div>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>One place for the things you ask AI every day</h2>
+    <div class="feats">
+      <div class="feat"><svg class="ico"><use href="#i-cpu"/></svg><h3>Deep and Fast modes</h3><p>Use Deep for hard questions and Fast when you just want a quick answer.</p></div>
+      <div class="feat"><svg class="ico"><use href="#i-image"/></svg><h3>Image Studio</h3><p>Describe a picture and get it in seconds. Every image is saved to your gallery.</p></div>
+      <div class="feat"><svg class="ico"><use href="#i-pen"/></svg><h3>Personas</h3><p>Switch between tutor, writer, code reviewer and business advisor, or write your own.</p></div>
+      <div class="feat"><svg class="ico"><use href="#i-paperclip"/></svg><h3>Chat with a PDF</h3><p>Attach a PDF and ask for a summary or answers from it.</p></div>
+      <div class="feat"><svg class="ico"><use href="#i-flame"/></svg><h3>Daily check-in</h3><p>Check in every day for bonus messages. Longer streaks earn more.</p></div>
+      <div class="feat"><svg class="ico"><use href="#i-card"/></svg><h3>Pay in naira</h3><p>Pay by card or bank transfer. Plans last 30 days and never renew without you.</p></div>
+    </div>
+  </section>
+
+  <section class="section" id="plans">
+    <h2>Plans that grow with you</h2>
+    <p class="lead">Everyone starts with a free trial. After it ends you can stay on Free or pick a plan.</p>
+    <div class="plans-grid" style="margin-top:26px">
+      {% for key, p in plans.items() %}
+      <div class="plan {{ 'popular' if key == 'pro' else '' }}">
+        {% if key == 'pro' %}<span class="pill brand tag">Most popular</span>{% endif %}
+        <h3>{{ p.name }}</h3>
+        <div class="price">{% if p.price %}₦{{ '{:,}'.format(p.price) }}<small> / 30 days</small>{% else %}Free{% endif %}</div>
+        <ul><li><svg class="ico"><use href="#i-check"/></svg>{{ '{:,}'.format(p.monthly_messages) }} messages a month</li><li><svg class="ico"><use href="#i-check"/></svg>{{ '{:,}'.format(p.daily_images) }} images a day</li></ul>
+        <a class="btn {{ 'primary' if key == 'pro' else '' }}" href="{{ start }}">{{ 'Start free' if key == 'free' else 'Get ' ~ p.name }}</a>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+
+  <footer class="l-foot"><span>© {{ brand }}</span><span><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/changelog">What's new</a></span></footer>
+</div>
+<script src="{{ url_for('static', filename='pwa.js') }}"></script>
 </body>
 </html>

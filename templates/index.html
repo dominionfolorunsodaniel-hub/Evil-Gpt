@@ -1,158 +1,228 @@
 <!doctype html>
 <html lang="en" data-theme="dark">
 <head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Evil GPT</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>{{ brand }}</title>
+  <meta name="theme-color" content="#0e0b14">
+  <meta name="robots" content="noindex">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/static/icon-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Figtree:wght@400;500;600;700&display=swap">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script src="{{ url_for('static', filename='theme.js') }}"></script>
 </head>
-<body>
-  <div id="auth-view" class="auth-shell">
-    <div class="auth-card">
-      <a class="brand brand-large" href="#"><span class="brand-mark">E</span> EVIL GPT</a>
-      <div class="auth-tabs" id="auth-tabs">
-        <button class="tab active" id="login-tab">Sign In</button>
-        <button class="tab" id="register-tab">Create Account</button>
-      </div>
-      <form id="login-form">
-        <label>Username<input id="login-username" required></label>
-        <label>Password<input id="login-password" type="password" required></label>
-        <button class="primary full" type="submit">Sign In →</button>
-      </form>
-      <form id="register-form" class="hidden">
-        <label>Username<input id="reg-username" required></label>
-        <label>Email<input id="reg-email" type="email" required></label>
-        <label>Password<input id="reg-password" type="password" minlength="10" required></label>
-        <button class="primary full" type="submit">Register (Get 2-Day Trial!)</button>
-      </form>
-      <form id="otp-form" class="hidden">
-        <h3 style="margin-top:0; color:var(--accent);">Verify Your Email</h3>
-        <p class="muted tiny">Your account is pending Admin approval. Once approved, enter the 6-digit code sent to your email.</p>
-        <label>6-Digit Code<input id="otp-code" maxlength="6" required placeholder="123456"></label>
-        <button type="button" id="verify-otp-btn" class="primary full">Verify Account</button>
-        <button type="button" onclick="location.reload()" class="secondary full" style="margin-top:10px;">Back to Login</button>
-      </form>
-      <p id="auth-message" class="notice"></p>
+<body data-ref="{{ ref }}" data-paystack="{{ 1 if paystack else 0 }}">
+{% include "_icons.html" %}
+<div id="toasts" class="toast-wrap" role="status" aria-live="polite"></div>
+
+<!-- ============ SIGN IN / CREATE ACCOUNT ============ -->
+<div id="auth-view" class="auth-shell">
+  <div class="auth-card">
+    <a class="brand" href="/"><span class="mark"><svg class="ico"><use href="#i-v"/></svg></span>{{ brand }}</a>
+
+    <div id="auth-tabs" class="auth-tabs" role="tablist">
+      <button class="tab active" id="login-tab" role="tab" type="button">Sign in</button>
+      <button class="tab" id="register-tab" role="tab" type="button">Create account</button>
     </div>
+
+    <form id="login-form" autocomplete="on">
+      <label class="field">Username<input class="input" id="login-username" autocomplete="username" autocapitalize="none" placeholder="your_username" required></label>
+      <label class="field">Password
+        <span class="pw"><input class="input" id="login-password" type="password" autocomplete="current-password" placeholder="Your password" required>
+        <button type="button" class="toggle-pw" aria-label="Show password"><svg class="ico"><use href="#i-eye"/></svg></button></span>
+      </label>
+      <button class="btn primary block" style="margin-top:18px" type="submit">Sign in</button>
+      <div class="auth-foot"><button type="button" class="link-btn" id="to-forgot">Forgot password?</button><button type="button" class="link-btn" id="to-register">New here? Get a free trial</button></div>
+    </form>
+
+    <form id="register-form" class="hidden" autocomplete="on">
+      <label class="field">Username<input class="input" id="reg-username" autocomplete="username" autocapitalize="none" placeholder="letters, numbers, underscore" required minlength="3" maxlength="40"></label>
+      <label class="field">Email<input class="input" id="reg-email" type="email" autocomplete="email" placeholder="you@example.com" required></label>
+      <label class="field">Password
+        <span class="pw"><input class="input" id="reg-password" type="password" autocomplete="new-password" minlength="10" placeholder="At least 10 characters" required>
+        <button type="button" class="toggle-pw" aria-label="Show password"><svg class="ico"><use href="#i-eye"/></svg></button></span>
+      </label>
+      <label class="field">Referral code (optional)<input class="input" id="reg-ref" autocapitalize="characters" maxlength="12" placeholder="Got a friend's code?"></label>
+      <button class="btn primary block" style="margin-top:18px" type="submit">Start my free trial</button>
+      <p class="auth-legal">By creating an account you agree to our <a href="/terms" target="_blank" rel="noopener">Terms</a> and <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>.</p>
+    </form>
+
+    <form id="otp-form" class="hidden">
+      <h2>Check your email</h2>
+      <p class="muted" id="otp-help">Enter the 6-digit code we sent you.</p>
+      <label class="field">6-digit code<input class="input" id="otp-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456" required></label>
+      <button class="btn primary block" style="margin-top:16px" type="submit">Verify account</button>
+      <div class="auth-foot"><button type="button" class="link-btn" id="resend-otp">Send a new code</button><button type="button" class="link-btn back-login">Back to sign in</button></div>
+    </form>
+
+    <form id="forgot-form" class="hidden">
+      <h2>Reset your password</h2>
+      <p class="muted">Enter your account email and we'll send a reset code.</p>
+      <label class="field">Email<input class="input" id="forgot-email" type="email" autocomplete="email" required></label>
+      <button class="btn primary block" style="margin-top:16px" type="submit">Send reset code</button>
+      <div class="auth-foot"><span></span><button type="button" class="link-btn back-login">Back to sign in</button></div>
+    </form>
+
+    <form id="reset-form" class="hidden">
+      <h2>Choose a new password</h2>
+      <label class="field">Reset code<input class="input" id="reset-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required></label>
+      <label class="field">New password<input class="input" id="reset-password" type="password" autocomplete="new-password" minlength="10" placeholder="At least 10 characters" required></label>
+      <button class="btn primary block" style="margin-top:16px" type="submit">Save new password</button>
+      <div class="auth-foot"><span></span><button type="button" class="link-btn back-login">Back to sign in</button></div>
+    </form>
+
+    <p id="auth-message" class="notice" aria-live="polite"></p>
   </div>
+</div>
 
-  <div id="app-view" class="app hidden">
-    <aside class="sidebar" id="sidebar">
-      <a class="brand" href="#"><span class="brand-mark">E</span> EVIL GPT</a>
-      <button id="new-chat" class="new-chat">＋ New chat</button>
-      <nav>
-        <button class="nav-item active" data-page="chat">◈ Chat</button>
-        <button class="nav-item" data-page="images">🎨 Image Studio</button>
-        <button class="nav-item" data-page="plans">✦ Plans</button>
-        <button class="nav-item hidden" id="admin-nav" data-page="admin">⚙ Admin</button>
-      </nav>
-      
-      <input type="text" id="search-chats" placeholder="Search chats..." style="margin-top:15px; padding:8px; border-radius:8px; border:1px solid var(--line); background:var(--panel); color:white;">
-      <div id="history-list" class="history-list" style="margin-top:10px;"></div>
-      
-      <div class="sidebar-bottom">
-        <div class="user-chip" onclick="openProfile()" style="cursor:pointer;">
-          <div class="avatar" id="avatar">U</div><div><strong id="side-username">User</strong><small id="side-plan">Free</small></div>
-        </div>
-        <div id="user-stats-label" class="tiny muted" style="margin-top:10px;">Loading stats...</div>
-        <button id="checkin-btn" class="secondary full" style="margin-top:10px; font-size:12px;">Daily Check-in 🔥 <span id="streak-label">0</span></button>
-        <button id="logout" class="logout">Sign out ↗</button>
+<!-- ============ APP ============ -->
+<div id="app-view" class="app hidden">
+  <div id="scrim" class="scrim hidden"></div>
+  <aside class="sidebar" id="sidebar" aria-label="Sidebar">
+    <a class="brand" href="/?login=1"><span class="mark"><svg class="ico"><use href="#i-v"/></svg></span>{{ brand }}</a>
+    <button id="new-chat" class="btn new-chat"><svg class="ico"><use href="#i-plus"/></svg>New chat</button>
+    <nav class="nav" aria-label="Main">
+      <button class="nav-item active" data-page="chat"><svg class="ico"><use href="#i-chat"/></svg>Chat</button>
+      <button class="nav-item" data-page="images"><svg class="ico"><use href="#i-image"/></svg>Image Studio</button>
+      <button class="nav-item" data-page="plans"><svg class="ico"><use href="#i-star"/></svg>Plans</button>
+      <button class="nav-item hidden" id="admin-nav" data-page="admin"><svg class="ico"><use href="#i-shield"/></svg>Admin</button>
+    </nav>
+    <div class="search"><svg class="ico sm"><use href="#i-search"/></svg><input id="search-chats" type="search" placeholder="Search chats" aria-label="Search chats"></div>
+    <div id="history-list" class="history"></div>
+    <div class="side-bottom">
+      <div><div class="meter" id="side-meter"><span></span></div><div class="side-note" style="margin-top:6px"><span id="side-usage">Loading</span><span id="side-plan-note"></span></div></div>
+      <button id="checkin-btn" class="btn checkin block"><span style="display:flex;gap:8px;align-items:center"><svg class="ico flame"><use href="#i-flame"/></svg><span id="checkin-text">Daily check-in</span></span><b id="streak-label">0</b></button>
+      <button class="user-chip" id="open-settings"><span class="avatar" id="avatar">U</span><span><strong id="side-username">You</strong><small id="side-plan">Free plan</small></span></button>
+      <div class="side-links"><a href="/privacy" target="_blank" rel="noopener">Privacy</a><a href="/terms" target="_blank" rel="noopener">Terms</a><a href="/changelog" target="_blank" rel="noopener">What's new</a></div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <button id="mobile-menu" class="icon-btn mobile-menu" aria-label="Open menu"><svg class="ico"><use href="#i-menu"/></svg></button>
+      <h1 id="page-heading">{{ brand }}</h1>
+      <div class="top-actions">
+        <button id="theme-btn" class="icon-btn" aria-label="Switch theme"><svg class="ico"><use href="#i-sun"/></svg></button>
+        <button id="notif-btn" class="icon-btn" aria-label="Notifications"><svg class="ico"><use href="#i-bell"/></svg><span id="notif-dot" class="dot hidden"></span></button>
+        <button id="top-plan" class="pill brand" aria-label="Your plan">Free</button>
       </div>
-    </aside>
+    </header>
+    <div id="notif-panel" class="notif-panel hidden">
+      <h3>Notifications</h3>
+      <div id="notif-list"><span class="skeleton"></span></div>
+      <button id="notif-read" class="btn sm block" style="margin-top:10px">Mark all as read</button>
+    </div>
 
-    <main class="main">
-      <header class="topbar">
-        <button id="mobile-menu" class="mobile-menu" style="background:none; border:0; color:white; font-size:24px; cursor:pointer; margin-right:15px;">☰</button>
-        <div><strong id="page-heading">AI Assistant</strong></div>
-        <div class="top-actions">
-          <button id="notif-btn" class="icon-btn" style="position:relative;">🔔<span id="notif-dot" class="hidden" style="position:absolute; top:0; right:0; width:8px; height:8px; background:red; border-radius:50%;"></span></button>
-          <span class="plan-pill" id="top-plan">FREE</span>
+    <!-- CHAT -->
+    <section id="chat-page" class="page chat-page">
+      <div class="chat-scroll" id="chat-scroll">
+        <div class="chat-col">
+          <div class="welcome" id="welcome">
+            <div class="mark"><svg class="ico"><use href="#i-v"/></svg></div>
+            <h2 id="greeting">What are we creating today?</h2>
+            <p class="sub">Ask anything, or pick a place to start.</p>
+            <div class="suggest" id="suggest"></div>
+            <button class="daily hidden" id="daily-prompt"><svg class="ico sm"><use href="#i-zap"/></svg><span id="daily-prompt-text"></span></button>
+          </div>
+          <div class="messages" id="chat-messages"></div>
         </div>
-      </header>
-      
-      <div id="notif-panel" class="hidden" style="position:absolute; top:70px; right:20px; width:300px; background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:15px; z-index:20; box-shadow:0 10px 30px #000;">
-        <h3 style="margin-top:0;">Notifications</h3>
-        <div id="notif-list" style="max-height:300px; overflow-y:auto; font-size:13px;">No notifications yet.</div>
-        <button class="secondary full" onclick="markNotifsRead()" style="margin-top:10px;">Mark all as read</button>
       </div>
-
-      <!-- CHAT PAGE -->
-      <section id="chat-page" class="page">
-        <div class="welcome" id="welcome">
-          <h1>What are we creating today?</h1>
-          <p class="muted" id="daily-prompt-text" style="margin-top:10px; font-style:italic;"></p>
-        </div>
-        <div id="chat-messages" class="chat-messages"></div>
-        <div class="composer-wrap">
-          <div class="composer-tools">
-            <select id="persona-select" class="persona-select"></select>
-            <select id="model-select" class="persona-select"><option value="deep">🧠 Deep</option><option value="fast">⚡ Fast</option></select>
-            <input type="range" id="temp-slider" min="0" max="1" step="0.1" value="0.7" title="Creativity" style="width:60px;">
-            <span class="muted tiny" id="usage-label">Loading…</span>
+      <div id="nudge" class="nudge hidden"><span id="nudge-text"></span><button class="btn sm primary" data-go="plans">See plans</button><button class="btn sm" id="nudge-checkin">Check in</button></div>
+      <div class="composer-wrap">
+        <div class="composer-col">
+          <div class="tools">
+            <div class="seg" role="group" aria-label="Thinking mode">
+              <button type="button" id="mode-deep" class="on" aria-pressed="true"><svg class="ico sm"><use href="#i-cpu"/></svg>Deep</button>
+              <button type="button" id="mode-fast" aria-pressed="false"><svg class="ico sm"><use href="#i-zap"/></svg>Fast</button>
+            </div>
+            <select id="persona-select" class="select" aria-label="Persona"></select>
+            <select id="lang-select" class="select" aria-label="Reply language"><option>English</option><option>Nigerian Pidgin</option><option>Yoruba</option><option>Hausa</option><option>Igbo</option></select>
+            <label class="creativity" title="Lower is precise, higher is more creative">Creativity<input type="range" id="temp-slider" min="0" max="1" step="0.1" value="0.7" aria-label="Creativity"></label>
+            <span id="file-chip" class="file-chip hidden"></span>
           </div>
           <form id="chat-form" class="composer">
-            <textarea id="message-input" rows="1" placeholder="Message..." required></textarea>
-            <button class="send-btn">↑</button>
+            <button type="button" id="attach-btn" class="icon-btn" aria-label="Attach a PDF" title="Attach a PDF"><svg class="ico"><use href="#i-paperclip"/></svg></button>
+            <input type="file" id="file-input" accept="application/pdf" class="hidden">
+            <button type="button" id="mic-btn" class="icon-btn hidden" aria-label="Speak your message" title="Speak your message"><svg class="ico"><use href="#i-mic"/></svg></button>
+            <textarea id="message-input" rows="1" placeholder="Message {{ brand }}" aria-label="Message" maxlength="8000"></textarea>
+            <button class="send" id="send-btn" type="submit" aria-label="Send">
+              <svg class="ring" viewBox="0 0 54 54" id="usage-ring"><circle class="bg" cx="27" cy="27" r="24"/><circle class="fg" cx="27" cy="27" r="24" stroke-dasharray="150.8" stroke-dashoffset="0"/></svg>
+              <svg class="ico" id="send-icon"><use href="#i-arrow-up"/></svg>
+            </button>
           </form>
+          <div class="composer-foot"><span id="usage-label">&nbsp;</span><span class="hint">Enter to send, Shift+Enter for a new line. AI can make mistakes.</span></div>
         </div>
-      </section>
+      </div>
+    </section>
 
-      <!-- NEW: IMAGE STUDIO PAGE -->
-      <section id="images-page" class="page hidden">
-        <div class="welcome">
-          <h1>🎨 Image Studio</h1>
-          <p class="muted">Generate stunning images for free.</p>
-          <p class="tiny muted" id="image-limit-label" style="margin-top:10px;">Loading your daily limit...</p>
+    <!-- IMAGE STUDIO -->
+    <section id="images-page" class="page hidden">
+      <div class="page-wrap">
+        <div class="page-head"><h2>Image Studio</h2><p>Describe what you want to see. Short, specific prompts work best.</p></div>
+        <div class="card img-box" style="max-width:640px">
+          <textarea id="image-prompt" class="input" rows="3" maxlength="600" placeholder="A yellow danfo bus driving through a neon Lagos night, cinematic" aria-label="Image description" style="margin:0"></textarea>
+          <div class="chips" id="style-chips"></div>
+          <button id="generate-img-btn" class="btn primary"><svg class="ico"><use href="#i-zap"/></svg>Generate image</button>
+          <span id="image-limit-label" class="tiny muted"><span class="skeleton w60"></span></span>
         </div>
-        <div class="admin-card" style="max-width:600px; margin: auto;">
-          <textarea id="image-prompt" rows="3" placeholder="Describe the image you want to see... (e.g., A cyberpunk city at night)" style="margin-bottom:15px;"></textarea>
-          <button id="generate-img-btn" class="primary full">✨ Generate Image</button>
-        </div>
-        <div id="generated-image-container" class="admin-card hidden" style="max-width:600px; margin: 20px auto; text-align:center;">
-          <img id="generated-image-result" src="" style="max-width:100%; border-radius:10px;">
-          <a id="download-img-link" download="evil-gpt-image.jpg" class="primary full" style="display:block; text-decoration:none; margin-top:15px; text-align:center;">⬇ Download Image</a>
-        </div>
-      </section>
-      
-      <!-- PLANS PAGE -->
-      <section id="plans-page" class="page hidden">
-        <h1>Plans</h1>
-        <div class="usage-card"><strong id="usage-number">—</strong><div class="progress"><span id="usage-progress"></span></div></div>
+        <div id="img-result" class="img-result hidden"><span class="skeleton"></span><img id="img-result-img" alt="Generated image">
+          <div class="overlay"><a id="img-download" class="btn sm" download="vyra-image.jpg" target="_blank" rel="noopener"><svg class="ico sm"><use href="#i-download"/></svg>Download</a></div></div>
+        <h3 style="margin-top:34px">Your images</h3>
+        <div id="gallery" class="gallery"></div>
+      </div>
+    </section>
+
+    <!-- PLANS -->
+    <section id="plans-page" class="page hidden">
+      <div class="page-wrap">
+        <div class="page-head"><h2>Plans</h2><p>Pay in naira by card or bank transfer. Every plan lasts 30 days.</p></div>
+        <div class="card usage-card"><span class="muted">Messages used this month</span><strong id="usage-number">...</strong><div class="meter" id="usage-meter"><span></span></div><span class="tiny muted" id="usage-sub"></span></div>
         <div id="plans-grid" class="plans-grid"></div>
-        <h2 style="margin-top:40px;">Leaderboard 🏆</h2>
-        <div id="leaderboard-list" class="admin-card"></div>
-      </section>
-
-      <!-- ADMIN PAGE -->
-      <section id="admin-page" class="page hidden">
-        <h1>Admin Console</h1>
-        <div class="admin-tabs" style="display:flex; gap:10px; margin-bottom:20px;">
-          <button class="secondary" onclick="switchAdminTab('users')">Users</button>
-          <button class="secondary" onclick="switchAdminTab('payments')">Payments</button>
-          <button class="secondary" onclick="switchAdminTab('otps')">OTPs</button>
-          <button class="secondary" onclick="switchAdminTab('broadcast')">Broadcast</button>
+        <div class="split">
+          <div class="card"><h3>Invite friends</h3><p class="muted" style="margin:6px 0 0">When a friend joins with your link, you both get a free day of full access. Up to 10 friends.</p>
+            <div class="ref-link"><input class="input" id="ref-url" readonly aria-label="Your invite link"><button class="btn" id="copy-ref"><svg class="ico sm"><use href="#i-copy"/></svg>Copy</button></div>
+            <p class="tiny muted" id="ref-count" style="margin:10px 0 0"></p></div>
+          <div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><h3><svg class="ico" style="vertical-align:-3px;color:var(--mango)"><use href="#i-trophy"/></svg> Leaderboard</h3><div class="sub-tabs"><button id="lb-weekly" class="on">This week</button><button id="lb-streak">Streaks</button></div></div>
+            <div id="leaderboard-list" class="board"></div></div>
         </div>
-        <div id="admin-users" class="admin-card hidden"><div id="admin-users-list"></div></div>
-        <div id="admin-payments" class="admin-card hidden"><div id="admin-payments-list"></div></div>
-        <div id="admin-otps" class="admin-card hidden"><div id="admin-otps-list"></div></div>
-        <div id="admin-broadcast" class="admin-card hidden">
-          <h2>Broadcast Notification</h2>
-          <textarea id="broadcast-msg" placeholder="Type message here..." style="margin-bottom:10px;"></textarea>
-          <button class="primary" onclick="sendBroadcast()">Send to All Users</button>
-        </div>
-      </section>
-    </main>
-  </div>
-  
-  <div id="persona-modal" class="hidden" style="position:fixed; inset:0; background:#000a; display:grid; place-items:center; z-index:100;">
-    <div class="payment-card">
-      <h2>Custom Persona</h2>
-      <p class="muted tiny">Define how the AI should behave. Leave blank for default.</p>
-      <textarea id="persona-text" rows="4" style="margin:10px 0;"></textarea>
-      <button class="primary full" onclick="savePersona()">Save</button>
-      <button class="secondary full" style="margin-top:10px;" onclick="document.getElementById('persona-modal').classList.add('hidden')">Cancel</button>
-    </div>
-  </div>
+      </div>
+    </section>
 
-  <script src="{{ url_for('static', filename='script.js') }}"></script>
+    <!-- ADMIN -->
+    <section id="admin-page" class="page hidden">
+      <div class="page-wrap">
+        <div class="page-head"><h2>Admin</h2></div>
+        <div class="admin-tabs" id="admin-tabs"></div>
+        <div id="admin-body"></div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- SETTINGS -->
+<div id="settings-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+  <div class="modal-card wide">
+    <div class="modal-head"><h2 id="settings-title">Settings</h2><button class="icon-btn" data-close aria-label="Close"><svg class="ico"><use href="#i-x"/></svg></button></div>
+    <div class="kv"><div><span>Username</span><b id="set-username"></b></div><div><span>Email</span><b id="set-email"></b></div><div><span>Plan</span><b id="set-plan"></b></div></div>
+    <div class="setting"><h3>Custom persona</h3><p class="muted tiny" style="margin:0">Tell the AI how to behave, for example: "Explain things like a patient teacher and use Nigerian examples." Leave blank to use the persona you pick in chat.</p>
+      <textarea id="persona-text" class="input" rows="3" maxlength="2000"></textarea>
+      <p class="tiny" id="persona-lock" style="color:var(--mango);margin:6px 0 0"></p>
+      <button class="btn sm primary" id="save-persona" style="margin-top:8px">Save persona</button></div>
+    <div class="setting"><h3>Install the app</h3><p class="muted tiny" style="margin:0 0 8px">Add {{ brand }} to your home screen for a full-screen app.</p><button class="btn sm" id="install-btn">Install {{ brand }}</button></div>
+    <div class="setting"><h3>Your data</h3><div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn sm" href="/api/user/export" download><svg class="ico sm"><use href="#i-download"/></svg>Download my data</a><button class="btn sm danger" id="delete-account">Delete my account</button></div></div>
+    <div class="setting"><button class="btn block" id="logout"><svg class="ico"><use href="#i-logout"/></svg>Sign out</button></div>
+  </div>
+</div>
+
+<!-- CHECKOUT -->
+<div id="pay-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="pay-title"><div class="modal-card" id="pay-card"></div></div>
+<!-- GENERIC (admin proof, confirms) -->
+<div id="generic-modal" class="modal hidden" role="dialog" aria-modal="true"><div class="modal-card wide" id="generic-card"></div></div>
+
+<script src="{{ url_for('static', filename='pwa.js') }}"></script>
+<script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
 </html>

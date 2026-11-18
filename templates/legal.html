@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{{ title }} · Vyra AI</title><meta name="theme-color" content="#0e0b14">
+  <link rel="icon" href="/static/icon-192.png" type="image/png">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700&family=Figtree:wght@400;600;700&display=swap">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script src="{{ url_for('static', filename='theme.js') }}"></script>
+</head>
+<body>
+{% include "_icons.html" %}
+<main class="legal">
+  <a class="brand" href="/"><span class="mark"><svg class="ico"><use href="#i-v"/></svg></span>Vyra AI</a>
+  <h1>{{ title }}</h1>
+  {{ content|safe }}
+  <p style="margin-top:36px"><a href="/">Back to Vyra AI</a></p>
+</main>
+</body>
+</html>

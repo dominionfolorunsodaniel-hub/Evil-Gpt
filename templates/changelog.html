@@ -1,27 +1,30 @@
 <!doctype html>
 <html lang="en" data-theme="dark">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Changelog — Evil GPT</title>
-<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>What's new · Vyra AI</title><meta name="theme-color" content="#0e0b14">
+  <link rel="icon" href="/static/icon-192.png" type="image/png">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700&family=Figtree:wght@400;600;700&display=swap">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script src="{{ url_for('static', filename='theme.js') }}"></script>
 </head>
 <body>
-<div class="legal">
-  <a class="brand" href="/" style="margin-bottom:30px"><span class="brand-mark">E</span> EVIL GPT</a>
-  <h1>Changelog</h1>
-  <h2>v1.1 — Streaming & polish</h2>
+{% include "_icons.html" %}
+<main class="legal">
+  <a class="brand" href="/"><span class="mark"><svg class="ico"><use href="#i-v"/></svg></span>Vyra AI</a>
+  <h1>What's new</h1>
+  <h2>Evil GPT is now Vyra AI</h2>
   <ul>
-    <li>Streaming responses (token-by-token)</li>
-    <li>Markdown rendering with code blocks</li>
-    <li>Copy, regenerate, report, and feedback buttons</li>
-    <li>Prompt library</li>
-    <li>Conversation export and share links</li>
-    <li>Dark/light theme</li>
-    <li>Rate limiting</li>
+    <li>New name, new look, light and dark themes, and install-to-home-screen.</li>
+    <li>Replies stream in with proper formatting and code blocks you can copy.</li>
+    <li>Copy, regenerate, edit and rate any reply. Stop a reply any time.</li>
+    <li>Rename, pin, search and share chats by link.</li>
+    <li>Sign up now sends your code by email straight away. Password reset by email.</li>
+    <li>Pay by card with Paystack, or by bank transfer with a screenshot.</li>
+    <li>Invite friends for free days. Weekly leaderboard with prizes. Check-in rewards grow with your streak.</li>
+    <li>Image gallery to keep, download and delete your images.</li>
+    <li>Download or delete your data from Settings.</li>
   </ul>
-  <h2>v1.0 — Launch</h2>
-  <p>Initial chat, auth, plans, and admin console.</p>
-  <p style="margin-top:40px"><a href="/">← Back to app</a></p>
-</div>
+</main>
 </body>
 </html>

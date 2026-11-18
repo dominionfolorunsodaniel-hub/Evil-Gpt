@@ -1,22 +1,23 @@
 <!doctype html>
 <html lang="en" data-theme="dark">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{{ title }} — Evil GPT</title>
-<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{{ title }} · {{ brand }}</title><meta name="robots" content="noindex"><meta name="theme-color" content="#0e0b14">
+  <link rel="icon" href="/static/icon-192.png" type="image/png">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700&family=Figtree:wght@400;600;700&display=swap">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script src="{{ url_for('static', filename='theme.js') }}"></script>
 </head>
 <body>
-<div class="share-page">
-  <a class="brand" href="/" style="margin-bottom:20px"><span class="brand-mark">E</span> EVIL GPT</a>
-  <h1 style="font:700 28px 'Space Grotesk'">{{ title }}</h1>
-  <p class="muted tiny">Shared read-only conversation</p>
+{% include "_icons.html" %}
+<main class="share-page">
+  <a class="brand" href="/"><span class="mark"><svg class="ico"><use href="#i-v"/></svg></span>{{ brand }}</a>
+  <h1>{{ title }}</h1>
+  <p class="muted">A chat shared from {{ brand }}.</p>
   {% for m in messages %}
-  <div class="share-msg {{ m.role }}">
-    <div class="role">{{ 'YOU' if m.role == 'user' else 'EVIL GPT' }}</div>
-    <div class="message-body" style="white-space:pre-wrap">{{ m.content }}</div>
-  </div>
+  <div class="share-msg {{ m.role }}"><div class="role">{{ 'Person' if m.role == 'user' else brand }}</div><div class="body">{{ m.content }}</div></div>
   {% endfor %}
-  <p style="margin-top:40px"><a href="/">Try Evil GPT →</a></p>
-</div>
+  <p style="margin-top:30px"><a class="btn primary" href="/?login=1">Try {{ brand }} free</a></p>
+</main>
 </body>
 </html>
