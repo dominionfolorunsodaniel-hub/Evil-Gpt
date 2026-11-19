@@ -90,13 +90,14 @@
       <button class="nav-item" data-page="plans"><svg class="ico"><use href="#i-star"/></svg>Plans</button>
       <button class="nav-item hidden" id="admin-nav" data-page="admin"><svg class="ico"><use href="#i-shield"/></svg>Admin</button>
     </nav>
-    <div class="search"><svg class="ico sm"><use href="#i-search"/></svg><input id="search-chats" type="search" placeholder="Search chats" aria-label="Search chats"></div>
+    <div class="search"><svg class="ico sm"><use href="#i-search"/></svg><input id="search-chats" type="search" placeholder="Search chats (Ctrl+K)" aria-label="Search chats"></div>
+    <div class="sub-tabs history-tabs"><button id="hist-active" class="on">Chats</button><button id="hist-archived">Archived</button></div>
     <div id="history-list" class="history"></div>
     <div class="side-bottom">
       <div><div class="meter" id="side-meter"><span></span></div><div class="side-note" style="margin-top:6px"><span id="side-usage">Loading</span><span id="side-plan-note"></span></div></div>
       <button id="checkin-btn" class="btn checkin block"><span style="display:flex;gap:8px;align-items:center"><svg class="ico flame"><use href="#i-flame"/></svg><span id="checkin-text">Daily check-in</span></span><b id="streak-label">0</b></button>
       <button class="user-chip" id="open-settings"><span class="avatar" id="avatar">U</span><span><strong id="side-username">You</strong><small id="side-plan">Free plan</small></span></button>
-      <div class="side-links"><a href="/privacy" target="_blank" rel="noopener">Privacy</a><a href="/terms" target="_blank" rel="noopener">Terms</a><a href="/changelog" target="_blank" rel="noopener">What's new</a></div>
+      <div class="side-links"><a href="/privacy" target="_blank" rel="noopener">Privacy</a><a href="/terms" target="_blank" rel="noopener">Terms</a><a href="/changelog" target="_blank" rel="noopener" id="changelog-link">What's new<span id="news-dot" class="dot hidden"></span></a></div>
     </div>
   </aside>
 
@@ -106,6 +107,8 @@
       <h1 id="page-heading">{{ brand }}</h1>
       <div class="top-actions">
         <button id="theme-btn" class="icon-btn" aria-label="Switch theme"><svg class="ico"><use href="#i-sun"/></svg></button>
+        <button id="copy-chat-btn" class="icon-btn hidden" aria-label="Copy whole conversation" title="Copy whole conversation"><svg class="ico"><use href="#i-copy"/></svg></button>
+        <button id="shortcuts-btn" class="icon-btn" aria-label="Keyboard shortcuts" title="Keyboard shortcuts"><svg class="ico"><use href="#i-help"/></svg></button>
         <button id="notif-btn" class="icon-btn" aria-label="Notifications"><svg class="ico"><use href="#i-bell"/></svg><span id="notif-dot" class="dot hidden"></span></button>
         <button id="top-plan" class="pill brand" aria-label="Your plan">Free</button>
       </div>
@@ -130,17 +133,20 @@
           <div class="messages" id="chat-messages"></div>
         </div>
       </div>
+      <button id="jump-latest" class="jump-latest hidden" aria-label="Jump to latest message"><svg class="ico sm"><use href="#i-down"/></svg>New</button>
       <div id="nudge" class="nudge hidden"><span id="nudge-text"></span><button class="btn sm primary" data-go="plans">See plans</button><button class="btn sm" id="nudge-checkin">Check in</button></div>
       <div class="composer-wrap">
         <div class="composer-col">
           <div class="tools">
             <div class="seg" role="group" aria-label="Thinking mode">
-              <button type="button" id="mode-deep" class="on" aria-pressed="true"><svg class="ico sm"><use href="#i-cpu"/></svg>Deep</button>
               <button type="button" id="mode-fast" aria-pressed="false"><svg class="ico sm"><use href="#i-zap"/></svg>Fast</button>
+              <button type="button" id="mode-balanced" aria-pressed="false"><svg class="ico sm"><use href="#i-star"/></svg>Balanced</button>
+              <button type="button" id="mode-deep" class="on" aria-pressed="true"><svg class="ico sm"><use href="#i-cpu"/></svg>Deep</button>
             </div>
             <select id="persona-select" class="select" aria-label="Persona"></select>
             <select id="lang-select" class="select" aria-label="Reply language"><option>English</option><option>Nigerian Pidgin</option><option>Yoruba</option><option>Hausa</option><option>Igbo</option></select>
             <label class="creativity" title="Lower is precise, higher is more creative">Creativity<input type="range" id="temp-slider" min="0" max="1" step="0.1" value="0.7" aria-label="Creativity"></label>
+            <button type="button" id="tune-btn" class="chip" title="Response length, tone and Explain Simply"><svg class="ico sm"><use href="#i-settings"/></svg>Tune reply</button>
             <span id="file-chip" class="file-chip hidden"></span>
           </div>
           <form id="chat-form" class="composer">
@@ -211,8 +217,14 @@
       <textarea id="persona-text" class="input" rows="3" maxlength="2000"></textarea>
       <p class="tiny" id="persona-lock" style="color:var(--mango);margin:6px 0 0"></p>
       <button class="btn sm primary" id="save-persona" style="margin-top:8px">Save persona</button></div>
+    <div class="setting"><h3>About you</h3><p class="muted tiny" style="margin:0">A few facts the AI can remember and use when relevant, like your work or what you're usually asking about.</p>
+      <textarea id="about-me-text" class="input" rows="2" maxlength="800" placeholder="I run a small shop in Lagos and I'm learning to code."></textarea>
+      <label class="field" style="margin:8px 0 0">Nickname for {{ brand }}<input class="input" id="ai-nickname" maxlength="40" placeholder="Give the AI a nickname (optional)"></label>
+      <button class="btn sm primary" id="save-about" style="margin-top:8px">Save</button></div>
+    <div class="setting"><h3>Badges</h3><div id="badges-list" class="badges"></div></div>
     <div class="setting"><h3>Install the app</h3><p class="muted tiny" style="margin:0 0 8px">Add {{ brand }} to your home screen for a full-screen app.</p><button class="btn sm" id="install-btn">Install {{ brand }}</button></div>
-    <div class="setting"><h3>Your data</h3><div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn sm" href="/api/user/export" download><svg class="ico sm"><use href="#i-download"/></svg>Download my data</a><button class="btn sm danger" id="delete-account">Delete my account</button></div></div>
+    <div class="setting"><h3>Sign-ins and devices</h3><div id="sessions-list" class="tiny muted" style="margin:0 0 8px"></div><button class="btn sm" id="logout-others">Log out of all other devices</button></div>
+    <div class="setting"><h3>Your data</h3><div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn sm" href="/api/user/export" download><svg class="ico sm"><use href="#i-download"/></svg>Download my data</a><a class="btn sm" href="/api/conversations/export-all" download><svg class="ico sm"><use href="#i-download"/></svg>Export all chats</a><button class="btn sm danger" id="delete-account">Delete my account</button></div></div>
     <div class="setting"><button class="btn block" id="logout"><svg class="ico"><use href="#i-logout"/></svg>Sign out</button></div>
   </div>
 </div>

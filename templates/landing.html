@@ -28,6 +28,7 @@
       <p class="lead">{{ brand }} answers questions, writes and fixes code, explains hard topics and turns your words into images. Start free, pay in naira when you need more.</p>
       <div class="cta"><a class="btn primary" href="{{ start }}">Start your free trial</a><a class="btn" href="#plans">See plans</a></div>
       <small>2 days of full access. No card needed.</small>
+      <p class="daily-fact" id="daily-fact"></p>
     </div>
     <div class="demo" aria-label="Example conversation">
       <div class="demo-bar"><span class="mark" style="width:26px;height:26px;border-radius:9px"><svg class="ico" style="width:14px;height:14px"><use href="#i-v"/></svg></span>{{ brand }}</div>
@@ -71,5 +72,19 @@
   <footer class="l-foot"><span>© {{ brand }}</span><span><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/changelog">What's new</a></span></footer>
 </div>
 <script src="{{ url_for('static', filename='pwa.js') }}"></script>
+<script>
+(function () {
+  var facts = [
+    "Nigeria has over 220 million people and one of the youngest populations on earth.",
+    "A good system prompt is just clear instructions written in plain English.",
+    "AI language models predict the next word, one piece at a time, thousands of times a second.",
+    "Lagos is one of the fastest-growing cities in the world.",
+    "The first chatbot, ELIZA, was built in 1966 and just rephrased what you typed.",
+    "Asking an AI to 'think step by step' often gives you a better answer.",
+  ];
+  var el = document.getElementById("daily-fact");
+  if (el) { var d = new Date(); var i = (d.getFullYear() * 1000 + d.getMonth() * 31 + d.getDate()) % facts.length; el.textContent = "Did you know? " + facts[i]; }
+})();
+</script>
 </body>
 </html>
