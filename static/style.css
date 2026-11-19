@@ -141,7 +141,7 @@ label.field{display:block;font-size:13px;font-weight:600;color:var(--muted);marg
 .notif-item.read{opacity:.6}
 
 /* chat */
-.chat-page{display:flex;flex-direction:column;padding:0}
+.chat-page{display:flex;flex-direction:column;padding:0;position:relative}
 .chat-scroll{flex:1;min-height:0;overflow-y:auto;padding:26px 5vw 12px;scroll-behavior:smooth}
 .chat-col{max-width:780px;margin:0 auto}
 .welcome{padding:6vh 0 10px}
@@ -351,3 +351,20 @@ label.field{display:block;font-size:13px;font-weight:600;color:var(--muted);marg
 .followups{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
 .icon-btn.rec{color:var(--bad);border-color:var(--bad);animation:pulse 1s infinite}
 @keyframes pulse{50%{opacity:.5}}
+
+/* ---- second Vyra AI batch ---- */
+.sub-tabs{display:flex;gap:6px;margin:8px 0 2px}
+.sub-tabs button{flex:1;padding:6px 8px;border:1px solid var(--line);border-radius:10px;background:none;color:var(--muted);font-size:12.5px;font-weight:600}
+.sub-tabs button.on{border-color:var(--brand);color:var(--brand);background:var(--brand-wash)}
+.h-tag{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:99px;background:var(--raised);color:var(--faint);font-size:10.5px;font-weight:700;vertical-align:1px}
+#changelog-link{position:relative}
+#news-dot{position:static;display:inline-block;margin-left:4px;vertical-align:2px;border:0}
+.badges{display:flex;gap:8px;flex-wrap:wrap}
+.badge{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:99px;background:var(--brand-wash);color:var(--brand);font-size:12.5px;font-weight:700}
+.daily-fact{margin:14px 0 0;font-size:13px;color:var(--muted)}
+.jump-latest{position:absolute;left:50%;bottom:96px;transform:translateX(-50%);display:flex;align-items:center;gap:6px;padding:7px 14px;border-radius:99px;border:1px solid var(--line);background:var(--raised);color:var(--text);font-size:13px;font-weight:600;box-shadow:0 6px 20px rgba(0,0,0,.2);z-index:5}
+.field-row{display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--text)}
+.table-wrap{overflow-x:auto;margin:10px 0}
+.table-wrap table{border-collapse:collapse;width:100%;font-size:13.5px}
+.table-wrap th,.table-wrap td{border:1px solid var(--line);padding:7px 10px;text-align:left}
+.table-wrap th{background:var(--raised);font-weight:700}

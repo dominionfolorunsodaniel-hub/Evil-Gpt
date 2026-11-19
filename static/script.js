@@ -11,7 +11,8 @@ const S = {
   user: null, usage: null, images: null, plans: {}, paystack: document.body.dataset.paystack === "1",
   conv: null, msgs: [], busy: false, abort: null, mode: store.get("vyra-mode") || "deep",
   fileText: "", fileName: "", editFromId: null, chats: [], personas: [], lbMode: "weekly",
-  pendingEmail: "", page: "chat", adminTab: "overview", imgStyle: "",
+  pendingEmail: "", page: "chat", adminTab: "overview", imgStyle: "", historyView: "active",
+  length: store.get("vyra-length") || "normal", tone: store.get("vyra-tone") || "friendly", eli5: store.get("vyra-eli5") === "1",
 };
 
 /* ---------------------------------------------------------------- helpers */
@@ -57,8 +58,19 @@ function md(src) {
   const out = []; let list = null, para = [];
   const flush = () => { if (para.length) { out.push("<p>" + inline(para.join("<br>")) + "</p>"); para = []; } };
   const close = () => { if (list) { out.push(`</${list}>`); list = null; } };
-  for (const line of esc(src).split("\n")) {
-    let m;
+  const lines = esc(src).split("\n");
+  const isRow = (l) => /^\s*\|.*\|\s*$/.test(l);
+  const isSep = (l) => /^\s*\|?[\s:-]+\|[\s:|-]*\|?\s*$/.test(l) && l.includes("-");
+  const cells = (l) => l.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+  for (let li = 0; li < lines.length; li++) {
+    const line = lines[li]; let m;
+    if (isRow(line) && isSep(lines[li + 1] || "")) {
+      flush(); close();
+      const head = cells(line); const body = [];
+      li += 2; while (li < lines.length && isRow(lines[li])) { body.push(cells(lines[li])); li++; } li--;
+      out.push(`<div class="table-wrap"><table><thead><tr>${head.map((c) => `<th>${inline(c)}</th>`).join("")}</tr></thead><tbody>${body.map((r) => `<tr>${r.map((c) => `<td>${inline(c)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`);
+      continue;
+    }
     if ((m = line.match(/^\u0000B(\d+)\u0000$/))) { flush(); close(); out.push(codeHtml(blocks[m[1]])); continue; }
     if (!line.trim()) { flush(); close(); continue; }
     if ((m = line.match(/^(#{1,3})\s+(.*)$/))) { flush(); close(); const lv = m[1].length + 2; out.push(`<h${lv}>${inline(m[2])}</h${lv}>`); continue; }
@@ -158,8 +170,9 @@ function setGreeting() {
 const TOP = ["business_elite", "infinity"];
 function planLabel() { const u = S.user; return u.trial ? "Free trial" : (S.plans[u.plan]?.name || "Free"); }
 async function refreshMe() {
-  const d = await api("/api/me"); S.user = d.user; S.usage = d.usage; S.images = d.images; S.plans = d.plans; S.paystack = d.paystack;
+  const d = await api("/api/me"); S.user = d.user; S.usage = d.usage; S.images = d.images; S.plans = d.plans; S.paystack = d.paystack; S.badges = d.badges;
   const u = S.user, us = S.usage;
+  $("news-dot").classList.toggle("hidden", !u.hasNewsUpdate);
   $("side-username").textContent = u.username; $("avatar").textContent = u.username[0].toUpperCase();
   $("side-plan").textContent = planLabel() + (u.trial ? " · full access" : " plan");
   const crown = TOP.includes(u.plan) && !u.trial ? ico("crown", "sm") : "";
@@ -242,25 +255,65 @@ async function doCheckin() {
   catch (e) { toast(e.message); }
 }
 $("checkin-btn").onclick = doCheckin; $("nudge-checkin").onclick = doCheckin;
+$("changelog-link").addEventListener("click", () => { $("news-dot").classList.add("hidden"); post("/api/user/seen-changelog").catch(() => {}); });
 
 /* ---------------------------------------------------------------- chat */
 const scroller = () => $("chat-scroll");
 const nearBottom = () => { const s = scroller(); return s.scrollHeight - s.scrollTop - s.clientHeight < 140; };
 const toBottom = () => { const s = scroller(); s.scrollTop = s.scrollHeight; };
-function setMode(m) { S.mode = m; store.set("vyra-mode", m); $("mode-deep").classList.toggle("on", m === "deep"); $("mode-fast").classList.toggle("on", m === "fast"); $("mode-deep").setAttribute("aria-pressed", m === "deep"); $("mode-fast").setAttribute("aria-pressed", m === "fast"); }
-$("mode-deep").onclick = () => setMode("deep"); $("mode-fast").onclick = () => setMode("fast"); setMode(S.mode);
+scroller().addEventListener("scroll", () => $("jump-latest").classList.toggle("hidden", nearBottom() || !S.msgs.length));
+$("jump-latest").onclick = () => { toBottom(); $("jump-latest").classList.add("hidden"); };
+$("copy-chat-btn").onclick = async () => {
+  if (!S.msgs.length) return;
+  const txt = S.msgs.map((m) => (m.role === "user" ? "You" : document.title) + ":\n" + m.content).join("\n\n---\n\n");
+  toast((await copyText(txt)) ? "Whole chat copied" : "Couldn't copy");
+};
+$("shortcuts-btn").onclick = () => {
+  $("generic-card").innerHTML = `<div class="modal-head"><h2>Keyboard shortcuts</h2><button class="icon-btn" data-close aria-label="Close">${ico("x")}</button></div>
+    <div class="kv"><div><span>Search chats</span><b>Ctrl/Cmd + K</b></div><div><span>Send message</span><b>Enter</b></div><div><span>New line</span><b>Shift + Enter</b></div><div><span>Close a dialog</span><b>Esc</b></div><div><span>Shortcuts</span><b>?</b></div></div>`;
+  openModal("generic-modal");
+};
+document.addEventListener("keydown", (e) => {
+  const typing = /input|textarea/i.test(document.activeElement.tagName);
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); showPage("chat"); $("search-chats").focus(); }
+  else if (e.key === "?" && !typing) $("shortcuts-btn").click();
+});
+const MODES = ["fast", "balanced", "deep"];
+function setMode(m) {
+  S.mode = m; store.set("vyra-mode", m);
+  MODES.forEach((k) => { const b = $("mode-" + k); b.classList.toggle("on", m === k); b.setAttribute("aria-pressed", m === k); });
+}
+MODES.forEach((k) => ($("mode-" + k).onclick = () => setMode(k))); setMode(MODES.includes(S.mode) ? S.mode : "deep");
+
+/* tune reply: length / tone / ELI5, persisted locally */
+$("tune-btn").onclick = () => {
+  const LEN = [["concise", "Concise"], ["normal", "Normal"], ["detailed", "Detailed"]];
+  const TONE = [["friendly", "Friendly"], ["formal", "Formal"], ["casual", "Casual"]];
+  $("generic-card").innerHTML = `<div class="modal-head"><h2>Tune this reply</h2><button class="icon-btn" data-close aria-label="Close">${ico("x")}</button></div>
+    <p class="muted tiny" style="margin:0 0 6px">Answer length</p><div class="chips" id="tune-len">${LEN.map(([k, l]) => `<button type="button" class="chip ${S.length === k ? "on" : ""}" data-len="${k}">${l}</button>`).join("")}</div>
+    <p class="muted tiny" style="margin:14px 0 6px">Tone</p><div class="chips" id="tune-tone">${TONE.map(([k, l]) => `<button type="button" class="chip ${S.tone === k ? "on" : ""}" data-tone="${k}">${l}</button>`).join("")}</div>
+    <label class="field-row" style="margin-top:14px"><input type="checkbox" id="tune-eli5" ${S.eli5 ? "checked" : ""}><span>Explain like I'm 5 (simplest words)</span></label>
+    <button class="btn primary block" data-close style="margin-top:16px">Done</button>`;
+  openModal("generic-modal");
+  $("tune-len").onclick = (e) => { const b = e.target.closest("[data-len]"); if (!b) return; S.length = b.dataset.len; store.set("vyra-length", S.length); $("tune-len").querySelectorAll(".chip").forEach((c) => c.classList.toggle("on", c === b)); };
+  $("tune-tone").onclick = (e) => { const b = e.target.closest("[data-tone]"); if (!b) return; S.tone = b.dataset.tone; store.set("vyra-tone", S.tone); $("tune-tone").querySelectorAll(".chip").forEach((c) => c.classList.toggle("on", c === b)); };
+  $("tune-eli5").onchange = (e) => { S.eli5 = e.target.checked; store.set("vyra-eli5", S.eli5 ? "1" : "0"); };
+};
 
 function msgActions(m) {
   if (m.role === "user") return `<div class="msg-actions"><button type="button" data-act="edit" aria-label="Edit and resend" title="Edit and resend">${ico("edit", "sm")}</button><button type="button" data-act="copy" aria-label="Copy" title="Copy">${ico("copy", "sm")}</button></div>`;
   const last = S.msgs.filter((x) => x.role === "assistant").slice(-1)[0] === m;
-  return `<div class="msg-actions"><button type="button" data-act="copy" aria-label="Copy" title="Copy">${ico("copy", "sm")}</button><button type="button" data-act="speak" aria-label="Read aloud" title="Read aloud">${ico("volume", "sm")}</button>${last ? `<button type="button" data-act="regen" aria-label="Regenerate" title="Regenerate">${ico("refresh", "sm")}</button>` : ""}<button type="button" data-act="up" class="${m.feedback === 1 ? "on" : ""}" aria-label="Good answer" title="Good answer">${ico("thumb-up", "sm")}</button><button type="button" data-act="down" class="${m.feedback === -1 ? "on" : ""}" aria-label="Bad answer" title="Bad answer">${ico("thumb-down", "sm")}</button></div>`;
+  return `<div class="msg-actions">${last && m.truncated ? `<button type="button" data-act="continue" class="chip" aria-label="Continue" title="The reply got cut off">${ico("arrow-up", "sm")}Continue</button>` : ""}<button type="button" data-act="copy" aria-label="Copy" title="Copy">${ico("copy", "sm")}</button><button type="button" data-act="speak" aria-label="Read aloud" title="Read aloud">${ico("volume", "sm")}</button>${last ? `<button type="button" data-act="regen" aria-label="Regenerate" title="Regenerate">${ico("refresh", "sm")}</button>` : ""}<button type="button" data-act="up" class="${m.feedback === 1 ? "on" : ""}" aria-label="Good answer" title="Good answer">${ico("thumb-up", "sm")}</button><button type="button" data-act="down" class="${m.feedback === -1 ? "on" : ""}" aria-label="Bad answer" title="Bad answer">${ico("thumb-down", "sm")}</button></div>`;
 }
 function msgEl(m) {
   const el = document.createElement("article"); el.className = "msg " + m.role; m.el = el;
-  const who = m.role === "user" ? "You" : `<span class="mark"><svg class="ico"><use href="#i-v"/></svg></span>${esc(document.title)}`;
+  const nickname = S.user && S.user.aiNickname;
+  const who = m.role === "user" ? "You" : `<span class="mark"><svg class="ico"><use href="#i-v"/></svg></span>${esc(nickname || document.title)}`;
+  if (m.createdAt) el.title = fmtTime(m.createdAt);
   el.innerHTML = `<div class="msg-who">${who}</div><div class="msg-body"></div>${m.pending ? "" : msgActions(m)}`;
   fillBody(m); return el;
 }
+function fmtTime(iso) { try { return new Date(iso).toLocaleString("en-NG", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }); } catch (e) { return ""; } }
 function fillBody(m) {
   const body = m.el.querySelector(".msg-body");
   if (m.role === "user") body.textContent = m.content; else body.innerHTML = m.content ? md(m.content) : `<span class="typing"><i></i><i></i><i></i></span>`;
@@ -268,6 +321,7 @@ function fillBody(m) {
 function renderMessages() {
   const box = $("chat-messages"); box.replaceChildren(); S.msgs.forEach((m) => box.appendChild(msgEl(m)));
   $("welcome").classList.toggle("hidden", S.msgs.length > 0);
+  $("copy-chat-btn").classList.toggle("hidden", S.msgs.length === 0);
 }
 function refreshActions() { S.msgs.forEach((m) => { if (m.pending || !m.el) return; const old = m.el.querySelector(".msg-actions"); if (old) old.remove(); m.el.insertAdjacentHTML("beforeend", msgActions(m)); }); }
 function newChat() {
@@ -278,7 +332,7 @@ $("new-chat").onclick = newChat;
 async function openConversation(id) {
   try {
     const d = await api("/api/conversations/" + id); S.conv = id; S.editFromId = null;
-    S.msgs = d.messages.map((m) => ({ id: m.id, role: m.role, content: m.content, feedback: m.feedback })); renderMessages(); markActive(); showPage("chat"); toBottom();
+    S.msgs = d.messages.map((m) => ({ id: m.id, role: m.role, content: m.content, feedback: m.feedback, createdAt: m.created_at })); renderMessages(); markActive(); showPage("chat"); toBottom();
   } catch (e) { toast(e.message, "error"); }
 }
 function autosize() { const t = $("message-input"); t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 180) + "px"; }
@@ -296,6 +350,7 @@ $("chat-messages").addEventListener("click", async (e) => {
   if (act === "speak") speak(m.content);
   if (act === "edit") { if (!m.id) return toast("Give it a second, this message is still saving."); S.editFromId = m.id; $("message-input").value = m.content; autosize(); $("message-input").focus(); toast("Editing. Send to replace this message and everything after it."); }
   if (act === "regen") { const u = S.msgs[idx - 1]; if (!u || !u.id) return toast("Give it a second, then try again."); send(u.content, { truncateFromId: u.id }); }
+  if (act === "continue") send("Continue exactly where you left off. Don't repeat what you already said.");
   if (act === "up" || act === "down") {
     if (!m.id) return; const v = act === "up" ? 1 : -1; const next = m.feedback === v ? 0 : v;
     try { await post(`/api/messages/${m.id}/feedback`, { value: next }); m.feedback = next || null; refreshActions(); if (next) toast("Thanks for the feedback"); } catch (err) { toast(err.message, "error"); }
@@ -320,7 +375,7 @@ async function send(text, opts = {}) {
   const paint = () => { raf = 0; const stick = nearBottom(); body.innerHTML = md(ai.content); if (stick) toBottom(); };
   try {
     const res = await fetch("/ask/stream", { method: "POST", credentials: "same-origin", signal: ctrl.signal, headers: { "Content-Type": "application/json", "X-Requested-With": "vyra" },
-      body: JSON.stringify({ question: text, conversationId: S.conv, persona: $("persona-select").value, language: $("lang-select").value, modelType: S.mode, temperature: $("temp-slider").value, truncateFromId, fileText }) });
+      body: JSON.stringify({ question: text, conversationId: S.conv, persona: $("persona-select").value, language: $("lang-select").value, modelType: S.mode, temperature: $("temp-slider").value, truncateFromId, fileText, length: S.length, tone: S.tone, eli5: S.eli5 }) });
     if (!res.ok) { const d = await res.json().catch(() => ({})); const err = new Error(d.error || "Something went wrong. Please try again."); err.data = d; throw err; }
     const reader = res.body.getReader(), dec = new TextDecoder(); let buf = "";
     while (true) {
@@ -334,7 +389,7 @@ async function send(text, opts = {}) {
         if (ev.t) { started = true; ai.content += ev.t; if (!raf) raf = requestAnimationFrame(paint); }
         if (ev.notice) { body.insertAdjacentHTML("beforebegin", `<div class="notice-line">${esc(ev.notice)}</div>`); }
         if (ev.error) failed = ev.error;
-        if (ev.done) { ai.id = ev.messageId; userMsg.id = ev.userMessageId; }
+        if (ev.done) { ai.id = ev.messageId; userMsg.id = ev.userMessageId; ai.truncated = !!ev.truncated; }
       }
     }
   } catch (e) {
@@ -370,16 +425,19 @@ function clearFile() { S.fileText = ""; S.fileName = ""; $("file-chip").classLis
 
 /* ---------------------------------------------------------------- history sidebar */
 let searchTimer = 0;
-async function loadHistory() { const d = await api("/api/conversations"); S.chats = d.conversations; renderHistory(); }
+async function loadHistory() { const d = await api("/api/conversations" + (S.historyView === "archived" ? "?archived=1" : "")); S.chats = d.conversations; renderHistory(); }
 function markActive() { document.querySelectorAll(".h-row").forEach((r) => r.classList.toggle("active", r.dataset.id === S.conv)); }
+function tagChips(c) { return c.tags ? c.tags.split(",").map((t) => t.trim()).filter(Boolean).map((t) => `<span class="h-tag">${esc(t)}</span>`).join("") : ""; }
 function renderHistory(results = null) {
   const box = $("history-list");
   if (results) { box.innerHTML = results.length ? results.map((r) => `<div class="h-row" data-id="${esc(r.id)}"><button class="h-title" data-open="${esc(r.id)}" title="${esc(r.snippet || r.title)}">${esc(r.title)}</button></div>`).join("") : `<div class="empty">No chats match that.</div>`; markActive(); return; }
-  if (!S.chats.length) { box.innerHTML = `<div class="empty tiny">Your chats will show up here.</div>`; return; }
-  const row = (c) => `<div class="h-row" data-id="${esc(c.id)}"><button class="h-title" data-open="${esc(c.id)}">${c.shared ? ico("link", "sm") : ""}${esc(c.title)}</button><button class="h-more" data-more="${esc(c.id)}" aria-label="Chat options">${ico("more", "sm")}</button></div>`;
+  if (!S.chats.length) { box.innerHTML = `<div class="empty tiny">${S.historyView === "archived" ? "No archived chats yet." : "Your chats will show up here."}</div>`; return; }
+  const row = (c) => `<div class="h-row" data-id="${esc(c.id)}"><button class="h-title" data-open="${esc(c.id)}">${c.shared ? ico("link", "sm") : ""}${esc(c.title)}${tagChips(c)}</button><button class="h-more" data-more="${esc(c.id)}" aria-label="Chat options">${ico("more", "sm")}</button></div>`;
   const pinned = S.chats.filter((c) => c.pinned), rest = S.chats.filter((c) => !c.pinned);
   box.innerHTML = (pinned.length ? `<div class="history-group">Pinned</div>` + pinned.map(row).join("") : "") + (rest.length ? `<div class="history-group">${pinned.length ? "Recent" : "Chats"}</div>` + rest.map(row).join("") : ""); markActive();
 }
+$("hist-active").onclick = () => { S.historyView = "active"; $("hist-active").classList.add("on"); $("hist-archived").classList.remove("on"); loadHistory(); };
+$("hist-archived").onclick = () => { S.historyView = "archived"; $("hist-archived").classList.add("on"); $("hist-active").classList.remove("on"); loadHistory(); };
 $("search-chats").addEventListener("input", (e) => {
   clearTimeout(searchTimer); const q = e.target.value.trim();
   if (q.length < 2) return renderHistory();
@@ -391,7 +449,7 @@ $("history-list").addEventListener("click", (e) => {
   const more = e.target.closest("[data-more]"); if (!more) return;
   const row = more.closest(".h-row"), had = row.querySelector(".menu"); closeMenus(); if (had) return;
   const c = S.chats.find((x) => x.id === more.dataset.more); row.classList.add("open");
-  row.insertAdjacentHTML("beforeend", `<div class="menu" role="menu"><button data-m="rename">${ico("edit", "sm")}Rename</button><button data-m="pin">${ico("pin", "sm")}${c.pinned ? "Unpin" : "Pin"}</button><button data-m="share">${ico("share", "sm")}${c.shared ? "Stop sharing" : "Share link"}</button><button data-m="export">${ico("download", "sm")}Export</button><button data-m="delete" class="danger">${ico("trash", "sm")}Delete</button></div>`);
+  row.insertAdjacentHTML("beforeend", `<div class="menu" role="menu"><button data-m="rename">${ico("edit", "sm")}Rename</button><button data-m="pin">${ico("pin", "sm")}${c.pinned ? "Unpin" : "Pin"}</button><button data-m="tags">${ico("tag", "sm")}Tags</button><button data-m="archive">${ico("archive", "sm")}${c.archived ? "Unarchive" : "Archive"}</button><button data-m="share">${ico("share", "sm")}${c.shared ? "Stop sharing" : "Share link"}</button><button data-m="export">${ico("download", "sm")}Export</button><button data-m="delete" class="danger">${ico("trash", "sm")}Delete</button></div>`);
   row.querySelector(".menu").onclick = (ev) => { const b = ev.target.closest("[data-m]"); if (b) chatAction(b.dataset.m, c, row); };
 });
 async function chatAction(act, c, row) {
@@ -413,6 +471,12 @@ async function chatAction(act, c, row) {
       const url = URL.createObjectURL(new Blob([txt], { type: "text/plain" })); const a = document.createElement("a"); a.href = url; a.download = (c.title.replace(/[^\w\- ]+/g, "").trim().slice(0, 40) || "chat") + ".txt"; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 2000);
     }
     if (act === "delete") confirmBox("Delete this chat?", "This removes the chat and its messages for good.", "Delete", async () => { await post(`/api/conversations/${c.id}/delete`); if (S.conv === c.id) newChat(); await loadHistory(); toast("Chat deleted"); });
+    if (act === "archive") { await post(`/api/conversations/${c.id}/archive`); if (S.conv === c.id && S.historyView === "active") newChat(); await loadHistory(); toast(c.archived ? "Chat unarchived" : "Chat archived"); }
+    if (act === "tags") {
+      $("generic-card").innerHTML = `<div class="modal-head"><h2>Tags</h2><button class="icon-btn" data-close aria-label="Close">${ico("x")}</button></div><p class="muted tiny" style="margin:0 0 8px">Comma-separated, e.g. "work, ideas"</p><input class="input" id="tags-input" maxlength="200" value="${esc(c.tags || "")}"><button class="btn primary block" id="tags-save" style="margin-top:12px">Save</button>`;
+      openModal("generic-modal");
+      $("tags-save").onclick = async () => { try { await post(`/api/conversations/${c.id}/tags`, { tags: $("tags-input").value }); closeModals(); await loadHistory(); } catch (e) { toast(e.message, "error"); } };
+    }
   } catch (e) { toast(e.message, "error"); }
 }
 function confirmBox(title, text, label, fn) {
@@ -494,14 +558,22 @@ async function loadLeaderboard() {
 $("lb-weekly").onclick = () => { S.lbMode = "weekly"; loadLeaderboard(); }; $("lb-streak").onclick = () => { S.lbMode = "streak"; loadLeaderboard(); };
 
 /* ---------------------------------------------------------------- Settings */
-$("open-settings").onclick = () => {
+const BADGE_ICONS = { chat: "chat", zap: "zap", flame: "flame", image: "image", share: "share", link: "link" };
+$("open-settings").onclick = async () => {
   const u = S.user; $("set-username").textContent = u.username; $("set-email").textContent = u.email.endsWith(".invalid") ? "Admin account" : u.email; $("set-plan").textContent = planLabel();
   $("persona-text").value = u.customPersona || ""; $("persona-text").disabled = !u.canUsePersona; $("save-persona").disabled = !u.canUsePersona;
   $("persona-lock").textContent = u.canUsePersona ? "" : "Custom personas come with any paid plan. Upgrade to unlock.";
+  $("about-me-text").value = u.aboutMe || ""; $("ai-nickname").value = u.aiNickname || "";
   $("install-btn").parentElement.classList.toggle("hidden", !window.vyraInstall && !/iphone|ipad/i.test(navigator.userAgent));
   $("delete-account").classList.toggle("hidden", u.isAdmin); openModal("settings-modal");
+  const badges = S.badges || [];
+  $("badges-list").innerHTML = badges.length ? badges.map((b) => `<span class="badge" title="${esc(b.label)}">${ico(BADGE_ICONS[b.icon] || "check", "sm")}${esc(b.label)}</span>`).join("") : `<p class="muted tiny" style="margin:0">Keep chatting, checking in and sharing to earn badges.</p>`;
+  $("sessions-list").innerHTML = "Loading...";
+  try { const d = await api("/api/user/sessions"); $("sessions-list").innerHTML = d.sessions.length ? d.sessions.map((s) => `<div>${esc(s.ip || "Unknown")} · ${esc(new Date(s.at).toLocaleString("en-NG"))}</div>`).join("") : "No recent sign-ins on record."; } catch (e) { $("sessions-list").textContent = "Couldn't load."; }
 };
 $("save-persona").onclick = async () => { try { await post("/api/user/update-persona", { persona: $("persona-text").value }); toast("Persona saved"); await refreshMe(); closeModals(); } catch (e) { toast(e.message, "error"); } };
+$("save-about").onclick = async () => { try { await post("/api/user/profile-extra", { aboutMe: $("about-me-text").value, aiNickname: $("ai-nickname").value }); toast("Saved"); await refreshMe(); closeModals(); } catch (e) { toast(e.message, "error"); } };
+$("logout-others").onclick = () => confirmBox("Log out of all other devices?", "This signs you out everywhere except here.", "Log out others", async () => { await post("/api/user/logout-other-devices"); toast("Other devices signed out"); });
 $("install-btn").onclick = async () => {
   if (window.vyraInstall) { window.vyraInstall.prompt(); await window.vyraInstall.userChoice; window.vyraInstall = null; } else toast("On iPhone: tap Share, then Add to Home Screen.");
 };
