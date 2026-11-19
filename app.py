@@ -45,6 +45,10 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
 GROQ_FAST_MODEL = os.environ.get("GROQ_FAST_MODEL", "llama-3.1-8b-instant")
+# Balanced sits between Fast and Deep. Groq's model lineup changes over time, so this is a separate
+# env var the admin can point at whatever mid-size model Groq currently offers. Unset, it just behaves like Fast.
+GROQ_BALANCED_MODEL = os.environ.get("GROQ_BALANCED_MODEL", GROQ_FAST_MODEL)
+CHANGELOG_VERSION = int(os.environ.get("CHANGELOG_VERSION", "2"))  # bump this when changelog.html gets a new entry
 ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD")
 SMTP_EMAIL = os.environ.get("SMTP_EMAIL")
@@ -97,6 +101,21 @@ SUGGESTIONS = [
 ]
 
 LANGUAGES = {"English": "", "Nigerian Pidgin": "Reply in Nigerian Pidgin English.", "Yoruba": "Reply in Yoruba.", "Hausa": "Reply in Hausa.", "Igbo": "Reply in Igbo."}
+
+LENGTH_PROMPTS = {"concise": "Keep answers short and to the point.", "detailed": "Give thorough, detailed answers with examples where useful."}
+TONE_PROMPTS = {"formal": "Use a formal, professional tone.", "casual": "Use a relaxed, casual, conversational tone."}
+ELI5_PROMPT = "Explain things in the simplest possible way, as if to a curious beginner. Avoid jargon; use everyday comparisons."
+
+# Badge key -> (label, icon). Earned status is computed from existing data in badges_for().
+BADGE_DEFS = [
+    ("first_chat", "First conversation", "chat"),
+    ("hundred_messages", "100 messages sent", "zap"),
+    ("streak_7", "7-day streak", "flame"),
+    ("streak_30", "30-day streak", "flame"),
+    ("first_image", "First image created", "image"),
+    ("first_referral", "Invited a friend", "share"),
+    ("sharer", "Shared a chat", "link"),
+]
 
 # ----------------------------------------------------------------------------- database
 _pool = None
@@ -205,6 +224,13 @@ SCHEMA = [
     "CREATE TABLE IF NOT EXISTS evil_audit_log (id BIGSERIAL PRIMARY KEY, actor VARCHAR(40), action VARCHAR(60) NOT NULL, detail TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
     "CREATE TABLE IF NOT EXISTS evil_awards (week_key VARCHAR(10) PRIMARY KEY, awarded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), detail TEXT)",
     "CREATE TABLE IF NOT EXISTS evil_settings (key VARCHAR(40) PRIMARY KEY, value TEXT NOT NULL)",
+    # ---- second Vyra AI batch (all additive) ----
+    "ALTER TABLE evil_conversations ADD COLUMN IF NOT EXISTS tags VARCHAR(200)",
+    "ALTER TABLE evil_conversations ADD COLUMN IF NOT EXISTS archived BOOLEAN NOT NULL DEFAULT FALSE",
+    "ALTER TABLE evil_users ADD COLUMN IF NOT EXISTS about_me TEXT",
+    "ALTER TABLE evil_users ADD COLUMN IF NOT EXISTS ai_nickname VARCHAR(40)",
+    "ALTER TABLE evil_users ADD COLUMN IF NOT EXISTS session_version INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE evil_users ADD COLUMN IF NOT EXISTS last_seen_changelog INTEGER NOT NULL DEFAULT 0",
 ]
 _db_ready = False
 _db_lock = threading.Lock()
@@ -299,6 +325,7 @@ def limited(name, limit, window, per="ip"):
 
 
 USER_COLS = """id,username,email,plan,is_admin,is_verified,trial_ends_at,bonus_messages,streak_count,custom_persona,referral_code,is_suspended,
+    about_me,ai_nickname,session_version,last_seen_changelog,
     (trial_ends_at IS NOT NULL AND trial_ends_at > NOW()) AS trial_active,
     (plan_expires_at IS NOT NULL AND plan_expires_at < NOW()) AS plan_expired,
     plan_expires_at, (last_streak_date = """ + TODAY + """) AS checked_in_today,
@@ -314,6 +341,7 @@ def current_user():
     if not uid: return None
     u = get_user(uid)
     if u and u["is_suspended"]: return None
+    if u and session.get("sv", 0) != (u["session_version"] or 0): return None  # signed out remotely via "log out other devices"
     return u
 
 
@@ -355,6 +383,21 @@ def usage_status(u):
     if trial: return {"used": used, "limit": 99999, "remaining": 99999, "trial": True, "trialEndsAt": iso(u["trial_ends_at"])}
     limit = PLANS[plan_key]["monthly_messages"] + (u["bonus_messages"] or 0)
     return {"used": used, "limit": limit, "remaining": max(0, limit - used), "trial": False}
+
+
+def badges_for(u):
+    """Cheap, computed from existing columns/tables - no new table needed."""
+    total_msgs = q_one("SELECT COALESCE(SUM(message_count),0) AS n FROM evil_usage WHERE user_id=%s", (u["id"],))["n"]
+    has_image = q_one("SELECT 1 FROM evil_images WHERE user_id=%s LIMIT 1", (u["id"],))
+    has_chat = q_one("SELECT 1 FROM evil_conversations WHERE user_id=%s LIMIT 1", (u["id"],))
+    has_shared = q_one("SELECT 1 FROM evil_conversations WHERE user_id=%s AND share_token IS NOT NULL LIMIT 1", (u["id"],))
+    has_referral = q_one("SELECT 1 FROM evil_users WHERE referred_by=%s AND referral_rewarded=TRUE LIMIT 1", (u["id"],))
+    streak = u["streak_count"] or 0
+    earned = {
+        "first_chat": bool(has_chat), "hundred_messages": total_msgs >= 100, "streak_7": streak >= 7,
+        "streak_30": streak >= 30, "first_image": bool(has_image), "first_referral": bool(has_referral), "sharer": bool(has_shared),
+    }
+    return [{"key": k, "label": label, "icon": icon} for k, label, icon in BADGE_DEFS if earned.get(k)]
 
 
 # ----------------------------------------------------------------------------- email
@@ -603,14 +646,22 @@ def verify_otp():
     return jsonify({"success": True, "message": "Account verified! You can sign in now."})
 
 
+REFERRAL_MILESTONES = {3: 30, 5: 75, 10: 200}  # friend count -> bonus messages awarded at that count
+
+
 def reward_referral(u):
-    """Both people get +1 trial day once the new account is verified. A referrer can earn this 10 times."""
+    """Both people get +1 trial day once the new account is verified. A referrer can earn this 10 times, plus milestone bonuses."""
     if not u["referred_by"] or u["referral_rewarded"]: return
     n = q_one("SELECT COUNT(*) AS n FROM evil_users WHERE referred_by=%s AND referral_rewarded=TRUE", (u["referred_by"],))["n"]
     q_run("UPDATE evil_users SET referral_rewarded=TRUE, trial_ends_at=GREATEST(COALESCE(trial_ends_at,NOW()),NOW())+INTERVAL '1 day' WHERE id=%s", (u["id"],))
     if n < 10:
         q_run("UPDATE evil_users SET trial_ends_at=GREATEST(COALESCE(trial_ends_at,NOW()),NOW())+INTERVAL '1 day' WHERE id=%s", (u["referred_by"],))
         q_run("INSERT INTO evil_notifications(user_id,message) VALUES (%s,%s)", (u["referred_by"], "A friend joined with your link. You both got +1 free day of full access."))
+        new_count = n + 1
+        bonus = REFERRAL_MILESTONES.get(new_count)
+        if bonus:
+            q_run("UPDATE evil_users SET bonus_messages=COALESCE(bonus_messages,0)+%s WHERE id=%s", (bonus, u["referred_by"]))
+            q_run("INSERT INTO evil_notifications(user_id,message) VALUES (%s,%s)", (u["referred_by"], f"Milestone! {new_count} friends joined with your link. +{bonus} bonus messages."))
 
 
 @app.post("/login")
@@ -628,8 +679,8 @@ def login():
     if not user["is_verified"]: return err("Verify your email first.", 403, needsVerification=True)
     q_run("INSERT INTO evil_login_attempts(username,ip,success) VALUES (%s,%s,TRUE)", (username, ip))
     q_run("UPDATE evil_users SET last_seen_at=NOW() WHERE id=%s", (user["id"],))
-    session.clear(); session.permanent = True; session["user_id"] = user["id"]
     u = get_user(user["id"])
+    session.clear(); session.permanent = True; session["user_id"] = user["id"]; session["sv"] = u["session_version"] or 0
     return jsonify({"success": True, "user": {"username": u["username"], "plan": u["plan"], "isAdmin": u["is_admin"]}})
 
 
@@ -669,9 +720,11 @@ def me():
         "user": {"username": u["username"], "email": u["email"], "plan": plan_key, "paidPlan": u["plan"], "isAdmin": u["is_admin"],
                  "streak": u["streak_count"] or 0, "checkedInToday": bool(u["checked_in_today"]), "trial": trial,
                  "planExpiresAt": iso(u["plan_expires_at"]), "customPersona": u["custom_persona"] or "", "canUsePersona": can_persona,
-                 "referralCode": u["referral_code"], "referrals": refs},
+                 "referralCode": u["referral_code"], "referrals": refs, "aboutMe": u["about_me"] or "", "aiNickname": u["ai_nickname"] or "",
+                 "hasNewsUpdate": (u["last_seen_changelog"] or 0) < CHANGELOG_VERSION},
         "usage": usage_status(u),
         "images": {"used": u["images_today"], "limit": PLANS[plan_key]["daily_images"]},
+        "badges": badges_for(u),
         "plans": PLANS, "paystack": bool(PAYSTACK_SECRET_KEY), "brand": BRAND})
 
 
@@ -683,6 +736,38 @@ def update_persona():
         return err("Custom personas are a paid feature. Upgrade to unlock them.", 402)
     text = str(body().get("persona", "")).strip()[:2000]
     q_run("UPDATE evil_users SET custom_persona=%s WHERE id=%s", (text or None, u["id"]))
+    return jsonify({"success": True})
+
+
+@app.post("/api/user/profile-extra")
+@login_required
+def update_profile_extra():
+    d = body(); u = request.user
+    about_me = str(d.get("aboutMe", "")).strip()[:800]
+    nickname = re.sub(r"\s+", " ", str(d.get("aiNickname", ""))).strip()[:40]
+    q_run("UPDATE evil_users SET about_me=%s, ai_nickname=%s WHERE id=%s", (about_me or None, nickname or None, u["id"]))
+    return jsonify({"success": True})
+
+
+@app.post("/api/user/seen-changelog")
+@login_required
+def seen_changelog():
+    q_run("UPDATE evil_users SET last_seen_changelog=%s WHERE id=%s", (CHANGELOG_VERSION, request.user["id"]))
+    return jsonify({"success": True})
+
+
+@app.get("/api/user/sessions")
+@login_required
+def list_sessions():
+    rows = q_all("SELECT ip, created_at FROM evil_login_attempts WHERE username=%s AND success=TRUE ORDER BY created_at DESC LIMIT 5", (request.user["username"],))
+    return jsonify({"sessions": [{"ip": r["ip"], "at": iso(r["created_at"])} for r in rows]})
+
+
+@app.post("/api/user/logout-other-devices")
+@login_required
+def logout_other_devices():
+    row = q_one("UPDATE evil_users SET session_version=session_version+1 WHERE id=%s RETURNING session_version", (request.user["id"],))
+    session["sv"] = row["session_version"]  # keep this device signed in; every other cookie now has a stale sv
     return jsonify({"success": True})
 
 
@@ -815,8 +900,46 @@ def extract_text():
 @app.get("/api/conversations")
 @login_required
 def conversations():
-    rows = q_all("SELECT id,title,pinned,(share_token IS NOT NULL) AS shared FROM evil_conversations WHERE user_id=%s ORDER BY pinned DESC, updated_at DESC LIMIT 80", (request.user["id"],))
-    return jsonify({"conversations": [{"id": str(r["id"]), "title": r["title"], "pinned": r["pinned"], "shared": r["shared"]} for r in rows]})
+    archived = request.args.get("archived") == "1"
+    rows = q_all("""SELECT id,title,pinned,tags,archived,(share_token IS NOT NULL) AS shared FROM evil_conversations
+                    WHERE user_id=%s AND archived=%s ORDER BY pinned DESC, updated_at DESC LIMIT 80""", (request.user["id"], archived))
+    return jsonify({"conversations": [{"id": str(r["id"]), "title": r["title"], "pinned": r["pinned"], "shared": r["shared"],
+                                        "tags": r["tags"] or "", "archived": r["archived"]} for r in rows]})
+
+
+@app.post("/api/conversations/<uuid:conversation_id>/tags")
+@login_required
+def tag_conversation(conversation_id):
+    tags = re.sub(r"\s*,\s*", ", ", str(body().get("tags", "")).strip())[:200]
+    row = q_one("UPDATE evil_conversations SET tags=%s WHERE id=%s AND user_id=%s RETURNING tags", (tags or None, str(conversation_id), request.user["id"]))
+    if not row: return err("Chat not found.", 404)
+    return jsonify({"success": True, "tags": row["tags"] or ""})
+
+
+@app.post("/api/conversations/<uuid:conversation_id>/archive")
+@login_required
+def archive_conversation(conversation_id):
+    row = q_one("UPDATE evil_conversations SET archived = NOT archived WHERE id=%s AND user_id=%s RETURNING archived", (str(conversation_id), request.user["id"]))
+    if not row: return err("Chat not found.", 404)
+    return jsonify({"success": True, "archived": row["archived"]})
+
+
+@app.get("/api/conversations/export-all")
+@login_required
+def export_all_conversations():
+    u = request.user
+    chats = q_all("SELECT id,title,created_at FROM evil_conversations WHERE user_id=%s ORDER BY created_at", (u["id"],))
+    parts = [f"{BRAND} - all conversations for {u['username']}\n"]
+    for c in chats:
+        msgs = q_all("SELECT role,content FROM evil_messages WHERE conversation_id=%s ORDER BY id", (str(c["id"]),))
+        parts.append("\n\n===== " + c["title"] + " (" + fmt_date_only(c["created_at"]) + ") =====\n" +
+                     "\n\n".join((("You" if m["role"] == "user" else BRAND) + ":\n" + m["content"]) for m in msgs))
+    return Response("".join(parts), mimetype="text/plain", headers={"Content-Disposition": "attachment; filename=vyra-all-chats.txt"})
+
+
+def fmt_date_only(v):
+    try: return v.strftime("%Y-%m-%d")
+    except Exception: return str(v)[:10]
 
 
 def own_conversation(conversation_id):
@@ -828,8 +951,10 @@ def own_conversation(conversation_id):
 def get_conversation(conversation_id):
     c = own_conversation(conversation_id)
     if not c: return err("Chat not found.", 404)
-    msgs = q_all("SELECT id,role,content,attachment_type,attachment_url,feedback FROM evil_messages WHERE conversation_id=%s ORDER BY id", (str(conversation_id),))
-    return jsonify({"title": c["title"], "shareToken": c["share_token"], "messages": [dict(m) for m in msgs]})
+    msgs = q_all("SELECT id,role,content,attachment_type,attachment_url,feedback,created_at FROM evil_messages WHERE conversation_id=%s ORDER BY id", (str(conversation_id),))
+    out = [dict(m) for m in msgs]
+    for m in out: m["created_at"] = iso(m["created_at"])
+    return jsonify({"title": c["title"], "shareToken": c["share_token"], "messages": out})
 
 
 @app.post("/api/conversations/<uuid:conversation_id>/delete")
@@ -922,7 +1047,10 @@ def ask_stream():
     d = body(); u = request.user
     question = str(d.get("question", "")).strip()
     conv_id = d.get("conversationId"); persona = str(d.get("persona", "assistant")); language = str(d.get("language", "English"))
-    model_type = "fast" if d.get("modelType") == "fast" else "deep"
+    model_type = str(d.get("modelType")) if d.get("modelType") in ("fast", "balanced", "deep") else "deep"
+    length_pref = str(d.get("length")) if d.get("length") in LENGTH_PROMPTS else None
+    tone_pref = str(d.get("tone")) if d.get("tone") in TONE_PROMPTS else None
+    eli5 = bool(d.get("eli5"))
     try: temp = max(0.0, min(1.0, float(d.get("temperature", 0.7))))
     except (TypeError, ValueError): temp = 0.7
     extra = str(d.get("fileText", ""))[:6000]
@@ -961,20 +1089,28 @@ def ask_stream():
     can_persona = CUSTOM_PERSONA_FREE or u["is_admin"] or trial or plan_key != "free"
     sys_prompt = u["custom_persona"] if (u["custom_persona"] and can_persona) else PERSONAS.get(persona, PERSONAS["assistant"])["instructions"]
     if LANGUAGES.get(language): sys_prompt += " " + LANGUAGES[language] + " Keep code and technical terms in English."
+    if length_pref: sys_prompt += " " + LENGTH_PROMPTS[length_pref]
+    if tone_pref: sys_prompt += " " + TONE_PROMPTS[tone_pref]
+    if eli5: sys_prompt += " " + ELI5_PROMPT
+    if u["about_me"]: sys_prompt += f" Here is some context about the person you're talking to, use it only when relevant: {u['about_me']}"
     user_content = f"{question}\n\n[Attached file text]\n{extra}" if extra else question
     messages = [{"role": "system", "content": sys_prompt}] + [{"role": m["role"], "content": m["content"]} for m in history] + [{"role": "user", "content": user_content}]
     user_id = u["id"]
 
+    start_model = {"fast": GROQ_FAST_MODEL, "balanced": GROQ_BALANCED_MODEL, "deep": GROQ_MODEL}[model_type]
+
     def generate():
-        collected, model, tried_fallback, started = [], (GROQ_FAST_MODEL if model_type == "fast" else GROQ_MODEL), False, False
+        collected, model, tried_fallback, started, truncated = [], start_model, False, False, False
         yield sse({"start": conv_id})
         try:
             while True:
                 try:
                     stream = make_client().chat.completions.create(model=model, messages=messages, temperature=temp, stream=True)
                     for chunk in stream:
-                        delta = (chunk.choices[0].delta.content or "") if chunk.choices else ""
+                        if not chunk.choices: continue
+                        delta = chunk.choices[0].delta.content or ""
                         if delta: started = True; collected.append(delta); yield sse({"t": delta})
+                        if getattr(chunk.choices[0], "finish_reason", None) == "length": truncated = True
                     break
                 except Exception as exc:
                     # Retry once on the fast model if the deep model failed before saying anything.
@@ -993,7 +1129,7 @@ def ask_stream():
         answer = "".join(collected).strip()
         if not answer: refund(); yield sse({"error": "The AI sent an empty reply. Try again."}); return
         ids = save_turn(conv_id, user_id, question, answer, is_new)
-        yield sse({"done": conv_id, "messageId": ids[1], "userMessageId": ids[0]})
+        yield sse({"done": conv_id, "messageId": ids[1], "userMessageId": ids[0], "truncated": truncated})
 
     return Response(stream_with_context(generate()), mimetype="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
@@ -1254,7 +1390,16 @@ def admin_audit():
 @app.get("/api/admin/export")
 @admin_required
 def admin_export():
-    users = q_all("SELECT id,username,email,plan,plan_expires_at,is_verified,is_suspended,streak_count,bonus_messages,created_at FROM evil_users ORDER BY id")
+    plan_filter = request.args.get("plan")
+    if plan_filter and plan_filter not in PLANS: return err("Unknown plan.")
+    users_sql = "SELECT id,username,email,plan,plan_expires_at,is_verified,is_suspended,streak_count,bonus_messages,created_at FROM evil_users"
+    users = q_all(users_sql + " WHERE plan=%s ORDER BY id", (plan_filter,)) if plan_filter else q_all(users_sql + " ORDER BY id")
+    if request.args.get("format") == "csv":
+        lines = ["id,username,email,plan,plan_expires_at,is_verified,is_suspended,streak_count,bonus_messages,created_at"]
+        for r in users:
+            vals = [r["id"], r["username"], r["email"], r["plan"], iso(r["plan_expires_at"]) or "", r["is_verified"], r["is_suspended"], r["streak_count"], r["bonus_messages"], iso(r["created_at"])]
+            lines.append(",".join('"' + str(v).replace('"', '""') + '"' for v in vals))
+        return Response("\n".join(lines), mimetype="text/csv", headers={"Content-Disposition": "attachment; filename=vyra-users.csv"})
     pays = q_all("SELECT id,user_id,plan,amount_ngn,status,provider,reference,created_at,reviewed_at FROM evil_payment_requests ORDER BY id")
     clean = lambda rows: [{k: iso(v) if hasattr(v, "isoformat") else v for k, v in r.items()} for r in rows]
     data = json.dumps({"exported_at": q_one("SELECT NOW()::text AS t")["t"], "users": clean(users), "payments": clean(pays)}, indent=2, default=str)
