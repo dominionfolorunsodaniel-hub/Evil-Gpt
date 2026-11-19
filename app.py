@@ -653,18 +653,30 @@ REFERRAL_MILESTONES = {3: 30, 5: 75, 10: 200}  # friend count -> bonus messages 
 
 
 def reward_referral(u):
-    """Both people get +1 trial day once the new account is verified. A referrer can earn this 10 times, plus milestone bonuses."""
-    if not u["referred_by"] or u["referral_rewarded"]: return
-    n = q_one("SELECT COUNT(*) AS n FROM evil_users WHERE referred_by=%s AND referral_rewarded=TRUE", (u["referred_by"],))["n"]
+    """Award referral rewards safely when referral IDs are numeric and valid."""
+    raw_referrer = u.get("referred_by")
+    if not raw_referrer or u.get("referral_rewarded"):
+        return
+    # Legacy databases may store referred_by as VARCHAR, while newer schemas use BIGINT.
+    # Normalize only the value; never cast the database column, which may contain legacy text.
+    try:
+        referrer_id = int(raw_referrer)
+    except (TypeError, ValueError):
+        log.warning("Skipping referral reward for user %s: invalid referrer ID", u.get("id"))
+        return
+    if referrer_id <= 0:
+        return
+    n_row = q_one("SELECT COUNT(*) AS n FROM evil_users WHERE referred_by::text=%s AND referral_rewarded=TRUE", (str(referrer_id),))
+    n = (n_row or {}).get("n", 0)
     q_run("UPDATE evil_users SET referral_rewarded=TRUE, trial_ends_at=GREATEST(COALESCE(trial_ends_at,NOW()),NOW())+INTERVAL '1 day' WHERE id=%s", (u["id"],))
     if n < 10:
-        q_run("UPDATE evil_users SET trial_ends_at=GREATEST(COALESCE(trial_ends_at,NOW()),NOW())+INTERVAL '1 day' WHERE id=%s", (u["referred_by"],))
-        q_run("INSERT INTO evil_notifications(user_id,message) VALUES (%s,%s)", (u["referred_by"], "A friend joined with your link. You both got +1 free day of full access."))
+        q_run("UPDATE evil_users SET trial_ends_at=GREATEST(COALESCE(trial_ends_at,NOW()),NOW())+INTERVAL '1 day' WHERE id=%s", (referrer_id,))
+        q_run("INSERT INTO evil_notifications(user_id,message) VALUES (%s,%s)", (referrer_id, "A friend joined with your link. You both got +1 free day of full access."))
         new_count = n + 1
         bonus = REFERRAL_MILESTONES.get(new_count)
         if bonus:
-            q_run("UPDATE evil_users SET bonus_messages=COALESCE(bonus_messages,0)+%s WHERE id=%s", (bonus, u["referred_by"]))
-            q_run("INSERT INTO evil_notifications(user_id,message) VALUES (%s,%s)", (u["referred_by"], f"Milestone! {new_count} friends joined with your link. +{bonus} bonus messages."))
+            q_run("UPDATE evil_users SET bonus_messages=COALESCE(bonus_messages,0)+%s WHERE id=%s", (bonus, referrer_id))
+            q_run("INSERT INTO evil_notifications(user_id,message) VALUES (%s,%s)", (referrer_id, f"Milestone! {new_count} friends joined with your link. +{bonus} bonus messages."))
 
 
 @app.post("/login")
@@ -718,7 +730,8 @@ def me():
     plan_key, trial = effective_plan(u)
     q_run("UPDATE evil_users SET last_seen_at=NOW() WHERE id=%s AND (last_seen_at IS NULL OR last_seen_at < NOW() - INTERVAL '5 minutes')", (u["id"],))
     can_persona = CUSTOM_PERSONA_FREE or u["is_admin"] or trial or plan_key != "free"
-    refs = q_one("SELECT COUNT(*) AS n FROM evil_users WHERE referred_by=%s AND referral_rewarded=TRUE", (u["id"],))["n"]
+    refs_row = q_one("SELECT COUNT(*) AS n FROM evil_users WHERE referred_by::text=%s AND referral_rewarded=TRUE", (str(u["id"]),))
+    refs = (refs_row or {}).get("n", 0)
     return jsonify({
         "user": {"username": u["username"], "email": u["email"], "plan": plan_key, "paidPlan": u["plan"], "isAdmin": u["is_admin"],
                  "streak": u["streak_count"] or 0, "checkedInToday": bool(u["checked_in_today"]), "trial": trial,
