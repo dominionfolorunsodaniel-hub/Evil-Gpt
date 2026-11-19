@@ -394,7 +394,7 @@ def badges_for(u):
     has_image = q_one("SELECT 1 FROM evil_images WHERE user_id=%s LIMIT 1", (u["id"],))
     has_chat = q_one("SELECT 1 FROM evil_conversations WHERE user_id=%s LIMIT 1", (u["id"],))
     has_shared = q_one("SELECT 1 FROM evil_conversations WHERE user_id=%s AND share_token IS NOT NULL LIMIT 1", (u["id"],))
-    has_referral = q_one("SELECT 1 FROM evil_users WHERE referred_by=%s AND referral_rewarded=TRUE LIMIT 1", (u["id"],))
+    has_referral = q_one("SELECT 1 FROM evil_users WHERE referred_by::text=%s AND referral_rewarded=TRUE LIMIT 1", (str(u["id"]),))
     streak = u["streak_count"] or 0
     earned = {
         "first_chat": bool(has_chat), "hundred_messages": total_msgs >= 100, "streak_7": streak >= 7,
