@@ -19,3 +19,21 @@ Flask + Postgres + Groq. This is the upgraded version of Evil GPT. Every origina
 - Custom personas need a paid plan or an active trial. Set `CUSTOM_PERSONA_FREE=1` to allow everyone.
 - Remove the old Vercel link in the GitHub repo's About box.
 - Your repo is public. Anything you ever committed (including old bank details in git history) stays visible there.
+
+## November 2026 maintenance update
+- Plan cards now render defensively when plan data is missing or malformed, with a clear retry state instead of an empty screen.
+- Admin Center includes a dedicated Admin Tools directory linking to all current administrative sections: overview, user management, payments, verification/recovery codes, broadcasts, rewards, and audit/backup.
+- Admin page title and responsive admin-tool styling updated.
+- Validation performed: Python syntax compilation (`app.py`) and JavaScript syntax check (`static/script.js`).
+
+## Gifts, rewards, support and notifications
+
+- Admin Center → Gifts & reward requests lets an administrator gift a paid plan by username/email for 1–365 days; gifts are logged and notify the recipient.
+- Users can submit reward requests from the Plans page. Admins can approve a request by selecting a plan and duration, or reject it.
+- Payment screenshot review is already built into Admin Center → Payments: open the proof and approve/reject. Approval activates the plan and notifies the customer; upload notifies the admin.
+- Forgot-password requests already use the code-based reset flow. If email delivery is not configured, admin approval is used; reset codes are time-limited.
+- Broadcasts already insert in-app notifications for non-admin users. The notification badge now refreshes periodically while the app is visible.
+- Telegram support is linked on the Plans page. WhatsApp support is optional: configure `WHATSAPP_SUPPORT_NUMBER` in the deployment environment with a business/guardian-managed public number (digits including country code, no `+` or spaces).
+- Image Studio is branded as VYRA Image Studio. The underlying image service remains a third-party provider and is disclosed in the privacy policy; no provider replacement was made in this update.
+
+Database changes are additive: startup creates `evil_plan_gifts` and `evil_reward_requests` if they are absent.

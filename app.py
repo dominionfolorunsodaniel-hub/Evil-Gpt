@@ -6,7 +6,7 @@ leaderboard, notifications, email-code verification with admin approval, 2-day t
 admin console (users / payments / OTPs / broadcast), payment proof upload.
 """
 import os, re, io, json, uuid, hmac, hashlib, secrets, logging, smtplib, threading, time
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from functools import wraps
@@ -59,6 +59,7 @@ MAIL_FROM = os.environ.get("MAIL_FROM") or SMTP_EMAIL
 MAIL_FROM_NAME = os.environ.get("MAIL_FROM_NAME", BRAND)
 SITE_URL = (os.environ.get("SITE_URL") or "").rstrip("/")
 PAYSTACK_SECRET_KEY = os.environ.get("PAYSTACK_SECRET_KEY")
+WHATSAPP_SUPPORT_NUMBER = re.sub(r"\D", "", os.environ.get("WHATSAPP_SUPPORT_NUMBER", ""))
 CUSTOM_PERSONA_FREE = os.environ.get("CUSTOM_PERSONA_FREE") == "1"  # set to 1 to let Free users use custom personas
 TRIAL_DAYS = int(os.environ.get("TRIAL_DAYS", "2"))
 PLAN_DAYS = int(os.environ.get("PLAN_DAYS", "30"))
@@ -223,6 +224,8 @@ SCHEMA = [
     "CREATE TABLE IF NOT EXISTS evil_rate_limits (key VARCHAR(160) NOT NULL, bucket BIGINT NOT NULL, hits INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(key, bucket))",
     "CREATE TABLE IF NOT EXISTS evil_audit_log (id BIGSERIAL PRIMARY KEY, actor VARCHAR(40), action VARCHAR(60) NOT NULL, detail TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
     "CREATE TABLE IF NOT EXISTS evil_awards (week_key VARCHAR(10) PRIMARY KEY, awarded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), detail TEXT)",
+    "CREATE TABLE IF NOT EXISTS evil_plan_gifts (id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES evil_users(id) ON DELETE CASCADE, admin_id BIGINT NOT NULL REFERENCES evil_users(id), plan VARCHAR(32) NOT NULL, duration_days INTEGER NOT NULL, reason TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
+    "CREATE TABLE IF NOT EXISTS evil_reward_requests (id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES evil_users(id) ON DELETE CASCADE, message TEXT NOT NULL, status VARCHAR(20) NOT NULL DEFAULT 'pending', admin_note TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), reviewed_at TIMESTAMPTZ)",
     "CREATE TABLE IF NOT EXISTS evil_settings (key VARCHAR(40) PRIMARY KEY, value TEXT NOT NULL)",
     # ---- second Vyra AI batch (all additive) ----
     "ALTER TABLE evil_conversations ADD COLUMN IF NOT EXISTS tags VARCHAR(200)",
@@ -508,7 +511,7 @@ def index():
     if not session.get("user_id") and not request.args.get("force_login") and not request.args.get("login"):
         return render_template("landing.html", brand=BRAND, plans=PLANS, ref=re.sub(r"[^A-Za-z0-9]", "", request.args.get("ref", ""))[:12])
     ref = re.sub(r"[^A-Za-z0-9]", "", request.args.get("ref", ""))[:12]
-    return render_template("index.html", brand=BRAND, ref=ref, paystack=bool(PAYSTACK_SECRET_KEY))
+    return render_template("index.html", brand=BRAND, ref=ref, paystack=bool(PAYSTACK_SECRET_KEY), support_whatsapp=WHATSAPP_SUPPORT_NUMBER)
 
 
 @app.get("/healthz")
@@ -844,6 +847,17 @@ def mark_notifications_read():
     q_run("UPDATE evil_notifications SET is_read=TRUE WHERE user_id=%s", (request.user["id"],)); return jsonify({"success": True})
 
 
+@app.post("/api/reward-request")
+@login_required
+@limited("reward_request", 4, 86400, per="user")
+def create_reward_request():
+    msg = str(body().get("message", "")).strip()[:500]
+    if len(msg) < 8: return err("Please describe your reward request (at least 8 characters).")
+    row = q_one("INSERT INTO evil_reward_requests(user_id,message) VALUES (%s,%s) RETURNING id", (request.user["id"], msg))
+    q_run("INSERT INTO evil_notifications(user_id,message) SELECT id,%s FROM evil_users WHERE is_admin=TRUE", (f"New reward request from {request.user['username']}.",))
+    return jsonify({"success": True, "id": row["id"], "message": "Your reward request has been sent to the admin."})
+
+
 # ----------------------------------------------------------------------------- Image Studio
 @app.post("/api/generate-image")
 @login_required
@@ -862,14 +876,37 @@ def generate_image():
     seed = secrets.randbelow(10 ** 8)
     url = f"https://image.pollinations.ai/prompt/{quote(prompt)}?width=1024&height=1024&nologo=true&seed={seed}"
     img = q_one("INSERT INTO evil_images(user_id,prompt,url) VALUES (%s,%s,%s) RETURNING id", (u["id"], prompt, url))
-    return jsonify({"success": True, "image_url": url, "id": img["id"], "used": row["images_generated_today"], "limit": limit})
+    return jsonify({"success": True, "image_url": f"/api/images/{img['id']}/render", "id": img["id"], "used": row["images_generated_today"], "limit": limit})
 
 
 @app.get("/api/images")
 @login_required
 def list_images():
     rows = q_all("SELECT id,prompt,url,created_at FROM evil_images WHERE user_id=%s ORDER BY id DESC LIMIT 60", (request.user["id"],))
-    return jsonify({"images": [{"id": r["id"], "prompt": r["prompt"], "url": r["url"], "created_at": iso(r["created_at"])} for r in rows]})
+    return jsonify({"images": [{"id": r["id"], "prompt": r["prompt"], "display_url": f"/api/images/{r['id']}/render", "created_at": iso(r["created_at"])} for r in rows]})
+
+
+@app.get("/api/images/<int:image_id>/render")
+@login_required
+@limited("image_render", 30, 60, per="user")
+def render_image_proxy(image_id):
+    row = q_one("SELECT url FROM evil_images WHERE id=%s AND user_id=%s", (image_id, request.user["id"]))
+    if not row: return err("Image not found.", 404)
+    source = urlparse(row["url"])
+    if source.scheme != "https" or source.hostname != "image.pollinations.ai": return err("Image source is invalid.", 502)
+    try:
+        upstream = requests.get(row["url"], timeout=(5, 35), stream=True, headers={"User-Agent": "VyraAI/1.0"})
+        if upstream.status_code != 200: return err("Image service is temporarily unavailable.", 502)
+        mime = upstream.headers.get("Content-Type", "").split(";", 1)[0].lower()
+        if mime not in ("image/png", "image/jpeg", "image/webp", "image/gif"): return err("Image service returned an unsupported format.", 502)
+        length = upstream.headers.get("Content-Length")
+        if length and int(length) > 8 * 1024 * 1024: return err("Generated image is too large.", 502)
+        data = upstream.content
+        if len(data) > 8 * 1024 * 1024: return err("Generated image is too large.", 502)
+        return Response(data, mimetype=mime, headers={"Cache-Control": "private, max-age=3600", "X-Content-Type-Options": "nosniff"})
+    except requests.RequestException:
+        log.warning("image provider proxy failed", exc_info=True)
+        return err("Image service is temporarily unavailable. Try again shortly.", 502)
 
 
 @app.post("/api/images/<int:image_id>/delete")
@@ -1358,6 +1395,54 @@ def admin_broadcast():
     n = q_run("INSERT INTO evil_notifications(user_id, message) SELECT id, %s FROM evil_users WHERE is_admin=FALSE", (msg,))
     audit(request.user["username"], "broadcast", msg[:100])
     return jsonify({"success": True, "sent": n})
+
+
+@app.post("/api/admin/gift-plan")
+@admin_required
+@limited("gift_plan", 30, 3600, per="user")
+def admin_gift_plan():
+    d = body(); target = str(d.get("user", "")).strip()[:254]; plan = str(d.get("plan", "")); reason = str(d.get("reason", "" )).strip()[:300]
+    try: days = int(d.get("days", PLAN_DAYS))
+    except (TypeError, ValueError): return err("Duration must be a whole number of days.")
+    if not target: return err("Enter a username or email.")
+    if plan not in PLANS or plan == "free": return err("Choose a paid plan to gift.")
+    if days < 1 or days > 365: return err("Gift duration must be between 1 and 365 days.")
+    user = q_one("SELECT id,username FROM evil_users WHERE is_admin=FALSE AND (LOWER(username)=LOWER(%s) OR LOWER(email)=LOWER(%s))", (target,target))
+    if not user: return err("No matching customer account was found.",404)
+    q_run("UPDATE evil_users SET plan=%s, plan_expires_at=NOW() + (%s || ' days')::interval WHERE id=%s", (plan,str(days),user["id"]))
+    q_run("INSERT INTO evil_plan_gifts(user_id,admin_id,plan,duration_days,reason) VALUES (%s,%s,%s,%s,%s)", (user["id"],request.user["id"],plan,days,reason))
+    q_run("INSERT INTO evil_notifications(user_id,message) VALUES (%s,%s)", (user["id"], f"You've received a {PLANS[plan]['name']} plan gift for {days} days!" + (f" Note: {reason}" if reason else "")))
+    audit(request.user["username"],"gift_plan",f"user {user['id']} -> {plan} for {days} days")
+    return jsonify({"success":True,"username":user["username"],"message":f"Gifted {PLANS[plan]['name']} to {user['username']} for {days} days."})
+
+
+@app.get("/api/admin/reward-requests")
+@admin_required
+def admin_reward_requests():
+    rows = q_all("SELECT rr.id,rr.user_id,u.username,u.email,rr.message,rr.status,rr.admin_note,rr.created_at FROM evil_reward_requests rr JOIN evil_users u ON u.id=rr.user_id ORDER BY rr.id DESC LIMIT 100")
+    return jsonify({"requests":[{**r,"created_at":iso(r["created_at"])} for r in rows]})
+
+
+@app.post("/api/admin/reward-requests/<int:request_id>/<action>")
+@admin_required
+def review_reward_request(request_id,action):
+    if action not in ("approve","reject"): return err("Unknown action.",404)
+    d=body(); note=str(d.get("note","" )).strip()[:300]; plan=str(d.get("plan",""));
+    try: days=int(d.get("days",PLAN_DAYS))
+    except (TypeError,ValueError): return err("Duration must be a whole number of days.")
+    row=q_one("SELECT id,user_id,status FROM evil_reward_requests WHERE id=%s",(request_id,))
+    if not row or row["status"]!="pending": return err("Request was already handled or not found.",404)
+    if action=="approve":
+        if plan not in PLANS or plan=="free": return err("Choose a paid plan to reward.")
+        if days<1 or days>365: return err("Duration must be between 1 and 365 days.")
+        q_run("UPDATE evil_users SET plan=%s,plan_expires_at=NOW()+(%s || ' days')::interval WHERE id=%s",(plan,str(days),row["user_id"]))
+        q_run("UPDATE evil_reward_requests SET status='approved',admin_note=%s,reviewed_at=NOW() WHERE id=%s",(note,request_id))
+        q_run("INSERT INTO evil_notifications(user_id,message) VALUES (%s,%s)",(row["user_id"],f"Your reward request was approved! You've received {PLANS[plan]['name']} for {days} days."))
+    else:
+        q_run("UPDATE evil_reward_requests SET status='rejected',admin_note=%s,reviewed_at=NOW() WHERE id=%s",(note,request_id))
+        q_run("INSERT INTO evil_notifications(user_id,message) VALUES (%s,%s)",(row["user_id"],"Your reward request was reviewed. Contact support if you need more information."))
+    audit(request.user["username"],f"reward_request_{action}",f"request {request_id}")
+    return jsonify({"success":True})
 
 
 @app.get("/api/admin/stats")
