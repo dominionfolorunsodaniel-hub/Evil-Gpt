@@ -398,14 +398,24 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible{
 .toolbox-icon{font-size:25px;line-height:1.2}.toolbox-card strong{font-size:15px}.toolbox-card small{color:var(--muted);font-size:12px;line-height:1.4}
 .toolbox-note{margin-top:16px;border:1px solid var(--line);border-radius:12px;padding:12px;color:var(--muted);font-size:12px}
 @media(max-width:480px){.toolbox-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.toolbox-card{padding:12px;min-height:124px}}
-
-/* VYRA mobile composer polish: larger touch targets, balanced control alignment, and keyboard-safe sizing. */
+/* VYRA mobile composer and consolidated settings refresh */
+.composer-tools{margin:0 0 6px;justify-content:flex-start;min-height:34px}
+.chat-settings-chip{display:flex;align-items:center;gap:7px;padding:7px 11px;border-radius:999px;max-width:100%}
+.chat-settings-chip .settings-hint{opacity:.62;font-size:11px;margin-left:2px}
+.settings-categories{display:flex;gap:7px;overflow-x:auto;white-space:nowrap;padding:8px 0 12px;margin:0 0 4px;scrollbar-width:thin;position:sticky;top:0;background:var(--surface);z-index:2}
+.settings-categories button{border:1px solid var(--line);background:var(--surface-2,var(--surface));color:var(--text);border-radius:999px;padding:8px 11px;font-size:12px;flex:0 0 auto}
+.settings-categories button.on{background:var(--brand-soft,var(--surface));border-color:var(--brand);color:var(--brand)}
+.settings-section{animation:settings-fade .15s ease}
+.settings-mode{max-width:100%;overflow-x:auto}
+.settings-creativity{max-width:420px}
+.zip-export-tools{width:100%;margin-top:12px;padding-top:12px;border-top:1px solid var(--line-soft)}
+.zip-export-tools textarea{font-family:ui-monospace,monospace;font-size:12px;min-height:110px}
+@keyframes settings-fade{from{opacity:.65;transform:translateY(2px)}to{opacity:1;transform:translateY(0)}}
 @media(max-width:600px){
-  .composer-wrap{padding:7px 10px calc(10px + env(safe-area-inset-bottom));}
-  .composer{gap:5px;padding:6px 6px 6px 8px;border-radius:24px;align-items:flex-end;min-height:54px;}
-  .composer textarea{min-height:42px;max-height:140px;padding:10px 5px;line-height:1.4;overflow-y:auto;}
-  .composer .icon-btn{width:40px;height:42px;min-width:40px;border-radius:16px;}
-  .composer .send{width:42px;height:42px;min-width:42px;margin:0 1px 0 0;}
-  .composer-foot{margin-top:5px;}
+  .composer-tools{padding:0 2px}
+  .chat-settings-chip{padding:6px 10px;min-height:34px}
+  .chat-settings-chip .settings-hint{font-size:10px}
+  .settings-categories{margin-inline:-4px;padding-inline:4px}
+  #settings-modal .modal-card{padding:16px}
+  .settings-mode button{padding:8px 10px;font-size:12px}
 }
-@media(max-width:380px){.composer{gap:3px;padding-left:5px}.composer .icon-btn{width:36px;min-width:36px}.composer .send{width:40px;min-width:40px}}

@@ -191,7 +191,7 @@ function setGreeting() {
   $("welcome").querySelector(".sub").textContent = "What are we creating today?";
 }
 const TOP = ["business", "enterprise"];
-function planLabel() { const u = S.user; return u.isAdmin ? "Admin Infinity" : u.trial ? "Free trial" : (S.plans[u.plan]?.name || "Free"); }
+function planLabel() { const u = S.user; return u.trial ? "Free trial" : (S.plans[u.plan]?.name || "Free"); }
 async function refreshMe() {
   const d = await api("/api/me"); S.user = d.user; S.usage = d.usage; S.images = d.images; S.plans = d.plans; S.paystack = d.paystack; S.badges = d.badges;
   const u = S.user, us = S.usage;
@@ -201,13 +201,12 @@ async function refreshMe() {
   const crown = TOP.includes(u.plan) && !u.trial ? ico("crown", "sm") : "";
   $("top-plan").innerHTML = crown + esc(planLabel()); $("top-plan").className = "pill " + (crown || u.trial ? "gold" : "brand");
   $("admin-nav").classList.toggle("hidden", !u.isAdmin);
-  const unlimited = Boolean(us.unlimited || us.trial);
-  const frac = unlimited ? 1 : Math.max(0, Math.min(1, us.remaining / Math.max(1, us.limit)));
-  const low = !unlimited && us.remaining <= Math.max(3, Math.round(us.limit * 0.2));
-  $("side-meter").classList.toggle("warn", low); $("side-meter").firstElementChild.style.width = (unlimited ? 100 : Math.min(100, (us.used / us.limit) * 100)) + "%";
-  $("side-usage").textContent = unlimited ? (u.isAdmin ? "Infinity access" : "Unlimited in your trial") : `${us.remaining.toLocaleString()} messages left`;
+  const frac = us.trial ? 1 : Math.max(0, Math.min(1, us.remaining / Math.max(1, us.limit)));
+  const low = !us.trial && us.remaining <= Math.max(3, Math.round(us.limit * 0.2));
+  $("side-meter").classList.toggle("warn", low); $("side-meter").firstElementChild.style.width = (us.trial ? 100 : Math.min(100, (us.used / us.limit) * 100)) + "%";
+  $("side-usage").textContent = us.trial ? "Unlimited in your trial" : `${us.remaining.toLocaleString()} messages left`;
   $("side-plan-note").textContent = u.trial && us.trialEndsAt ? "ends " + new Date(us.trialEndsAt).toLocaleDateString("en-NG", { day: "numeric", month: "short" }) : "";
-  $("usage-label").textContent = unlimited ? (u.isAdmin ? "Infinity · unlimited messages" : "Unlimited messages during your trial") : `${us.remaining.toLocaleString()} of ${us.limit.toLocaleString()} messages left this month`;
+  $("usage-label").textContent = us.trial ? "Unlimited messages during your trial" : `${us.remaining.toLocaleString()} of ${us.limit.toLocaleString()} messages left this month`;
   const ring = $("usage-ring"); ring.classList.toggle("warn", low); ring.querySelector(".fg").style.strokeDashoffset = String(150.8 * (1 - frac));
   $("streak-label").textContent = u.streak; const ci = $("checkin-btn"); ci.classList.toggle("done", u.checkedInToday);
   $("checkin-text").textContent = u.checkedInToday ? "Checked in today" : "Daily check-in";
@@ -215,7 +214,7 @@ async function refreshMe() {
   if (low && !us.trial) { $("nudge-text").textContent = us.remaining <= 0 ? "You've used all your messages this month." : `Only ${us.remaining} messages left this month.`; n.classList.remove("hidden"); $("nudge-checkin").classList.toggle("hidden", u.checkedInToday); } else n.classList.add("hidden");
   $("image-limit-label").textContent = `${S.images.used} of ${S.images.limit} images used today. Resets at midnight.`;
   $("usage-number").textContent = us.trial ? "Unlimited (trial)" : `${us.used.toLocaleString()} / ${us.limit.toLocaleString()}`;
-  $("usage-meter").classList.toggle("warn", low); $("usage-meter").firstElementChild.style.width = (unlimited ? 100 : Math.min(100, (us.used / us.limit) * 100)) + "%";
+  $("usage-meter").classList.toggle("warn", low); $("usage-meter").firstElementChild.style.width = (us.trial ? 100 : Math.min(100, (us.used / us.limit) * 100)) + "%";
   $("usage-sub").textContent = u.planExpiresAt ? `Your ${S.plans[u.paidPlan]?.name || ""} plan runs until ${fmtDate(u.planExpiresAt)}.` : (u.trial ? "Your trial gives you full access. After it ends you move to the Free plan." : "Check in every day for bonus messages.");
 }
 async function loadPersonas() {
@@ -227,6 +226,9 @@ async function loadPersonas() {
 $("persona-select").onchange = (e) => store.set("vyra-persona", e.target.value);
 $("lang-select").value = store.get("vyra-lang") || "English"; if (!$("lang-select").value) $("lang-select").value = "English";
 $("lang-select").onchange = (e) => store.set("vyra-lang", e.target.value);
+$("temp-slider").value = store.get("vyra-temperature") || "0.7";
+$("temp-slider").oninput = (e) => store.set("vyra-temperature", e.target.value);
+$("chat-settings").onclick = () => { $("open-settings").click(); setSettingsTab("ai"); };
 async function loadDailyPrompt() {
   const d = await api("/api/daily-prompt"); const b = $("daily-prompt"); b.classList.remove("hidden"); $("daily-prompt-text").textContent = "Today's idea: " + d.prompt; b.dataset.prompt = d.prompt;
 }
@@ -322,6 +324,7 @@ const MODES = ["fast", "balanced", "deep"];
 function setMode(m) {
   S.mode = m; store.set("vyra-mode", m);
   MODES.forEach((k) => { const b = $("mode-" + k); b.classList.toggle("on", m === k); b.setAttribute("aria-pressed", m === k); });
+  const label = $("chat-mode-label"); if (label) label.textContent = m.charAt(0).toUpperCase() + m.slice(1);
 }
 MODES.forEach((k) => ($("mode-" + k).onclick = () => setMode(k))); setMode(MODES.includes(S.mode) ? S.mode : "deep");
 
@@ -343,7 +346,7 @@ $("tune-btn").onclick = () => {
 function msgActions(m) {
   if (m.role === "user") return `<div class="msg-actions"><button type="button" data-act="edit" aria-label="Edit and resend" title="Edit and resend">${ico("edit", "sm")}</button><button type="button" data-act="copy" aria-label="Copy" title="Copy">${ico("copy", "sm")}</button></div>`;
   const last = S.msgs.filter((x) => x.role === "assistant").slice(-1)[0] === m;
-  return `<div class="msg-actions">${last && m.truncated ? `<button type="button" data-act="continue" class="chip" aria-label="Continue" title="The reply got cut off">${ico("arrow-up", "sm")}Continue</button>` : ""}<button type="button" data-act="copy" aria-label="Copy" title="Copy">${ico("copy", "sm")}</button><button type="button" data-act="download" aria-label="Download answer as text" title="Download answer">${ico("download", "sm")}</button><button type="button" data-act="zip" aria-label="Download answer as ZIP" title="Download answer as ZIP">${ico("archive", "sm")}</button><button type="button" data-act="speak" aria-label="Read aloud" title="Read aloud">${ico("volume", "sm")}</button>${last ? `<button type="button" data-act="regen" aria-label="Regenerate" title="Regenerate">${ico("refresh", "sm")}</button>` : ""}<button type="button" data-act="up" class="${m.feedback === 1 ? "on" : ""}" aria-label="Good answer" title="Good answer">${ico("thumb-up", "sm")}</button><button type="button" data-act="down" class="${m.feedback === -1 ? "on" : ""}" aria-label="Bad answer" title="Bad answer">${ico("thumb-down", "sm")}</button></div>`;
+  return `<div class="msg-actions">${last && m.truncated ? `<button type="button" data-act="continue" class="chip" aria-label="Continue" title="The reply got cut off">${ico("arrow-up", "sm")}Continue</button>` : ""}<button type="button" data-act="copy" aria-label="Copy" title="Copy">${ico("copy", "sm")}</button><button type="button" data-act="download" aria-label="Download answer as text" title="Download answer">${ico("download", "sm")}</button><button type="button" data-act="zip" aria-label="Download answer as ZIP" title="Package named code blocks or the full answer as ZIP">${ico("archive", "sm")}</button><button type="button" data-act="speak" aria-label="Read aloud" title="Read aloud">${ico("volume", "sm")}</button>${last ? `<button type="button" data-act="regen" aria-label="Regenerate" title="Regenerate">${ico("refresh", "sm")}</button>` : ""}<button type="button" data-act="up" class="${m.feedback === 1 ? "on" : ""}" aria-label="Good answer" title="Good answer">${ico("thumb-up", "sm")}</button><button type="button" data-act="down" class="${m.feedback === -1 ? "on" : ""}" aria-label="Bad answer" title="Bad answer">${ico("thumb-down", "sm")}</button></div>`;
 }
 function msgEl(m) {
   const el = document.createElement("article"); el.className = "msg " + m.role; m.el = el;
@@ -388,7 +391,15 @@ $("chat-messages").addEventListener("click", async (e) => {
   const idx = S.msgs.findIndex((m) => m.el === btn.closest(".msg")); const m = S.msgs[idx]; if (!m) return; const act = btn.dataset.act;
   if (act === "copy") { toast((await copyText(m.content)) ? "Copied" : "Couldn't copy"); }
   if (act === "download") { const blob=new Blob([m.content||""],{type:"text/markdown;charset=utf-8"}); const url=URL.createObjectURL(blob); const a=document.createElement("a"); a.href=url; a.download="vyra-answer.md"; a.click(); setTimeout(()=>URL.revokeObjectURL(url),1000); }
-  if (act === "zip") { try { const r=await fetch("/api/export-answer-zip",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({content:m.content||"",filename:"vyra-answer.md"})}); if(!r.ok){const d=await r.json().catch(()=>({}));throw new Error(d.error||"ZIP export failed");} const blob=await r.blob(); const url=URL.createObjectURL(blob); const a=document.createElement("a"); a.href=url; a.download="vyra-answer.zip"; a.click(); setTimeout(()=>URL.revokeObjectURL(url),1000); } catch(err){toast(err.message,"error");} }
+  if (act === "zip") { try {
+    const raw=String(m.content||""), blocks=[], codeRx=/```(?:file:)?([A-Za-z0-9_./-]+\.[A-Za-z0-9]{1,10})\s*\n([\s\S]*?)```/g; let match;
+    while((match=codeRx.exec(raw))&&blocks.length<30){const name=match[1];if(name.split("/").includes("..")||name.startsWith("/"))continue;blocks.push({path:name,content:match[2].replace(/\n$/ ,"")});}
+    let response, downloadName;
+    if(blocks.length){response=await fetch("/api/export-files-zip",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json","X-Requested-With":"vyra"},body:JSON.stringify({files:blocks})});downloadName="vyra-code-files.zip";}
+    else{response=await fetch("/api/export-answer-zip",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json","X-Requested-With":"vyra"},body:JSON.stringify({content:raw,filename:"vyra-answer.md"})});downloadName="vyra-answer.zip";}
+    if(!response.ok){const d=await response.json().catch(()=>({}));throw new Error(d.error||"ZIP export failed");}
+    const blob=await response.blob(),url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download=downloadName;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast(blocks.length?"Code files packaged into ZIP.":"Answer packaged into ZIP.");
+  } catch(err){toast(err.message,"error");} }
   if (act === "speak") speak(m.content);
   if (act === "edit") { if (!m.id) return toast("Give it a second, this message is still saving."); S.editFromId = m.id; $("message-input").value = m.content; autosize(); $("message-input").focus(); toast("Editing. Send to replace this message and everything after it."); }
   if (act === "regen") { const u = S.msgs[idx - 1]; if (!u || !u.id) return toast("Give it a second, then try again."); send(u.content, { truncateFromId: u.id }); }
@@ -619,6 +630,13 @@ async function loadLeaderboard() {
 }
 $("lb-weekly").onclick = () => { S.lbMode = "weekly"; loadLeaderboard(); }; $("lb-streak").onclick = () => { S.lbMode = "streak"; loadLeaderboard(); };
 
+/* ---------------------------------------------------------------- Settings tabs */
+function setSettingsTab(name) {
+  document.querySelectorAll("[data-settings-tab]").forEach((b) => b.classList.toggle("on", b.dataset.settingsTab === name));
+  document.querySelectorAll("[data-settings-section]").forEach((section) => section.classList.toggle("hidden", section.dataset.settingsSection !== name));
+}
+document.querySelectorAll("[data-settings-tab]").forEach((button) => button.addEventListener("click", () => setSettingsTab(button.dataset.settingsTab)));
+
 /* ---------------------------------------------------------------- Settings */
 const BADGE_ICONS = { chat: "chat", zap: "zap", flame: "flame", image: "image", share: "share", link: "link" };
 $("open-settings").onclick = async () => {
@@ -627,7 +645,7 @@ $("open-settings").onclick = async () => {
   $("persona-lock").textContent = u.canUsePersona ? "" : "Custom personas come with any paid plan. Upgrade to unlock.";
   $("about-me-text").value = u.aboutMe || ""; $("ai-nickname").value = u.aiNickname || "";
   $("install-btn").parentElement.classList.toggle("hidden", !window.vyraInstall && !/iphone|ipad/i.test(navigator.userAgent));
-  $("delete-account").classList.toggle("hidden", u.isAdmin); openModal("settings-modal");
+  $("delete-account").classList.toggle("hidden", u.isAdmin); setSettingsTab("ai"); openModal("settings-modal");
   const badges = S.badges || [];
   $("badges-list").innerHTML = badges.length ? badges.map((b) => `<span class="badge" title="${esc(b.label)}">${ico(BADGE_ICONS[b.icon] || "check", "sm")}${esc(b.label)}</span>`).join("") : `<p class="muted tiny" style="margin:0">Keep chatting, checking in and sharing to earn badges.</p>`;
   $("sessions-list").innerHTML = "Loading...";
@@ -741,33 +759,25 @@ if (SR) {
 }
 
 async function loadWorkspace() {
-  const renderFailure = (id, label, error) => { const el=$(id); if(el) el.innerHTML=`<div class="empty">${esc(label)} couldn't load. <button class="btn sm" data-workspace-retry="${id}">Retry</button><small>${esc(error?.message||"Please try again.")}</small></div>`; };
-  const loadProjects = async () => { try {
-    const projects=await api("/api/projects");
-    $("project-list").innerHTML=(projects.projects||[]).map(x=>`<div class="board-row"><b>${esc(x.name)}</b><div class="tiny muted">${esc(x.instructions||"No extra instructions")}</div><button class="btn sm" data-project-select="${x.id}">Select</button><button class="btn sm" data-project-edit="${x.id}" data-project-name="${esc(x.name)}" data-project-instructions="${esc(x.instructions||"")}">Edit</button><button class="btn sm danger" data-project-delete="${x.id}">Delete</button></div>`).join("") || `<p class="tiny muted">No projects yet. Create one to keep related chats and files together.</p>`;
-  } catch(e) { renderFailure("project-list","Projects",e); } };
-  const loadMemories = async () => { try {
-    const memories=await api("/api/memory");
-    $("memory-list").innerHTML=(memories.memories||[]).map(x=>`<div class="board-row">${esc(x.memory)} <button class="btn sm" data-memory-edit="${x.id}" data-memory-text="${esc(x.memory)}">Edit</button><button class="btn sm danger" data-memory-delete="${x.id}">Delete</button></div>`).join("") || `<p class="tiny muted">No saved memories yet. Add only details you want VYRA to remember.</p>`;
-  } catch(e) { renderFailure("memory-list","Memory",e); } };
-  const loadSkills = async () => { try { const skills=await api("/api/skills"); $("skill-list").innerHTML=(skills.skills||[]).map(x=>`<div class="board-row"><b>${esc(x.name)}</b> <code>/${esc(x.slash_command)}</code><button class="btn sm danger" data-skill-delete="${x.id}">Delete</button></div>`).join("") || `<p class="tiny muted">No Skills yet. Create reusable instructions to save time.</p>`; } catch(e) { renderFailure("skill-list","Skills",e); } };
-  const loadPrefs = async () => { try {
-    const prefs=await api("/api/preferences");
-    let detectedCountry=prefs.country||""; const localeParts=(navigator.language||"en-US").split("-"); const localeCountry=(localeParts.length>1&&localeParts[1].length===2)?localeParts[1].toUpperCase():""; const tz=(Intl.DateTimeFormat().resolvedOptions().timeZone||"");
-    if(!detectedCountry) detectedCountry=localeCountry||(tz==="Africa/Lagos"?"NG":"");
-    const localCurrency=({NG:"NGN",US:"USD",GB:"GBP",CA:"CAD",GH:"GHS",KE:"KES",ZA:"ZAR",FR:"EUR",DE:"EUR",ES:"EUR",BR:"BRL"})[detectedCountry]||prefs.currency||"USD";
-    const localLanguage=({fr:"French",es:"Spanish",de:"German",pt:"Portuguese",yo:"Yoruba",ha:"Hausa",ig:"Igbo"})[localeParts[0]]||prefs.language||"English";
-    $("pref-country").value=detectedCountry; $("pref-currency").value=prefs.currency||localCurrency; $("pref-language").value=prefs.language||localLanguage;
-  } catch(e) { toast("Preferences couldn't load: "+e.message,"error"); } };
-  // Each section loads independently so one unavailable endpoint never blocks the others.
-  await Promise.all([loadProjects(),loadMemories(),loadSkills(),loadPrefs()]);
+  try {
+    const [projects, memories, skills, prefs] = await Promise.all([
+      api("/api/projects"), api("/api/memory"), api("/api/skills"), api("/api/preferences")
+    ]);
+    $("project-list").innerHTML = (projects.projects||[]).map(x=>`<div class="board-row"><b>${esc(x.name)}</b><div class="tiny muted">${esc(x.instructions||"No extra instructions")}</div><button class="btn sm" data-project-select="${x.id}">Select</button><button class="btn sm danger" data-project-delete="${x.id}">Delete</button></div>`).join("") || `<p class="tiny muted">No projects yet.</p>`;
+    $("memory-list").innerHTML = (memories.memories||[]).map(x=>`<div class="board-row">${esc(x.memory)} <button class="btn sm danger" data-memory-delete="${x.id}">Delete</button></div>`).join("") || `<p class="tiny muted">No saved memories.</p>`;
+    $("skill-list").innerHTML = (skills.skills||[]).map(x=>`<div class="board-row"><b>${esc(x.name)}</b> <code>/${esc(x.slash_command)}</code><button class="btn sm danger" data-skill-delete="${x.id}">Delete</button></div>`).join("") || `<p class="tiny muted">No Skills saved.</p>`;
+    let detectedCountry = prefs.country || "";
+    const localeParts=(navigator.language||"en-US").split("-");
+    const localeCountry=(localeParts.length>1 && localeParts[1].length===2)?localeParts[1].toUpperCase():"";
+    const tz=(Intl.DateTimeFormat().resolvedOptions().timeZone||"");
+    if(!detectedCountry) detectedCountry=localeCountry || (tz==="Africa/Lagos"?"NG":"");
+    const localCurrency=({NG:"NGN",US:"USD",GB:"GBP",CA:"CAD",GH:"GHS",KE:"KES",ZA:"ZAR",FR:"EUR",DE:"EUR",ES:"EUR",BR:"BRL"})[detectedCountry] || prefs.currency || "USD";
+    const localLanguage=({fr:"French",es:"Spanish",de:"German",pt:"Portuguese",yo:"Yoruba",ha:"Hausa",ig:"Igbo"})[localeParts[0]] || prefs.language || "English";
+    $("pref-country").value=detectedCountry;
+    $("pref-currency").value=prefs.currency || localCurrency;
+    $("pref-language").value=prefs.language || localLanguage;
+  } catch(e) { toast(e.message,"error"); }
 }
-$("workspace-page").addEventListener("click",async e=>{
-  const retry=e.target.closest("[data-workspace-retry]"); if(retry){loadWorkspace();return;}
-  const editProject=e.target.closest("[data-project-edit]"); if(editProject){const id=editProject.dataset.projectEdit, name=prompt("Project name",editProject.dataset.projectName||""), instructions=prompt("Project instructions",editProject.dataset.projectInstructions||""); if(name===null||instructions===null)return; try{await api(`/api/projects/${id}`,{method:"PATCH",body:JSON.stringify({name,instructions})});await loadWorkspace();toast("Project updated.");}catch(err){toast(err.message,"error");} return;}
-  const editMemory=e.target.closest("[data-memory-edit]"); if(editMemory){const id=editMemory.dataset.memoryEdit, memory=prompt("Edit saved memory",editMemory.dataset.memoryText||""); if(memory===null)return; try{await api(`/api/memory/${id}`,{method:"PUT",body:JSON.stringify({memory})});await loadWorkspace();toast("Memory updated.");}catch(err){toast(err.message,"error");} }
-});
-
 $("project-create").onclick=async()=>{try{await post("/api/projects",{name:$("project-name").value,instructions:$("project-instructions").value});$("project-name").value="";$("project-instructions").value="";await loadWorkspace();toast("Project created.");}catch(e){toast(e.message,"error");}};
 $("project-list").onclick=async e=>{
   const select=e.target.closest("[data-project-select]"), del=e.target.closest("[data-project-delete]");
@@ -776,6 +786,14 @@ $("project-list").onclick=async e=>{
 };
 $("project-file-add").onclick=async()=>{if(!S.projectId)return toast("Select a project first.");try{await post(`/api/projects/${S.projectId}/files`,{filename:$("project-file-name").value||"project-notes.txt",content:$("project-file-content").value});$("project-file-content").value="";toast("Project file added.");}catch(e){toast(e.message,"error");}};
 $("project-use-chat").onclick=()=>{if(!S.projectId)return toast("Select a project first.");showPage("chat");newChat();toast("Project context will be used in this chat.");};
+$("project-zip-export").onclick=async()=>{
+  if(!S.projectId)return toast("Select a project first.");
+  let files; try{files=JSON.parse($("zip-files-json").value);}catch(e){return toast("Enter valid JSON for the files array.","error");}
+  try{const res=await fetch("/api/export-project-zip",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json","X-Requested-With":"vyra"},body:JSON.stringify({projectId:S.projectId,files})});
+    if(!res.ok){const d=await res.json().catch(()=>({}));throw new Error(d.error||"ZIP export failed");}
+    const blob=await res.blob(),url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download="vyra-project.zip";a.click();setTimeout(()=>URL.revokeObjectURL(url),1500);toast("Project ZIP created.");
+  }catch(e){toast(e.message,"error");}
+};
 $("memory-add").onclick=async()=>{try{await post("/api/memory",{memory:$("memory-input").value});$("memory-input").value="";await loadWorkspace();toast("Memory saved.");}catch(e){toast(e.message,"error");}};
 $("memory-list").onclick=async e=>{const b=e.target.closest("[data-memory-delete]");if(b){try{await api("/api/memory/"+b.dataset.memoryDelete,{method:"DELETE"});await loadWorkspace();}catch(err){toast(err.message,"error");}}};
 $("skill-add").onclick=async()=>{try{const r=await post("/api/skills",{name:$("skill-name").value,command:$("skill-command").value,instruction:$("skill-instruction").value});$("skill-name").value="";$("skill-command").value="";$("skill-instruction").value="";await loadWorkspace();toast("Skill saved. Invoke /"+r.command.replace("/","")+" in chat.");}catch(e){toast(e.message,"error");}};
