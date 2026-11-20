@@ -5,7 +5,7 @@ chat (Deep/Fast), personas, custom persona, Image Studio, plans, daily check-in,
 leaderboard, notifications, email-code verification with admin approval, 2-day trial,
 admin console (users / payments / OTPs / broadcast), payment proof upload.
 """
-import os, re, io, json, uuid, hmac, hashlib, secrets, logging, smtplib, threading, time
+import os, re, io, json, uuid, hmac, hashlib, secrets, logging, smtplib, threading, time, zipfile
 from urllib.parse import quote, urlparse
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -18,7 +18,7 @@ import psycopg2.errors
 import requests
 from psycopg2.extras import RealDictCursor
 from flask import (Flask, render_template, request, jsonify, session, Response,
-                   stream_with_context, send_from_directory, abort, redirect)
+                   stream_with_context, send_from_directory, abort, redirect, send_file)
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
 from openai import OpenAI
@@ -1090,6 +1090,22 @@ def auto_title(conv_id, question, answer):
 def sse(obj): return f"data: {json.dumps(obj)}\n\n"
 
 
+@app.post("/api/export-answer-zip")
+@login_required
+def export_answer_zip():
+    d = body()
+    content = str(d.get("content", ""))
+    if not content or len(content) > 50000:
+        return err("Provide an answer under 50,000 characters to export.", 400)
+    safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", str(d.get("filename", "vyra-answer.md")))[:80] or "vyra-answer.md"
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(safe_name, content)
+        zf.writestr("README.txt", "Exported from VYRA AI.\n")
+    buf.seek(0)
+    return send_file(buf, mimetype="application/zip", as_attachment=True, download_name="vyra-answer.zip")
+
+
 @app.post("/ask/stream")
 @login_required
 @limited("chat", 25, 60, per="user")
@@ -1138,6 +1154,10 @@ def ask_stream():
 
     can_persona = CUSTOM_PERSONA_FREE or u["is_admin"] or trial or plan_key != "free"
     sys_prompt = u["custom_persona"] if (u["custom_persona"] and can_persona) else PERSONAS.get(persona, PERSONAS["assistant"])["instructions"]
+    creator_terms = re.compile(r"\b(who (made|created|built|developed) you|who (is|was) the creator (of )?(vyra|you)|who (is|was) (your|vyra) (creator|developer|founder)|your creator|your developer|who is cold|who created vyra|vyra creator|contact (your|the) creator)\b", re.I)
+    if creator_terms.search(question):
+        sys_prompt += "\nIf the user asks who created/developed VYRA or asks to contact its creator, identify the creator as COLD. Share only these official contact options: Telegram support https://t.me/COLDFX26 and WhatsApp support https://wa.me/2348100481004. Invite them to use the official support channel for reports and enquiries. Do not invent additional contact accounts or personal details."
+
     if LANGUAGES.get(language): sys_prompt += " " + LANGUAGES[language] + " Keep code and technical terms in English."
     if length_pref: sys_prompt += " " + LENGTH_PROMPTS[length_pref]
     if tone_pref: sys_prompt += " " + TONE_PROMPTS[tone_pref]
