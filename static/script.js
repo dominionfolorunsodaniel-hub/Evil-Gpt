@@ -15,6 +15,29 @@ const S = {
   length: store.get("vyra-length") || "normal", tone: store.get("vyra-tone") || "friendly", eli5: store.get("vyra-eli5") === "1",
 };
 
+/* ---------------------------------------------------------------- adaptive device experience */
+(function adaptiveDeviceProfile(){
+  const root=document.documentElement, body=document.body;
+  const ua=navigator.userAgent||"";
+  const width=()=>window.innerWidth||root.clientWidth||0;
+  function profile(){
+    const w=width();
+    const kind=w<600?"phone":w<1024?"tablet":"desktop";
+    const uaType=/iphone|ipod/i.test(ua)?"iphone":/ipad/i.test(ua)?"ipad":/android/i.test(ua)?"android":/windows/i.test(ua)?"windows":/macintosh|mac os/i.test(ua)?"mac":/linux/i.test(ua)?"linux":"other";
+    body.dataset.device=kind; body.dataset.platform=uaType;
+    body.dataset.touch=(navigator.maxTouchPoints>0||matchMedia("(pointer: coarse)").matches)?"yes":"no";
+    root.style.setProperty("--vyra-vh",`${window.innerHeight*0.01}px`);
+    root.style.setProperty("--vyra-width",`${w}px`);
+  }
+  profile(); window.addEventListener("resize",profile,{passive:true}); window.addEventListener("orientationchange",profile,{passive:true});
+  if(matchMedia("(prefers-reduced-motion: reduce)").matches) body.dataset.reduceMotion="yes";
+  // Network status is surfaced unobtrusively and never blocks the chat.
+  let net=document.getElementById("vyra-network-status");
+  if(!net){net=document.createElement("div");net.id="vyra-network-status";net.setAttribute("role","status");net.setAttribute("aria-live","polite");net.className="network-status";document.body.appendChild(net);}
+  function network(){const offline=!navigator.onLine; net.textContent=offline?"You're offline. Chat and online tools will resume when connection returns.":"Back online.";net.classList.toggle("show",offline); if(!offline){net.classList.add("online-flash");setTimeout(()=>net.classList.remove("online-flash"),1800);}}
+  window.addEventListener("offline",network); window.addEventListener("online",network); network();
+})();
+
 /* ---------------------------------------------------------------- helpers */
 async function api(url, opts = {}) {
   const headers = { "X-Requested-With": "vyra", ...(opts.headers || {}) };
@@ -247,9 +270,6 @@ async function loadNotifs() {
 }
 $("notif-btn").onclick = () => { $("notif-panel").classList.toggle("hidden"); loadNotifs().catch(() => {}); };
 $("notif-read").onclick = async () => { await post("/api/notifications/read"); loadNotifs(); };
-// Refresh notifications periodically while the app is visible.
-setInterval(() => { if (!document.hidden && !$("app-view").classList.contains("hidden")) loadNotifs().catch(() => {}); }, 60000);
-document.addEventListener("visibilitychange", () => { if (!document.hidden && !$("app-view").classList.contains("hidden")) loadNotifs().catch(() => {}); });
 $("top-plan").onclick = () => showPage("plans");
 
 /* ---------------------------------------------------------------- check-in */
@@ -415,15 +435,23 @@ async function syncIds() { // after Stop: learn the saved ids so edit/regenerate
 
 /* PDF attach */
 $("attach-btn").onclick = () => $("file-input").click();
-$("file-input").onchange = async (e) => {
-  const f = e.target.files[0]; e.target.value = ""; if (!f) return;
-  if (f.size > 8 * 1024 * 1024) return toast("That PDF is over 8 MB.", "error");
-  const fd = new FormData(); fd.append("file", f); toast("Reading your PDF...");
-  try { const d = await api("/api/extract-text", { method: "POST", body: fd }); S.fileText = d.text; S.fileName = d.filename;
-    $("file-chip").innerHTML = `${ico("paperclip", "sm")}<span>${esc(d.filename)}${d.truncated ? " (first part)" : ""}</span><button type="button" aria-label="Remove file" id="file-x">${ico("x", "sm")}</button>`; $("file-chip").classList.remove("hidden"); $("file-x").onclick = clearFile;
-    if (!$("message-input").value) $("message-input").value = "Summarise this document for me."; autosize();
-  } catch (err) { toast(err.message, "error"); }
-};
+async function processPDFFile(f){
+  if(!f)return;
+  if(!/\.pdf$/i.test(f.name)||f.type&&f.type!=="application/pdf") return toast("Please choose a PDF file.","error");
+  if(f.size>8*1024*1024) return toast("That PDF is over 8 MB.","error");
+  const fd=new FormData();fd.append("file",f);toast("Reading your PDF...");
+  try{const d=await api("/api/extract-text",{method:"POST",body:fd});S.fileText=d.text;S.fileName=d.filename;
+    $("file-chip").innerHTML=`${ico("paperclip","sm")}<span>${esc(d.filename)}${d.truncated?" (first part)":""}</span><button type="button" aria-label="Remove file" id="file-x">${ico("x","sm")}</button>`;
+    $("file-chip").classList.remove("hidden");$("file-x").onclick=clearFile;if(!$ ("message-input").value)$ ("message-input").value="Summarise this document for me.";autosize();
+  }catch(err){toast(err.message,"error");}
+}
+$("file-input").onchange=(e)=>{const f=e.target.files[0];e.target.value="";processPDFFile(f);};
+// Desktop drag-and-drop PDF support. Mobile users retain the native file picker.
+const dropTarget=$("chat-page");let dragDepth=0;
+if(dropTarget){dropTarget.addEventListener("dragenter",e=>{if(!Array.from(e.dataTransfer?.types||[]).includes("Files"))return;e.preventDefault();dragDepth++;dropTarget.classList.add("pdf-drop-active");});
+dropTarget.addEventListener("dragover",e=>{if(Array.from(e.dataTransfer?.types||[]).includes("Files"))e.preventDefault();});
+dropTarget.addEventListener("dragleave",e=>{e.preventDefault();if(--dragDepth<=0){dragDepth=0;dropTarget.classList.remove("pdf-drop-active");}});
+dropTarget.addEventListener("drop",e=>{e.preventDefault();dragDepth=0;dropTarget.classList.remove("pdf-drop-active");const f=e.dataTransfer?.files?.[0];if(f)processPDFFile(f);});}
 function clearFile() { S.fileText = ""; S.fileName = ""; $("file-chip").classList.add("hidden"); $("file-chip").innerHTML = ""; }
 
 /* ---------------------------------------------------------------- history sidebar */
@@ -504,7 +532,7 @@ $("generate-img-btn").onclick = async () => {
   } catch (e) { toast(e.message, "error"); } finally { setBtn(btn, false, ico("zap") + "Generate image"); }
 };
 async function loadGallery() {
-  try { const d = await api("/api/images"); $("gallery").innerHTML = d.images.length ? d.images.map((i) => `<div class="g-item"><img loading="lazy" src="${esc(i.display_url)}" alt="${esc(i.prompt)}"><div class="g-actions"><a href="${esc(i.display_url)}" download target="_blank" rel="noopener" aria-label="Download">${ico("download", "sm")}</a><button type="button" data-del-img="${i.id}" aria-label="Delete">${ico("trash", "sm")}</button></div></div>`).join("") : `<div class="empty" style="grid-column:1/-1">Images you make will be saved here.</div>`; } catch (e) {}
+  try { const d = await api("/api/images"); $("gallery").innerHTML = d.images.length ? d.images.map((i) => `<div class="g-item"><img loading="lazy" src="${esc(i.url)}" alt="${esc(i.prompt)}"><div class="g-actions"><a href="${esc(i.url)}" download target="_blank" rel="noopener" aria-label="Download">${ico("download", "sm")}</a><button type="button" data-del-img="${i.id}" aria-label="Delete">${ico("trash", "sm")}</button></div></div>`).join("") : `<div class="empty" style="grid-column:1/-1">Images you make will be saved here.</div>`; } catch (e) {}
 }
 $("gallery").onclick = async (e) => { const b = e.target.closest("[data-del-img]"); if (!b) return; try { await post(`/api/images/${b.dataset.delImg}/delete`); loadGallery(); } catch (err) { toast(err.message, "error"); } };
 
@@ -525,9 +553,7 @@ function renderPlans() {
     business_elite: {name:"Business Elite",price:50000,monthly_messages:10000,daily_images:1000},
     infinity: {name:"Infinity",price:100000,monthly_messages:20000,daily_images:2500}
   };
-  const catalog = Object.entries(fallbackPlans).map(([key, fallback]) => [key, { ...fallback, ...(plans[key] && typeof plans[key] === "object" ? plans[key] : {}) }]);
-  // Merge server plan values with defaults so missing plan entries cannot break checkout.
-  S.plans = Object.fromEntries(catalog);
+  const catalog = entries.length ? entries : Object.entries(fallbackPlans);
   const cur = u.trial ? "free" : (u.plan || "free");
   grid.innerHTML = catalog.map(([k, p]) => {
     const messages = Number(p.monthly_messages || 0), images = Number(p.daily_images || 0), price = Number(p.price || 0);
@@ -538,14 +564,6 @@ function renderPlans() {
   }).join("");
 }
 $("plans-grid").onclick = (e) => { const b = e.target.closest("[data-plan]"); if (b) openCheckout(b.dataset.plan); };
-$("reward-request-send").onclick = async () => {
-  const btn = $("reward-request-send"), msg = $("reward-request-message").value.trim(), note = $("reward-request-note");
-  if (msg.length < 8) return toast("Please explain your request in at least 8 characters.");
-  setBtn(btn, true);
-  try { const d = await post("/api/reward-request", { message: msg }); note.textContent = d.message; note.className = "notice success"; $("reward-request-message").value = ""; toast(d.message); }
-  catch (err) { note.textContent = err.message; note.className = "notice error"; }
-  finally { setBtn(btn, false); }
-};
 function openCheckout(plan) {
   const p = S.plans[plan];
   $("pay-card").innerHTML = `<div class="modal-head"><h2 id="pay-title">${esc(p.name)} plan</h2><button class="icon-btn" data-close aria-label="Close">${ico("x")}</button></div>
@@ -615,7 +633,7 @@ $("delete-account").onclick = () => {
 };
 
 /* ---------------------------------------------------------------- Admin */
-const ADMIN_TABS = [["overview", "Overview"], ["tools", "Admin tools"], ["users", "Users"], ["payments", "Payments"], ["codes", "Codes"], ["broadcast", "Broadcast"], ["rewards", "Rewards"], ["gifts", "Gifts & reward requests"], ["logs", "Logs & backup"]];
+const ADMIN_TABS = [["overview", "Overview"], ["tools", "Admin tools"], ["users", "Users"], ["payments", "Payments"], ["codes", "Codes"], ["broadcast", "Broadcast"], ["rewards", "Rewards"], ["logs", "Logs & backup"]];
 function bars(data, money_) {
   const w = 300, h = 120, n = data.length, max = Math.max(1, ...data.map((d) => Number(d.n))), bw = w / n;
   return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="img" aria-label="Bar chart">${data.map((d, i) => { const v = Number(d.n), bh = v ? Math.max(3, (v / max) * (h - 6)) : 1; return `<rect x="${(i * bw + 1).toFixed(1)}" y="${(h - bh).toFixed(1)}" width="${(bw - 2).toFixed(1)}" height="${bh.toFixed(1)}"><title>${esc(d.day)}: ${money_ ? money(v) : v}</title></rect>`; }).join("")}</svg><div class="axis"><span>${esc(data[0].day.slice(5))}</span><span>peak ${money_ ? money(max) : max}</span><span>${esc(data[n - 1].day.slice(5))}</span></div>`;
@@ -632,7 +650,6 @@ async function renderAdmin(tab) {
         ["Signup & recovery codes", "codes", "Review and approve verification or password-reset requests."],
         ["Announcements", "broadcast", "Send a platform notice to registered users."],
         ["Rewards", "rewards", "Configure weekly prize notes and award weekly activity prizes."],
-        ["Gifts & reward requests", "gifts", "Gift paid plans, review reward requests, and grant complimentary access."],
         ["Security, logs & backup", "logs", "Review failed sign-ins and audit events; download a user/payment backup."],
         ["Analytics overview", "overview", "View signups, usage, revenue, active users and plan distribution."]
       ];
@@ -659,11 +676,6 @@ async function renderAdmin(tab) {
     }
     if (tab === "broadcast") body.innerHTML = `<div class="card"><h3>Message every user</h3><textarea class="input" id="bc-msg" rows="3" maxlength="1000" placeholder="Write a short update"></textarea><button class="btn primary" id="bc-send" style="margin-top:10px">Send to all users</button></div>`;
     if (tab === "rewards") body.innerHTML = `<div class="card"><h3>Weekly prize note</h3><p class="muted tiny" style="margin:4px 0 0">Shown above the weekly leaderboard.</p><input class="input" id="prize-text" maxlength="140" placeholder="Top 3 this week win bonus messages"><button class="btn" id="prize-save" style="margin-top:10px">Save note</button></div><div class="card" style="margin-top:14px"><h3>Award last week's winners</h3><p class="muted tiny" style="margin:4px 0 10px">Gives the top 3 chatters +100, +50 and +25 bonus messages. Works once per week.</p><button class="btn primary" id="award-go">Award last week's top 3</button></div>`;
-    if (tab === "gifts") {
-      const d = await api("/api/admin/reward-requests");
-      const opts = Object.entries(S.plans).filter(([k]) => k !== "free").map(([k,p]) => `<option value="${esc(k)}">${esc(p.name)}</option>`).join("");
-      body.innerHTML = `<div class="card"><h3>Gift a plan</h3><p class="muted tiny" style="margin:4px 0 12px">Give a customer complimentary plan access. Gifts are logged and the recipient receives a notification.</p><label class="field">Username or email<input class="input" id="gift-user" maxlength="254" placeholder="customer username or email"></label><label class="field">Plan<select class="input" id="gift-plan">${opts}</select></label><label class="field">Duration (days)<input class="input" type="number" id="gift-days" min="1" max="365" value="30"></label><label class="field">Reason (optional)<input class="input" id="gift-reason" maxlength="300" placeholder="Welcome gift, contest prize, etc."></label><button class="btn primary" id="gift-send">Send plan gift</button><p id="gift-note" class="notice hidden"></p></div><div class="card" style="margin-top:14px"><h3>Customer reward requests</h3>${d.requests.length ? d.requests.map(r => `<div class="reward-admin-row"><div class="grow"><b>${esc(r.username)} · ${esc(r.email)}</b><small>${fmtDate(r.created_at)} · ${esc(r.message)}</small><span class="status ${esc(r.status)}">${esc(r.status)}</span></div>${r.status === "pending" ? `<div class="reward-admin-controls"><select class="input" data-reward-plan="${r.id}">${opts}</select><input class="input" type="number" data-reward-days="${r.id}" min="1" max="365" value="30" aria-label="Reward duration days"><button class="btn sm primary" data-review-reward="approve" data-id="${r.id}">Approve &amp; gift</button><button class="btn sm danger" data-review-reward="reject" data-id="${r.id}">Reject</button></div>` : `<small>Reviewed${r.admin_note ? `: ${esc(r.admin_note)}` : ""}</small>`}</div>`).join("") : `<div class="empty">No reward requests yet.</div>`}</div>`;
-    }
     if (tab === "logs") {
       const d = await api("/api/admin/audit");
       body.innerHTML = `<div class="card"><h3>Backup</h3><p class="muted tiny" style="margin:4px 0 10px">Downloads users and payments as a file. Keep it somewhere private.</p><a class="btn" href="/api/admin/export" download>${ico("download")}Download backup</a></div><div class="card" style="margin-top:14px"><h3>Failed sign-ins</h3>${d.failedLogins.length ? d.failedLogins.map((f) => `<div class="row"><div class="grow"><b>${esc(f.username || "(blank)")}</b><small>${esc(f.ip)} · ${new Date(f.created_at).toLocaleString("en-NG")}</small></div></div>`).join("") : `<div class="empty">None. Nice.</div>`}</div><div class="card" style="margin-top:14px"><h3>Admin actions</h3>${d.audit.length ? d.audit.map((a) => `<div class="row"><div class="grow"><b>${esc(a.action)}</b><small>${esc(a.actor || "")} · ${esc(a.detail || "")} · ${new Date(a.created_at).toLocaleString("en-NG")}</small></div></div>`).join("") : `<div class="empty">Nothing yet.</div>`}</div>`;
@@ -678,14 +690,6 @@ $("admin-page").addEventListener("click", async (e) => {
     const pay = e.target.closest("[data-pay]"); if (pay) { await post(`/api/admin/payment-requests/${pay.dataset.id}/${pay.dataset.pay}`); toast(pay.dataset.pay === "approve" ? "Approved. The plan is active." : "Rejected"); return renderAdmin("payments"); }
     const pr = e.target.closest("[data-proof]"); if (pr) { $("generic-card").innerHTML = `<div class="modal-head"><h2>Payment proof</h2><button class="icon-btn" data-close aria-label="Close">${ico("x")}</button></div><img class="proof-img" alt="Payment screenshot" src="/api/admin/payment-proof/${pr.dataset.proof}">`; return openModal("generic-modal"); }
     const otp = e.target.closest("[data-otp]"); if (otp) { const d = await post(`/api/admin/approve-otp/${otp.dataset.otp}`); toast(d.message); return renderAdmin("codes"); }
-    if (e.target.closest("#gift-send")) {
-      const b = e.target.closest("#gift-send"), note = $("gift-note"); setBtn(b,true);
-      try { const d = await post("/api/admin/gift-plan", { user: $("gift-user").value.trim(), plan: $("gift-plan").value, days: Number($("gift-days").value), reason: $("gift-reason").value.trim() }); note.textContent = d.message; note.className = "notice success"; toast(d.message); }
-      catch (err) { note.textContent = err.message; note.className = "notice error"; }
-      finally { setBtn(b,false); }
-    }
-    const reward = e.target.closest("[data-review-reward]");
-    if (reward) { const id = reward.dataset.id, action = reward.dataset.reviewReward, plan = document.querySelector(`[data-reward-plan="${id}"]`)?.value || "pro", days = Number(document.querySelector(`[data-reward-days="${id}"]`)?.value || 30); await post(`/api/admin/reward-requests/${id}/${action}`, { plan, days }); toast(action === "approve" ? "Reward approved and plan gifted." : "Reward request rejected."); return renderAdmin("gifts"); }
     if (e.target.closest("#bc-send")) { const d = await post("/api/admin/broadcast", { message: $("bc-msg").value }); toast(`Sent to ${d.sent} users`); $("bc-msg").value = ""; }
     if (e.target.closest("#prize-save")) { await post("/api/admin/weekly-prize", { prize: $("prize-text").value }); toast("Saved"); }
     if (e.target.closest("#award-go")) { const d = await post("/api/admin/award-weekly"); toast(d.message); }
