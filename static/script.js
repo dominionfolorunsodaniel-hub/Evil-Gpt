@@ -231,10 +231,10 @@ async function loadDailyPrompt() {
 }
 
 /* ---------------------------------------------------------------- navigation */
-const TITLES = { chat: "", images: "Image Studio", plans: "Plans", admin: "Admin" };
+const TITLES = { chat: "", toolbox: "AI Toolbox", images: "Image Studio", plans: "Plans", admin: "Admin" };
 function showPage(name) {
   S.page = name;
-  ["chat", "images", "plans", "admin"].forEach((p) => $(p + "-page").classList.toggle("hidden", p !== name));
+  ["chat", "toolbox", "images", "plans", "admin"].forEach((p) => $(p + "-page").classList.toggle("hidden", p !== name));
   document.querySelectorAll(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.page === name));
   $("page-heading").textContent = TITLES[name] || document.querySelector(".brand").textContent.trim();
   closeSidebar(); $("notif-panel").classList.add("hidden");
@@ -431,6 +431,28 @@ async function send(text, opts = {}) {
 $("chat-messages").addEventListener("click", (e) => { if (e.target.closest("[data-retry]")) { const t = S.lastFailed; S.msgs = S.msgs.filter((m) => !(m.el && m.el.dataset.failed)); renderMessages(); if (t) send(t); } });
 async function syncIds() { // after Stop: learn the saved ids so edit/regenerate/feedback work
   try { const d = await api("/api/conversations/" + S.conv); S.msgs = d.messages.map((m) => ({ id: m.id, role: m.role, content: m.content, feedback: m.feedback })); renderMessages(); } catch (e) {}
+}
+
+/* ---------------------------------------------------------------- AI Toolbox prompt workflows */
+const TOOL_PROMPTS = {
+  study: "Act as a patient learning tutor. Teach the topic in clear steps, check understanding, give a short example, then offer a few practice questions without overwhelming me.\n\nTopic/task:\n",
+  research: "Create a structured research brief. Separate established facts from claims or opinions, identify questions that need verification, compare major viewpoints, and suggest credible source types. Do not invent citations or claim you browsed.\n\nResearch topic:\n",
+  writing: "Help me in the Writing Studio. First infer the purpose and audience; produce a useful draft, then briefly explain key choices and offer a revision direction. Preserve any facts I provide.\n\nWriting task and details:\n",
+  coding: "Act as a coding mentor. Analyze the code or issue, explain the likely cause, propose a minimal safe fix, and include a corrected snippet plus how to test it. Do not assume files or run tests you cannot access.\n\nCode/task/error:\n",
+  planning: "Turn this into a practical plan. Break it into milestones, small steps, priorities, time estimates, dependencies, and a checklist. Keep it realistic and point out assumptions.\n\nGoal and constraints:\n",
+  data: "Act as a data analyst. Inspect the supplied data, state assumptions, calculate summaries where possible, highlight patterns and anomalies, and explain the findings in plain language. Do not fabricate values or imply you processed a file that was not provided.\n\nData/question:\n",
+  creative: "Act as a creative collaborator. Generate varied original concepts, make each option distinct, and include a short rationale and next-step suggestion.\n\nCreative brief:\n",
+  decision: "Help compare these options objectively. Build a comparison using the criteria I mention, identify trade-offs, list uncertainties, and provide a conditional recommendation rather than pretending there is one universally correct choice.\n\nOptions and criteria:\n"
+};
+function setToolboxActive(tool){
+  $("toolbox-select").value=tool;
+  document.querySelectorAll(".toolbox-card").forEach(c=>c.classList.toggle("active",c.dataset.tool===tool));
+}
+if($("toolbox-grid")){
+  $("toolbox-grid").addEventListener("click",e=>{const c=e.target.closest("[data-tool]");if(c)setToolboxActive(c.dataset.tool);});
+  $("toolbox-select").addEventListener("change",e=>setToolboxActive(e.target.value));
+  $("toolbox-clear").onclick=()=>{$("toolbox-input").value="";$ ("toolbox-input").focus();};
+  $("toolbox-run").onclick=()=>{const task=$("toolbox-input").value.trim();if(!task)return toast("Describe your task first.");const prompt=(TOOL_PROMPTS[$("toolbox-select").value]||TOOL_PROMPTS.study)+task;newChat();showPage("chat");send(prompt);};
 }
 
 /* PDF attach */
