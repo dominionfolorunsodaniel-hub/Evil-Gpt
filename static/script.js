@@ -191,14 +191,14 @@ function setGreeting() {
   $("welcome").querySelector(".sub").textContent = "What are we creating today?";
 }
 const TOP = ["business", "enterprise"];
-function planLabel() { const u = S.user; return u.trial ? "Free trial" : (S.plans[u.plan]?.name || "Free"); }
+function planLabel() { const u = S.user; if (u.isAdmin) return "Infinity"; return u.trial ? "Free trial" : (S.plans[u.plan]?.name || "Free"); }
 async function refreshMe() {
   const d = await api("/api/me"); S.user = d.user; S.usage = d.usage; S.images = d.images; S.plans = d.plans; S.paystack = d.paystack; S.badges = d.badges;
   const u = S.user, us = S.usage;
   $("news-dot").classList.toggle("hidden", !u.hasNewsUpdate);
   $("side-username").textContent = u.username; $("avatar").textContent = u.username[0].toUpperCase();
   $("side-plan").textContent = planLabel() + (u.trial ? " · full access" : " plan");
-  const crown = TOP.includes(u.plan) && !u.trial ? ico("crown", "sm") : "";
+  const crown = (u.isAdmin || TOP.includes(u.plan)) && !u.trial ? ico("crown", "sm") : "";
   $("top-plan").innerHTML = crown + esc(planLabel()); $("top-plan").className = "pill " + (crown || u.trial ? "gold" : "brand");
   $("admin-nav").classList.toggle("hidden", !u.isAdmin);
   const frac = us.trial ? 1 : Math.max(0, Math.min(1, us.remaining / Math.max(1, us.limit)));
@@ -572,6 +572,7 @@ const BILLING_FACTORS = { weekly: 0.35, monthly: 1, annual: 10 };
 const BILLING_LABELS = { weekly: "7 days", monthly: "30 days", annual: "365 days" };
 function renderPlans() {
   const grid=$("plans-grid"), u=S.user||{}, plans=S.plans||{};
+  if (u.isAdmin) { grid.innerHTML = `<div class="card current" style="grid-column:1/-1"><h3>${ico("crown","sm")} Infinity Admin Access</h3><p class="muted">Your administrator account has unlimited platform access and does not require a customer subscription.</p><p>Admin entitlements are separate from Enterprise customer plans.</p></div>`; return; }
   const entries=Object.entries(plans).filter(([k,p])=>p&&p.name&&["free","starter","plus","pro","business","enterprise"].includes(k));
   const fallback={
     free:{name:"Free",price:0,price_usd:0,monthly_messages:20,daily_images:3},
