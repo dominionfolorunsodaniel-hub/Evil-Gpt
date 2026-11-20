@@ -87,6 +87,7 @@
     <nav class="nav" aria-label="Main">
       <button class="nav-item active" data-page="chat"><svg class="ico"><use href="#i-chat"/></svg>Chat</button>
       <button class="nav-item" data-page="toolbox"><svg class="ico"><use href="#i-cpu"/></svg>AI Toolbox</button>
+      <button class="nav-item" data-page="workspace"><svg class="ico"><use href="#i-folder"/></svg>Projects & Memory</button>
       <button class="nav-item" data-page="images"><svg class="ico"><use href="#i-image"/></svg>Image Studio</button>
       <button class="nav-item" data-page="plans"><svg class="ico"><use href="#i-star"/></svg>Plans</button>
       <button class="nav-item hidden" id="admin-nav" data-page="admin"><svg class="ico"><use href="#i-shield"/></svg>Admin</button>
@@ -145,7 +146,7 @@
               <button type="button" id="mode-deep" class="on" aria-pressed="true"><svg class="ico sm"><use href="#i-cpu"/></svg>Deep</button>
             </div>
             <select id="persona-select" class="select" aria-label="Persona"></select>
-            <select id="lang-select" class="select" aria-label="Reply language"><option>English</option><option>Nigerian Pidgin</option><option>Yoruba</option><option>Hausa</option><option>Igbo</option></select>
+            <select id="lang-select" class="select" aria-label="Reply language"><option>English</option><option>Nigerian Pidgin</option><option>Yoruba</option><option>Hausa</option><option>Igbo</option><option>French</option><option>Spanish</option><option>German</option><option>Portuguese</option></select>
             <label class="creativity" title="Lower is precise, higher is more creative">Creativity<input type="range" id="temp-slider" min="0" max="1" step="0.1" value="0.7" aria-label="Creativity"></label>
             <button type="button" id="tune-btn" class="chip" title="Response length, tone and Explain Simply"><svg class="ico sm"><use href="#i-settings"/></svg>Tune reply</button>
             <span id="file-chip" class="file-chip hidden"></span>
@@ -183,6 +184,60 @@
       </div>
     </section>
 
+    <!-- PROJECTS, MEMORY, SKILLS AND RESEARCH -->
+    <section id="workspace-page" class="page hidden">
+      <div class="page-wrap">
+        <div class="page-head"><h2>Projects & Memory</h2><p>Keep related chats, project instructions, saved memories and reusable Skills organized.</p></div>
+        <div class="split">
+          <div class="card">
+            <h3>Projects</h3>
+            <label class="field">Project name<input class="input" id="project-name" maxlength="100" placeholder="e.g. My business plan"></label>
+            <label class="field">Project instructions<textarea class="input" id="project-instructions" rows="3" placeholder="Instructions VYRA should follow in this project"></textarea></label>
+            <button class="btn primary" id="project-create">Create project</button>
+            <div id="project-list" style="margin-top:14px"></div>
+            <div id="project-file-tools" class="hidden" style="margin-top:12px">
+              <p class="tiny muted">Selected project files are included as context in chats started with this project.</p>
+              <input class="input" id="project-file-name" placeholder="File name">
+              <textarea class="input" id="project-file-content" rows="3" placeholder="Paste text from a project document"></textarea>
+              <button class="btn sm" id="project-file-add">Add project file</button>
+              <button class="btn sm primary" id="project-use-chat">Use this project in Chat</button>
+            </div>
+          </div>
+          <div class="card">
+            <h3>Saved Memory</h3><p class="tiny muted">Only save details you choose. You can review or delete them.</p>
+            <textarea class="input" id="memory-input" rows="3" placeholder="A preference or fact you want VYRA to remember"></textarea>
+            <button class="btn primary" id="memory-add">Save memory</button><div id="memory-list" style="margin-top:12px"></div>
+          </div>
+        </div>
+        <div class="split" style="margin-top:14px">
+          <div class="card">
+            <h3>Saved Skills</h3><p class="tiny muted">Create reusable instructions and invoke them in chat with /command.</p>
+            <input class="input" id="skill-name" placeholder="Skill name">
+            <input class="input" id="skill-command" placeholder="Slash command, e.g. exam-coach">
+            <textarea class="input" id="skill-instruction" rows="3" placeholder="What should this Skill do?"></textarea>
+            <button class="btn primary" id="skill-add">Save Skill</button><div id="skill-list" style="margin-top:12px"></div>
+          </div>
+          <div class="card">
+            <h3>Web Research & Agent</h3><p class="tiny muted">Search the live web or run a small multi-topic research task. Requires TAVILY_API_KEY on the server.</p>
+            <textarea class="input" id="web-query" rows="2" placeholder="What should VYRA research?"></textarea>
+            <button class="btn primary" id="web-search">Search web</button>
+            <textarea class="input" id="agent-topics" rows="2" placeholder="Enter up to 3 topics, one per line"></textarea>
+            <button class="btn" id="agent-run">Research multiple topics</button>
+            <div id="research-results" style="margin-top:12px"></div>
+          </div>
+        </div>
+        <div class="card" style="margin-top:14px">
+          <h3>Regional preferences</h3><p class="tiny muted">VYRA can suggest your region from server/browser locale. You remain in control.</p>
+          <div class="split">
+            <label class="field">Country code<input class="input" id="pref-country" maxlength="2" placeholder="NG"></label>
+            <label class="field">Currency<select class="input" id="pref-currency"><option>NGN</option><option>USD</option><option>GBP</option><option>EUR</option><option>CAD</option><option>GHS</option><option>KES</option><option>ZAR</option><option>BRL</option></select></label>
+            <label class="field">Language<select class="input" id="pref-language"><option>English</option><option>Nigerian Pidgin</option><option>Yoruba</option><option>Hausa</option><option>Igbo</option><option>French</option><option>Spanish</option><option>German</option><option>Portuguese</option></select></label>
+          </div>
+          <button class="btn primary" id="pref-save">Save preferences</button>
+        </div>
+      </div>
+    </section>
+
     <!-- IMAGE STUDIO -->
     <section id="images-page" class="page hidden">
       <div class="page-wrap">
@@ -203,7 +258,12 @@
     <!-- PLANS -->
     <section id="plans-page" class="page hidden">
       <div class="page-wrap">
-        <div class="page-head"><h2>Plans</h2><p>Pay in naira by card or bank transfer. Every plan lasts 30 days.</p></div>
+        <div class="page-head"><h2>Plans</h2><p>Choose Free or a paid plan. New accounts receive a one-time 3-day Trial with premium feature access.</p></div>
+        <div class="card" style="margin-bottom:14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+          <label for="billing-period" class="muted">Billing period</label>
+          <select id="billing-period" class="input" style="max-width:220px"><option value="weekly">Weekly · 7 days</option><option value="monthly" selected>Monthly · 30 days</option><option value="annual">Annual · 365 days (2 months free)</option></select>
+          <span class="tiny muted">Prices shown in NGN and USD. Card checkout currently processes NGN through Paystack.</span>
+        </div>
         <div class="card usage-card"><span class="muted">Messages used this month</span><strong id="usage-number">...</strong><div class="meter" id="usage-meter"><span></span></div><span class="tiny muted" id="usage-sub"></span></div>
         <div id="plans-grid" class="plans-grid"></div>
         <div class="split">
