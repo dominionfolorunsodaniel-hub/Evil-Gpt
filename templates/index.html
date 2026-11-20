@@ -11,8 +11,8 @@
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Figtree:wght@400;500;600;700&display=swap">
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='20261120-settings-zip') }}">
-  <script src="{{ url_for('static', filename='theme.js', v='20261120-settings-zip') }}"></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script src="{{ url_for('static', filename='theme.js') }}"></script>
 </head>
 <body data-ref="{{ ref }}" data-paystack="{{ 1 if paystack else 0 }}">
 {% include "_icons.html" %}
@@ -139,8 +139,16 @@
       <div id="nudge" class="nudge hidden"><span id="nudge-text"></span><button class="btn sm primary" data-go="plans">See plans</button><button class="btn sm" id="nudge-checkin">Check in</button></div>
       <div class="composer-wrap">
         <div class="composer-col">
-          <div class="tools composer-tools">
-            <button type="button" id="chat-settings" class="chip chat-settings-chip"><svg class="ico sm"><use href="#i-settings"/></svg><span id="chat-mode-label">Deep</span><span class="settings-hint">Chat settings</span></button>
+          <div class="tools">
+            <div class="seg" role="group" aria-label="Thinking mode">
+              <button type="button" id="mode-fast" aria-pressed="false"><svg class="ico sm"><use href="#i-zap"/></svg>Fast</button>
+              <button type="button" id="mode-balanced" aria-pressed="false"><svg class="ico sm"><use href="#i-star"/></svg>Balanced</button>
+              <button type="button" id="mode-deep" class="on" aria-pressed="true"><svg class="ico sm"><use href="#i-cpu"/></svg>Deep</button>
+            </div>
+            <select id="persona-select" class="select" aria-label="Persona"></select>
+            <select id="lang-select" class="select" aria-label="Reply language"><option>English</option><option>Nigerian Pidgin</option><option>Yoruba</option><option>Hausa</option><option>Igbo</option><option>French</option><option>Spanish</option><option>German</option><option>Portuguese</option></select>
+            <label class="creativity" title="Lower is precise, higher is more creative">Creativity<input type="range" id="temp-slider" min="0" max="1" step="0.1" value="0.7" aria-label="Creativity"></label>
+            <button type="button" id="tune-btn" class="chip" title="Response length, tone and Explain Simply"><svg class="ico sm"><use href="#i-settings"/></svg>Tune reply</button>
             <span id="file-chip" class="file-chip hidden"></span>
           </div>
           <form id="chat-form" class="composer">
@@ -193,7 +201,6 @@
               <textarea class="input" id="project-file-content" rows="3" placeholder="Paste text from a project document"></textarea>
               <button class="btn sm" id="project-file-add">Add project file</button>
               <button class="btn sm primary" id="project-use-chat">Use this project in Chat</button>
-              <div class="zip-export-tools"><label class="field">Export files as ZIP <span class="tiny muted">Paste JSON array of files</span><textarea class="input" id="zip-files-json" rows="5" placeholder='[{"path":"index.html","content":"..."},{"path":"style.css","content":"..."}]'></textarea></label><button class="btn sm" id="project-zip-export"><svg class="ico sm"><use href="#i-download"/></svg>Build ZIP download</button></div>
             </div>
           </div>
           <div class="card">
@@ -284,32 +291,19 @@
 <div id="settings-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title">
   <div class="modal-card wide">
     <div class="modal-head"><h2 id="settings-title">Settings</h2><button class="icon-btn" data-close aria-label="Close"><svg class="ico"><use href="#i-x"/></svg></button></div>
-    <div class="kv"><div><span>Username</span><b id="set-username"></b></div><div><span>Email</span><b id="set-email"></b></div><div><span>Plan</span><b id="set-plan"></b></div></div>
-    <nav class="settings-categories" aria-label="Settings categories"><button class="on" data-settings-tab="ai">AI & Chat</button><button data-settings-tab="personal">Personalization</button><button data-settings-tab="tools">Tools & Workspace</button><button data-settings-tab="data">Data & Security</button></nav>
-    <div class="settings-section" data-settings-section="ai">
-      <div class="setting"><h3>Thinking mode</h3><div class="seg settings-mode" role="group" aria-label="Thinking mode"><button type="button" id="mode-fast" aria-pressed="false"><svg class="ico sm"><use href="#i-zap"/></svg>Fast</button><button type="button" id="mode-balanced" aria-pressed="false"><svg class="ico sm"><use href="#i-star"/></svg>Balanced</button><button type="button" id="mode-deep" class="on" aria-pressed="true"><svg class="ico sm"><use href="#i-cpu"/></svg>Deep</button></div></div>
-      <div class="setting"><h3>AI role and language</h3><div class="split"><label class="field">Assistant persona<select id="persona-select" class="select"></select></label><label class="field">Reply language<select id="lang-select" class="select"><option>English</option><option>Nigerian Pidgin</option><option>Yoruba</option><option>Hausa</option><option>Igbo</option><option>French</option><option>Spanish</option><option>German</option><option>Portuguese</option></select></label></div></div>
-      <div class="setting"><h3>Creativity</h3><p class="tiny muted">Lower values favor precise responses; higher values encourage creative variation.</p><label class="creativity settings-creativity">Creativity<input type="range" id="temp-slider" min="0" max="1" step="0.1" value="0.7" aria-label="Creativity"></label></div>
-      <div class="setting"><h3>Response preferences</h3><button type="button" id="tune-btn" class="chip"><svg class="ico sm"><use href="#i-settings"/></svg>Tune response length, tone and simplicity</button></div>
-    </div>
-    <div class="settings-section hidden" data-settings-section="personal">
-      <div class="setting"><h3>Custom persona</h3><p class="muted tiny" style="margin:0">Tell the AI how to behave, for example: "Explain things like a patient teacher and use Nigerian examples." Leave blank to use the persona you pick in chat.</p>
+    <div class="kv"><div><span>Username</span><b id="set-username"></b></div><div><span>Email</span><b id="set-email"></b></div><div><span>Plan</span><b id="set-plan"></b></div><div><span>VYRA ID</span><b id="set-vyra-id">Loading…</b></div></div><button class="btn sm" id="copy-vyra-id" style="margin-top:8px">Copy VYRA ID</button><button class="btn sm" id="restart-tour" style="margin-top:8px">Restart guided tour</button>
+    <div class="setting"><h3>Custom persona</h3><p class="muted tiny" style="margin:0">Tell the AI how to behave, for example: "Explain things like a patient teacher and use Nigerian examples." Leave blank to use the persona you pick in chat.</p>
       <textarea id="persona-text" class="input" rows="3" maxlength="2000"></textarea>
       <p class="tiny" id="persona-lock" style="color:var(--mango);margin:6px 0 0"></p>
       <button class="btn sm primary" id="save-persona" style="margin-top:8px">Save persona</button></div>
-      <div class="setting"><h3>About you</h3><p class="muted tiny" style="margin:0">A few facts the AI can remember and use when relevant, like your work or what you're usually asking about.</p>
+    <div class="setting"><h3>About you</h3><p class="muted tiny" style="margin:0">A few facts the AI can remember and use when relevant, like your work or what you're usually asking about.</p>
       <textarea id="about-me-text" class="input" rows="2" maxlength="800" placeholder="I run a small shop in Lagos and I'm learning to code."></textarea>
       <label class="field" style="margin:8px 0 0">Nickname for {{ brand }}<input class="input" id="ai-nickname" maxlength="40" placeholder="Give the AI a nickname (optional)"></label>
       <button class="btn sm primary" id="save-about" style="margin-top:8px">Save</button></div>
-    </div>
-    <div class="settings-section hidden" data-settings-section="tools">
     <div class="setting"><h3>Badges</h3><div id="badges-list" class="badges"></div></div>
     <div class="setting"><h3>Install the app</h3><p class="muted tiny" style="margin:0 0 8px">Add {{ brand }} to your home screen for a full-screen app.</p><button class="btn sm" id="install-btn">Install {{ brand }}</button></div>
-    </div>
-    <div class="settings-section hidden" data-settings-section="data">
     <div class="setting"><h3>Sign-ins and devices</h3><div id="sessions-list" class="tiny muted" style="margin:0 0 8px"></div><button class="btn sm" id="logout-others">Log out of all other devices</button></div>
     <div class="setting"><h3>Your data</h3><div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn sm" href="/api/user/export" download><svg class="ico sm"><use href="#i-download"/></svg>Download my data</a><a class="btn sm" href="/api/conversations/export-all" download><svg class="ico sm"><use href="#i-download"/></svg>Export all chats</a><button class="btn sm danger" id="delete-account">Delete my account</button></div></div>
-    </div>
     <div class="setting"><button class="btn block" id="logout"><svg class="ico"><use href="#i-logout"/></svg>Sign out</button></div>
   </div>
 </div>
@@ -319,7 +313,7 @@
 <!-- GENERIC (admin proof, confirms) -->
 <div id="generic-modal" class="modal hidden" role="dialog" aria-modal="true"><div class="modal-card wide" id="generic-card"></div></div>
 
-<script src="{{ url_for('static', filename='pwa.js', v='20261120-settings-zip') }}"></script>
-<script src="{{ url_for('static', filename='script.js', v='20261120-settings-zip') }}"></script>
+<script src="{{ url_for('static', filename='pwa.js') }}"></script>
+<script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
 </html>
