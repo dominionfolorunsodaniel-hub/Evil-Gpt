@@ -191,14 +191,14 @@ function setGreeting() {
   $("welcome").querySelector(".sub").textContent = "What are we creating today?";
 }
 const TOP = ["business", "enterprise"];
-function planLabel() { const u = S.user; if (u.isAdmin) return "Infinity"; return u.trial ? "Free trial" : (S.plans[u.plan]?.name || "Free"); }
+function planLabel() { const u = S.user; return u.trial ? "Free trial" : (S.plans[u.plan]?.name || "Free"); }
 async function refreshMe() {
   const d = await api("/api/me"); S.user = d.user; S.usage = d.usage; S.images = d.images; S.plans = d.plans; S.paystack = d.paystack; S.badges = d.badges;
   const u = S.user, us = S.usage;
   $("news-dot").classList.toggle("hidden", !u.hasNewsUpdate);
   $("side-username").textContent = u.username; $("avatar").textContent = u.username[0].toUpperCase();
   $("side-plan").textContent = planLabel() + (u.trial ? " · full access" : " plan");
-  const crown = (u.isAdmin || TOP.includes(u.plan)) && !u.trial ? ico("crown", "sm") : "";
+  const crown = TOP.includes(u.plan) && !u.trial ? ico("crown", "sm") : "";
   $("top-plan").innerHTML = crown + esc(planLabel()); $("top-plan").className = "pill " + (crown || u.trial ? "gold" : "brand");
   $("admin-nav").classList.toggle("hidden", !u.isAdmin);
   const frac = us.trial ? 1 : Math.max(0, Math.min(1, us.remaining / Math.max(1, us.limit)));
@@ -226,9 +226,6 @@ async function loadPersonas() {
 $("persona-select").onchange = (e) => store.set("vyra-persona", e.target.value);
 $("lang-select").value = store.get("vyra-lang") || "English"; if (!$("lang-select").value) $("lang-select").value = "English";
 $("lang-select").onchange = (e) => store.set("vyra-lang", e.target.value);
-$("temp-slider").value = store.get("vyra-temperature") || "0.7";
-$("temp-slider").oninput = (e) => store.set("vyra-temperature", e.target.value);
-$("chat-settings").onclick = () => { $("open-settings").click(); setSettingsTab("ai"); };
 async function loadDailyPrompt() {
   const d = await api("/api/daily-prompt"); const b = $("daily-prompt"); b.classList.remove("hidden"); $("daily-prompt-text").textContent = "Today's idea: " + d.prompt; b.dataset.prompt = d.prompt;
 }
@@ -284,7 +281,9 @@ applyThemeIcon();
 /* ---------------------------------------------------------------- notifications */
 async function loadNotifs() {
   const d = await api("/api/notifications"); const list = $("notif-list");
-  list.innerHTML = d.notifications.length ? d.notifications.map((n) => `<div class="notif-item ${n.is_read ? "read" : ""}">${esc(n.message)}</div>`).join("") : `<div class="empty">Nothing new yet.</div>`;
+  const dm = await api("/api/user/direct-messages").catch(()=>({messages:[]}));
+  const direct = (dm.messages||[]).map(m=>`<div class="notif-item"><b>Private message from VYRA Admin</b><p>${esc(m.message)}</p><small>${fmtDate(m.created_at)}</small></div>`).join("");
+  list.innerHTML = (d.notifications.length ? d.notifications.map((n) => `<div class="notif-item ${n.is_read ? "read" : ""}">${esc(n.message)}</div>`).join("") : `<div class="empty">Nothing new yet.</div>`) + (direct ? `<h4 style="margin-top:14px">Private messages</h4>${direct}` : "");
   $("notif-dot").classList.toggle("hidden", !d.notifications.some((n) => !n.is_read));
 }
 $("notif-btn").onclick = () => { $("notif-panel").classList.toggle("hidden"); loadNotifs().catch(() => {}); };
@@ -324,7 +323,6 @@ const MODES = ["fast", "balanced", "deep"];
 function setMode(m) {
   S.mode = m; store.set("vyra-mode", m);
   MODES.forEach((k) => { const b = $("mode-" + k); b.classList.toggle("on", m === k); b.setAttribute("aria-pressed", m === k); });
-  const label = $("chat-mode-label"); if (label) label.textContent = m.charAt(0).toUpperCase() + m.slice(1);
 }
 MODES.forEach((k) => ($("mode-" + k).onclick = () => setMode(k))); setMode(MODES.includes(S.mode) ? S.mode : "deep");
 
@@ -346,7 +344,7 @@ $("tune-btn").onclick = () => {
 function msgActions(m) {
   if (m.role === "user") return `<div class="msg-actions"><button type="button" data-act="edit" aria-label="Edit and resend" title="Edit and resend">${ico("edit", "sm")}</button><button type="button" data-act="copy" aria-label="Copy" title="Copy">${ico("copy", "sm")}</button></div>`;
   const last = S.msgs.filter((x) => x.role === "assistant").slice(-1)[0] === m;
-  return `<div class="msg-actions">${last && m.truncated ? `<button type="button" data-act="continue" class="chip" aria-label="Continue" title="The reply got cut off">${ico("arrow-up", "sm")}Continue</button>` : ""}<button type="button" data-act="copy" aria-label="Copy" title="Copy">${ico("copy", "sm")}</button><button type="button" data-act="download" aria-label="Download answer as text" title="Download answer">${ico("download", "sm")}</button><button type="button" data-act="zip" aria-label="Download answer as ZIP" title="Package named code blocks or the full answer as ZIP">${ico("archive", "sm")}</button><button type="button" data-act="speak" aria-label="Read aloud" title="Read aloud">${ico("volume", "sm")}</button>${last ? `<button type="button" data-act="regen" aria-label="Regenerate" title="Regenerate">${ico("refresh", "sm")}</button>` : ""}<button type="button" data-act="up" class="${m.feedback === 1 ? "on" : ""}" aria-label="Good answer" title="Good answer">${ico("thumb-up", "sm")}</button><button type="button" data-act="down" class="${m.feedback === -1 ? "on" : ""}" aria-label="Bad answer" title="Bad answer">${ico("thumb-down", "sm")}</button></div>`;
+  return `<div class="msg-actions">${last && m.truncated ? `<button type="button" data-act="continue" class="chip" aria-label="Continue" title="The reply got cut off">${ico("arrow-up", "sm")}Continue</button>` : ""}<button type="button" data-act="copy" aria-label="Copy" title="Copy">${ico("copy", "sm")}</button><button type="button" data-act="download" aria-label="Download answer as text" title="Download answer">${ico("download", "sm")}</button><button type="button" data-act="zip" aria-label="Download answer as ZIP" title="Download answer as ZIP">${ico("archive", "sm")}</button><button type="button" data-act="speak" aria-label="Read aloud" title="Read aloud">${ico("volume", "sm")}</button>${last ? `<button type="button" data-act="regen" aria-label="Regenerate" title="Regenerate">${ico("refresh", "sm")}</button>` : ""}<button type="button" data-act="up" class="${m.feedback === 1 ? "on" : ""}" aria-label="Good answer" title="Good answer">${ico("thumb-up", "sm")}</button><button type="button" data-act="down" class="${m.feedback === -1 ? "on" : ""}" aria-label="Bad answer" title="Bad answer">${ico("thumb-down", "sm")}</button></div>`;
 }
 function msgEl(m) {
   const el = document.createElement("article"); el.className = "msg " + m.role; m.el = el;
@@ -391,15 +389,7 @@ $("chat-messages").addEventListener("click", async (e) => {
   const idx = S.msgs.findIndex((m) => m.el === btn.closest(".msg")); const m = S.msgs[idx]; if (!m) return; const act = btn.dataset.act;
   if (act === "copy") { toast((await copyText(m.content)) ? "Copied" : "Couldn't copy"); }
   if (act === "download") { const blob=new Blob([m.content||""],{type:"text/markdown;charset=utf-8"}); const url=URL.createObjectURL(blob); const a=document.createElement("a"); a.href=url; a.download="vyra-answer.md"; a.click(); setTimeout(()=>URL.revokeObjectURL(url),1000); }
-  if (act === "zip") { try {
-    const raw=String(m.content||""), blocks=[], codeRx=/```(?:file:)?([A-Za-z0-9_./-]+\.[A-Za-z0-9]{1,10})\s*\n([\s\S]*?)```/g; let match;
-    while((match=codeRx.exec(raw))&&blocks.length<30){const name=match[1];if(name.split("/").includes("..")||name.startsWith("/"))continue;blocks.push({path:name,content:match[2].replace(/\n$/ ,"")});}
-    let response, downloadName;
-    if(blocks.length){response=await fetch("/api/export-files-zip",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json","X-Requested-With":"vyra"},body:JSON.stringify({files:blocks})});downloadName="vyra-code-files.zip";}
-    else{response=await fetch("/api/export-answer-zip",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json","X-Requested-With":"vyra"},body:JSON.stringify({content:raw,filename:"vyra-answer.md"})});downloadName="vyra-answer.zip";}
-    if(!response.ok){const d=await response.json().catch(()=>({}));throw new Error(d.error||"ZIP export failed");}
-    const blob=await response.blob(),url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download=downloadName;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast(blocks.length?"Code files packaged into ZIP.":"Answer packaged into ZIP.");
-  } catch(err){toast(err.message,"error");} }
+  if (act === "zip") { try { const r=await fetch("/api/export-answer-zip",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({content:m.content||"",filename:"vyra-answer.md"})}); if(!r.ok){const d=await r.json().catch(()=>({}));throw new Error(d.error||"ZIP export failed");} const blob=await r.blob(); const url=URL.createObjectURL(blob); const a=document.createElement("a"); a.href=url; a.download="vyra-answer.zip"; a.click(); setTimeout(()=>URL.revokeObjectURL(url),1000); } catch(err){toast(err.message,"error");} }
   if (act === "speak") speak(m.content);
   if (act === "edit") { if (!m.id) return toast("Give it a second, this message is still saving."); S.editFromId = m.id; $("message-input").value = m.content; autosize(); $("message-input").focus(); toast("Editing. Send to replace this message and everything after it."); }
   if (act === "regen") { const u = S.msgs[idx - 1]; if (!u || !u.id) return toast("Give it a second, then try again."); send(u.content, { truncateFromId: u.id }); }
@@ -572,7 +562,6 @@ const BILLING_FACTORS = { weekly: 0.35, monthly: 1, annual: 10 };
 const BILLING_LABELS = { weekly: "7 days", monthly: "30 days", annual: "365 days" };
 function renderPlans() {
   const grid=$("plans-grid"), u=S.user||{}, plans=S.plans||{};
-  if (u.isAdmin) { grid.innerHTML = `<div class="card current" style="grid-column:1/-1"><h3>${ico("crown","sm")} Infinity Admin Access</h3><p class="muted">Your administrator account has unlimited platform access and does not require a customer subscription.</p><p>Admin entitlements are separate from Enterprise customer plans.</p></div>`; return; }
   const entries=Object.entries(plans).filter(([k,p])=>p&&p.name&&["free","starter","plus","pro","business","enterprise"].includes(k));
   const fallback={
     free:{name:"Free",price:0,price_usd:0,monthly_messages:20,daily_images:3},
@@ -631,22 +620,15 @@ async function loadLeaderboard() {
 }
 $("lb-weekly").onclick = () => { S.lbMode = "weekly"; loadLeaderboard(); }; $("lb-streak").onclick = () => { S.lbMode = "streak"; loadLeaderboard(); };
 
-/* ---------------------------------------------------------------- Settings tabs */
-function setSettingsTab(name) {
-  document.querySelectorAll("[data-settings-tab]").forEach((b) => b.classList.toggle("on", b.dataset.settingsTab === name));
-  document.querySelectorAll("[data-settings-section]").forEach((section) => section.classList.toggle("hidden", section.dataset.settingsSection !== name));
-}
-document.querySelectorAll("[data-settings-tab]").forEach((button) => button.addEventListener("click", () => setSettingsTab(button.dataset.settingsTab)));
-
 /* ---------------------------------------------------------------- Settings */
 const BADGE_ICONS = { chat: "chat", zap: "zap", flame: "flame", image: "image", share: "share", link: "link" };
 $("open-settings").onclick = async () => {
-  const u = S.user; $("set-username").textContent = u.username; $("set-email").textContent = u.email.endsWith(".invalid") ? "Admin account" : u.email; $("set-plan").textContent = planLabel();
+  const u = S.user; $("set-username").textContent = u.username; $("set-email").textContent = u.email.endsWith(".invalid") ? "Admin account" : u.email; $("set-plan").textContent = planLabel(); $("set-vyra-id").textContent = u.publicId || "Not assigned";
   $("persona-text").value = u.customPersona || ""; $("persona-text").disabled = !u.canUsePersona; $("save-persona").disabled = !u.canUsePersona;
   $("persona-lock").textContent = u.canUsePersona ? "" : "Custom personas come with any paid plan. Upgrade to unlock.";
   $("about-me-text").value = u.aboutMe || ""; $("ai-nickname").value = u.aiNickname || "";
   $("install-btn").parentElement.classList.toggle("hidden", !window.vyraInstall && !/iphone|ipad/i.test(navigator.userAgent));
-  $("delete-account").classList.toggle("hidden", u.isAdmin); setSettingsTab("ai"); openModal("settings-modal");
+  $("delete-account").classList.toggle("hidden", u.isAdmin); openModal("settings-modal");
   const badges = S.badges || [];
   $("badges-list").innerHTML = badges.length ? badges.map((b) => `<span class="badge" title="${esc(b.label)}">${ico(BADGE_ICONS[b.icon] || "check", "sm")}${esc(b.label)}</span>`).join("") : `<p class="muted tiny" style="margin:0">Keep chatting, checking in and sharing to earn badges.</p>`;
   $("sessions-list").innerHTML = "Loading...";
@@ -665,7 +647,7 @@ $("delete-account").onclick = () => {
 };
 
 /* ---------------------------------------------------------------- Admin */
-const ADMIN_TABS = [["overview", "Overview"], ["tools", "Admin tools"], ["users", "Users"], ["payments", "Payments"], ["codes", "Codes"], ["broadcast", "Broadcast"], ["rewards", "Rewards"], ["logs", "Logs & backup"]];
+const ADMIN_TABS = [["overview", "Overview"], ["tools", "Admin tools"], ["users", "Users"], ["payments", "Payments"], ["codes", "Codes"], ["broadcast", "Broadcast"], ["coupons", "Coupons"], ["rewards", "Rewards"], ["logs", "Logs & backup"]];
 function bars(data, money_) {
   const w = 300, h = 120, n = data.length, max = Math.max(1, ...data.map((d) => Number(d.n))), bw = w / n;
   return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="img" aria-label="Bar chart">${data.map((d, i) => { const v = Number(d.n), bh = v ? Math.max(3, (v / max) * (h - 6)) : 1; return `<rect x="${(i * bw + 1).toFixed(1)}" y="${(h - bh).toFixed(1)}" width="${(bw - 2).toFixed(1)}" height="${bh.toFixed(1)}"><title>${esc(d.day)}: ${money_ ? money(v) : v}</title></rect>`; }).join("")}</svg><div class="axis"><span>${esc(data[0].day.slice(5))}</span><span>peak ${money_ ? money(max) : max}</span><span>${esc(data[n - 1].day.slice(5))}</span></div>`;
@@ -696,7 +678,7 @@ async function renderAdmin(tab) {
     }
     if (tab === "users") {
       const d = await api("/api/admin/users");
-      body.innerHTML = `<div class="card">${d.users.length ? d.users.map((u) => `<div class="row"><div class="grow"><b>${esc(u.username)} ${u.is_suspended ? '<span class="status rejected">Suspended</span>' : ""}${u.trial ? '<span class="status pending">Trial</span>' : ""}</b><small>${esc(u.email)} · joined ${fmtDate(u.created_at)}${u.plan_expires_at ? " · plan until " + fmtDate(u.plan_expires_at) : ""}</small></div><select data-setplan="${u.id}" aria-label="Plan for ${esc(u.username)}">${Object.entries(S.plans).map(([k, p]) => `<option value="${k}" ${k === u.plan ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select><button class="btn sm ${u.is_suspended ? "" : "danger"}" data-suspend="${u.id}" data-on="${u.is_suspended ? 0 : 1}">${u.is_suspended ? "Restore" : "Suspend"}</button></div>`).join("") : `<div class="empty">No users yet.</div>`}</div>`;
+      body.innerHTML = `<div class="card">${d.users.length ? d.users.map((u) => `<div class="row"><div class="grow"><b>${esc(u.username)} ${u.is_suspended ? '<span class="status rejected">Suspended</span>' : ""}${u.trial ? '<span class="status pending">Trial</span>' : ""}</b><small>${esc(u.email)} · VYRA ID ${esc(u.public_id||"Pending")} · joined ${fmtDate(u.created_at)}${u.plan_expires_at ? " · plan until " + fmtDate(u.plan_expires_at) : ""}</small></div><select data-setplan="${u.id}" aria-label="Plan for ${esc(u.username)}">${Object.entries(S.plans).map(([k, p]) => `<option value="${k}" ${k === u.plan ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select><button class="btn sm" data-admin-msg-user="${u.id}" data-admin-msg-name="${esc(u.username)}">Message</button><button class="btn sm ${u.is_suspended ? "" : "danger"}" data-suspend="${u.id}" data-on="${u.is_suspended ? 0 : 1}">${u.is_suspended ? "Restore" : "Suspend"}</button></div>`).join("") : `<div class="empty">No users yet.</div>`}</div>`;
     }
     if (tab === "payments") {
       const d = await api("/api/admin/payment-requests");
@@ -705,6 +687,10 @@ async function renderAdmin(tab) {
     if (tab === "codes") {
       const d = await api("/api/admin/otp-requests");
       body.innerHTML = `<div class="card"><p class="muted tiny" style="margin:0 0 6px">These appear when email isn't set up, or when sending failed. Approve one and send the code to the person.</p>${d.requests.length ? d.requests.map((r) => `<div class="row"><div class="grow"><b>${esc(r.email)}</b><small>${r.purpose === "reset" ? "Password reset" : "Sign-up"} · code ${esc(r.code)}</small></div><span class="status ${r.status === "approved" ? "approved" : "pending"}">${esc(r.status)}</span>${r.status === "pending" ? `<button class="btn sm primary" data-otp="${r.id}">Approve</button>` : ""}</div>`).join("") : `<div class="empty">No codes waiting.</div>`}</div>`;
+    }
+    if (tab === "coupons") {
+      const d = await api("/api/admin/coupons");
+      body.innerHTML = `<div class="card"><h3>Create coupon</h3><div class="grid two"><label class="field">Code<input class="input" id="coupon-code" placeholder="WELCOME20" maxlength="32"></label><label class="field">Type<select class="input" id="coupon-type"><option value="percent">Percentage</option><option value="fixed">Fixed amount (NGN)</option></select></label><label class="field">Value<input class="input" id="coupon-value" type="number" min="0.01" step="0.01"></label><label class="field">Plan (optional)<select class="input" id="coupon-plan"><option value="">All plans</option>${Object.entries(S.plans).filter(([k])=>k!=="free").map(([k,p])=>`<option value="${k}">${esc(p.name)}</option>`).join("")}</select></label><label class="field">Max uses (optional)<input class="input" id="coupon-max" type="number" min="1"></label><label class="field">Expires (optional)<input class="input" id="coupon-expiry" type="date"></label></div><button class="btn primary" id="coupon-create">Create coupon</button></div><div class="card" style="margin-top:12px"><h3>Existing coupons</h3>${d.coupons.map(c=>`<div class="row"><div class="grow"><b>${esc(c.code)} · ${c.discount_type==="percent"?c.discount_value+"%":money(c.discount_value)}</b><small>${esc(c.applicable_plan||"All paid plans")} · ${c.uses}${c.max_uses?"/"+c.max_uses:""} uses · ${c.active?"Active":"Disabled"}</small></div></div>`).join("")||"<div class=empty>No coupons yet.</div>"}</div>`;
     }
     if (tab === "broadcast") body.innerHTML = `<div class="card"><h3>Message every user</h3><textarea class="input" id="bc-msg" rows="3" maxlength="1000" placeholder="Write a short update"></textarea><button class="btn primary" id="bc-send" style="margin-top:10px">Send to all users</button></div>`;
     if (tab === "rewards") body.innerHTML = `<div class="card"><h3>Weekly prize note</h3><p class="muted tiny" style="margin:4px 0 0">Shown above the weekly leaderboard.</p><input class="input" id="prize-text" maxlength="140" placeholder="Top 3 this week win bonus messages"><button class="btn" id="prize-save" style="margin-top:10px">Save note</button></div><div class="card" style="margin-top:14px"><h3>Award last week's winners</h3><p class="muted tiny" style="margin:4px 0 10px">Gives the top 3 chatters +100, +50 and +25 bonus messages. Works once per week.</p><button class="btn primary" id="award-go">Award last week's top 3</button></div>`;
@@ -718,6 +704,8 @@ $("admin-page").addEventListener("click", async (e) => {
   const t = e.target.closest("[data-atab]"); if (t) return renderAdmin(t.dataset.atab);
   const tool = e.target.closest("[data-tool]"); if (tool) return renderAdmin(tool.dataset.tool);
   try {
+    const dm = e.target.closest("[data-admin-msg-user]"); if (dm) { const uname=dm.dataset.adminMsgName||"customer"; $("generic-card").innerHTML=`<div class="modal-head"><h2>Message ${esc(uname)}</h2><button class="icon-btn" data-close aria-label="Close">${ico("x")}</button></div><textarea class="input" id="admin-direct-message" rows="4" maxlength="2000" placeholder="Write a private message to this customer"></textarea><button class="btn primary block" id="admin-direct-send" data-user-id="${dm.dataset.adminMsgUser}" style="margin-top:10px">Send private message</button>`; openModal("generic-modal"); return; }
+    if (e.target.closest("#coupon-create")) { const code=$("coupon-code").value.trim(), value=$("coupon-value").value; const d=await post("/api/admin/coupons",{code,discount_type:$("coupon-type").value,discount_value:value,applicable_plan:$("coupon-plan").value,max_uses:$("coupon-max").value||null,expires_at:$ ("coupon-expiry").value||null}); toast(`Coupon ${d.code} created`); return renderAdmin("coupons"); }
     const sp = e.target.closest("[data-suspend]"); if (sp) { await post(`/api/admin/users/${sp.dataset.suspend}/suspend`, { suspended: sp.dataset.on === "1" }); return renderAdmin("users"); }
     const pay = e.target.closest("[data-pay]"); if (pay) { await post(`/api/admin/payment-requests/${pay.dataset.id}/${pay.dataset.pay}`); toast(pay.dataset.pay === "approve" ? "Approved. The plan is active." : "Rejected"); return renderAdmin("payments"); }
     const pr = e.target.closest("[data-proof]"); if (pr) { $("generic-card").innerHTML = `<div class="modal-head"><h2>Payment proof</h2><button class="icon-btn" data-close aria-label="Close">${ico("x")}</button></div><img class="proof-img" alt="Payment screenshot" src="/api/admin/payment-proof/${pr.dataset.proof}">`; return openModal("generic-modal"); }
@@ -732,6 +720,9 @@ $("admin-page").addEventListener("change", async (e) => {
   try { await post(`/api/admin/users/${s.dataset.setplan}/plan`, { plan: s.value }); toast("Plan updated"); renderAdmin("users"); } catch (err) { toast(err.message, "error"); }
 });
 
+document.addEventListener("click",async(e)=>{const b=e.target.closest("#admin-direct-send");if(!b)return;try{const msg=$("admin-direct-message").value.trim();if(!msg)return toast("Write a message first.");await post(`/api/admin/users/${b.dataset.userId}/message`,{message:msg});closeModals();toast("Private message sent.");}catch(err){toast(err.message,"error");}});
+$("copy-vyra-id")?.addEventListener("click",async()=>{const id=S.user?.publicId||""; if(!id)return toast("VYRA ID unavailable"); toast(await copyText(id)?"VYRA ID copied":"Unable to copy ID");});
+$("restart-tour")?.addEventListener("click",()=>{try{localStorage.removeItem("vyra-tour");}catch(_){}closeModals();runTour(0);});
 /* ---------------------------------------------------------------- follow-ups, voice, read aloud, tour */
 const FOLLOWUPS = ["Explain it simpler", "Give me an example", "Make it shorter"];
 function showFollowups() {
@@ -787,14 +778,6 @@ $("project-list").onclick=async e=>{
 };
 $("project-file-add").onclick=async()=>{if(!S.projectId)return toast("Select a project first.");try{await post(`/api/projects/${S.projectId}/files`,{filename:$("project-file-name").value||"project-notes.txt",content:$("project-file-content").value});$("project-file-content").value="";toast("Project file added.");}catch(e){toast(e.message,"error");}};
 $("project-use-chat").onclick=()=>{if(!S.projectId)return toast("Select a project first.");showPage("chat");newChat();toast("Project context will be used in this chat.");};
-$("project-zip-export").onclick=async()=>{
-  if(!S.projectId)return toast("Select a project first.");
-  let files; try{files=JSON.parse($("zip-files-json").value);}catch(e){return toast("Enter valid JSON for the files array.","error");}
-  try{const res=await fetch("/api/export-project-zip",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json","X-Requested-With":"vyra"},body:JSON.stringify({projectId:S.projectId,files})});
-    if(!res.ok){const d=await res.json().catch(()=>({}));throw new Error(d.error||"ZIP export failed");}
-    const blob=await res.blob(),url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download="vyra-project.zip";a.click();setTimeout(()=>URL.revokeObjectURL(url),1500);toast("Project ZIP created.");
-  }catch(e){toast(e.message,"error");}
-};
 $("memory-add").onclick=async()=>{try{await post("/api/memory",{memory:$("memory-input").value});$("memory-input").value="";await loadWorkspace();toast("Memory saved.");}catch(e){toast(e.message,"error");}};
 $("memory-list").onclick=async e=>{const b=e.target.closest("[data-memory-delete]");if(b){try{await api("/api/memory/"+b.dataset.memoryDelete,{method:"DELETE"});await loadWorkspace();}catch(err){toast(err.message,"error");}}};
 $("skill-add").onclick=async()=>{try{const r=await post("/api/skills",{name:$("skill-name").value,command:$("skill-command").value,instruction:$("skill-instruction").value});$("skill-name").value="";$("skill-command").value="";$("skill-instruction").value="";await loadWorkspace();toast("Skill saved. Invoke /"+r.command.replace("/","")+" in chat.");}catch(e){toast(e.message,"error");}};
@@ -807,13 +790,27 @@ function renderResearch(data) {
 $("web-search").onclick=async()=>{try{const d=await post("/api/tools/web-search",{query:$("web-query").value});renderResearch({results:[{topic:d.answer||d.query,sources:d.results}]});}catch(e){toast(e.message,"error");}};
 $("agent-run").onclick=async()=>{try{const topics=$("agent-topics").value.split("\\n").map(x=>x.trim()).filter(Boolean).slice(0,3);const d=await post("/api/tools/agent-research",{topics});renderResearch(d);}catch(e){toast(e.message,"error");}};
 
-function maybeTour() {
-  if (store.get("vyra-tour")) return; store.set("vyra-tour", "1");
-  $("generic-card").innerHTML = `<div class="modal-head"><h2>Welcome to Vyra AI</h2><button class="icon-btn" data-close aria-label="Close">${ico("x")}</button></div>
-    <div class="kv"><div><span>Deep and Fast</span><b>Deep for hard questions</b></div><div><span>Languages</span><b>Reply in Pidgin, Yoruba, Hausa or Igbo</b></div><div><span>Mic</span><b>Tap to speak your message</b></div><div><span>Check in daily</span><b>Earn bonus messages</b></div></div>
-    <button class="btn primary block" data-close>Start chatting</button>`;
+const TOUR_STEPS = [
+  ["Welcome to VYRA AI 💜", "Your AI workspace for learning, creating, researching, solving problems and building ideas."],
+  ["AI Chat", "Ask questions, brainstorm, learn, write, code and explore ideas. Start with anything you want help with."],
+  ["AI Toolbox", "Explore Study Tutor, Writing Studio, Coding Assistant, Data Analyst, Creative Lab, Planner and more."],
+  ["Projects", "Keep related chats, files and instructions together in dedicated workspaces."],
+  ["Memory & Personalization", "Manage saved preferences and memory. You control what is saved and what you choose to share."],
+  ["Image Studio & Files", "Generate images and export supported content. ZIP exports package generated files when available."],
+  ["Chat Settings", "Choose Fast, Balanced or Deep, adjust language and response preferences, and personalize replies."],
+  ["Account, Plans & Support", "Find your account details, VYRA ID, usage, plans, settings and help. Welcome aboard!"]
+];
+function runTour(index=0) {
+  const step=Math.max(0,Math.min(index,TOUR_STEPS.length-1)), [title,desc]=TOUR_STEPS[step];
+  $("generic-card").innerHTML=`<div class="modal-head"><h2>${esc(title)}</h2><button class="icon-btn" id="tour-close" aria-label="Close tour">${ico("x")}</button></div><p>${esc(desc)}</p><div class="tiny muted">Step ${step+1} of ${TOUR_STEPS.length}</div><div style="display:flex;gap:8px;margin-top:16px;justify-content:space-between"><button class="btn" id="tour-skip">Skip tour</button><div style="display:flex;gap:8px"><button class="btn" id="tour-back" ${step===0?"disabled":""}>Back</button><button class="btn primary" id="tour-next">${step===TOUR_STEPS.length-1?"Finish":"Next"}</button></div></div>`;
   openModal("generic-modal");
+  $("tour-close").onclick=()=>{store.set("vyra-tour","1");closeModals();};
+  $("tour-skip").onclick=()=>{store.set("vyra-tour","1");closeModals();};
+  $("tour-back").onclick=()=>runTour(step-1);
+  $("tour-next").onclick=()=>{if(step===TOUR_STEPS.length-1){store.set("vyra-tour","1");closeModals();toast("Tour complete. Enjoy VYRA!");}else runTour(step+1);};
 }
+function maybeTour() { if(store.get("vyra-tour")) return; runTour(0); }
+
 
 /* ---------------------------------------------------------------- start */
 (async function boot() {
