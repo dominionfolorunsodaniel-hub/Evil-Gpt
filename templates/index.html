@@ -86,6 +86,7 @@
     <button id="new-chat" class="btn new-chat"><svg class="ico"><use href="#i-plus"/></svg>New chat</button>
     <nav class="nav" aria-label="Main">
       <button class="nav-item active" data-page="chat"><svg class="ico"><use href="#i-chat"/></svg>Chat</button>
+      <button class="nav-item" data-page="toolbox"><svg class="ico"><use href="#i-zap"/></svg>AI Toolbox</button>
       <button class="nav-item" data-page="images"><svg class="ico"><use href="#i-image"/></svg>Image Studio</button>
       <button class="nav-item" data-page="plans"><svg class="ico"><use href="#i-star"/></svg>Plans</button>
       <button class="nav-item hidden" id="admin-nav" data-page="admin"><svg class="ico"><use href="#i-shield"/></svg>Admin</button>
@@ -164,6 +165,29 @@
       </div>
     </section>
 
+    <!-- AI TOOLBOX -->
+    <section id="toolbox-page" class="page hidden">
+      <div class="page-wrap">
+        <div class="page-head"><h2>AI Toolbox</h2><p>Choose a focused workspace, describe what you need, and VYRA will continue in chat.</p></div>
+        <div class="toolbox-grid" id="toolbox-grid">
+          <button class="toolbox-card active" data-tool="study"><span class="toolbox-icon">📚</span><strong>Study Tutor</strong><span>Step-by-step explanations, practice, quizzes and revision.</span></button>
+          <button class="toolbox-card" data-tool="research"><span class="toolbox-icon">🔎</span><strong>Research Brief</strong><span>Structure a topic, compare viewpoints and flag what needs sources.</span></button>
+          <button class="toolbox-card" data-tool="writing"><span class="toolbox-icon">✍️</span><strong>Writing Studio</strong><span>Draft, rewrite, outline or polish writing for a target audience.</span></button>
+          <button class="toolbox-card" data-tool="coding"><span class="toolbox-icon">💻</span><strong>Coding Assistant</strong><span>Explain code, debug errors, plan changes and review snippets.</span></button>
+          <button class="toolbox-card" data-tool="planning"><span class="toolbox-icon">🗓️</span><strong>Planner</strong><span>Turn goals into realistic steps, schedules and checklists.</span></button>
+          <button class="toolbox-card" data-tool="data"><span class="toolbox-icon">📊</span><strong>Data Analyst</strong><span>Interpret pasted tables, calculate summaries and explain trends.</span></button>
+          <button class="toolbox-card" data-tool="creative"><span class="toolbox-icon">🎨</span><strong>Creative Lab</strong><span>Brainstorm concepts, characters, stories and campaign ideas.</span></button>
+          <button class="toolbox-card" data-tool="decision"><span class="toolbox-icon">⚖️</span><strong>Decision Helper</strong><span>Compare options with criteria, trade-offs and a clear summary.</span></button>
+        </div>
+        <div class="card toolbox-compose">
+          <label class="field">Workspace<select id="toolbox-select" class="select"><option value="study">Study Tutor</option><option value="research">Research Brief</option><option value="writing">Writing Studio</option><option value="coding">Coding Assistant</option><option value="planning">Planner</option><option value="data">Data Analyst</option><option value="creative">Creative Lab</option><option value="decision">Decision Helper</option></select></label>
+          <label class="field">What do you want to work on?<textarea id="toolbox-input" class="input" rows="5" maxlength="8000" placeholder="Describe your task, paste code, data, notes, or your topic..."></textarea></label>
+          <div class="toolbox-actions"><button type="button" class="btn" id="toolbox-clear">Clear</button><button type="button" class="btn primary" id="toolbox-run">Open in chat <svg class="ico sm"><use href="#i-arrow-up"/></svg></button></div>
+          <p class="tiny muted">Toolbox prompts are AI-guided workflows using VYRA chat. Research results are not independently verified unless sources are provided or browsing is available.</p>
+        </div>
+      </div>
+    </section>
+
     <!-- IMAGE STUDIO -->
     <section id="images-page" class="page hidden">
       <div class="page-wrap">
@@ -187,16 +211,6 @@
         <div class="page-head"><h2>Plans</h2><p>Pay in naira by card or bank transfer. Every plan lasts 30 days.</p></div>
         <div class="card usage-card"><span class="muted">Messages used this month</span><strong id="usage-number">...</strong><div class="meter" id="usage-meter"><span></span></div><span class="tiny muted" id="usage-sub"></span></div>
         <div id="plans-grid" class="plans-grid"></div>
-        <div class="card support-card" style="margin-top:14px">
-          <h3>Support &amp; contact</h3>
-          <p class="muted" style="margin:6px 0 12px">Need help with your account, payment, or a feature? Contact the VYRA support team.</p>
-          <div class="support-links"><a class="btn" href="https://t.me/COLDFX26" target="_blank" rel="noopener">Telegram support</a>{% if support_whatsapp %}<a class="btn" href="https://wa.me/{{ support_whatsapp }}" target="_blank" rel="noopener">WhatsApp support</a>{% else %}<span class="tiny muted">WhatsApp support will appear when the administrator configures a business support number.</span>{% endif %}</div>
-        </div>
-        <div class="card reward-request-card" style="margin-top:14px">
-          <h3>Request a reward</h3><p class="muted tiny" style="margin:6px 0 10px">Share why you think you should receive a reward. Requests are reviewed by the admin and aren't guaranteed.</p>
-          <textarea class="input" id="reward-request-message" rows="3" maxlength="500" placeholder="Write your reward request..." style="margin:0"></textarea>
-          <button class="btn primary" id="reward-request-send" style="margin-top:10px">Send reward request</button><p id="reward-request-note" class="notice hidden"></p>
-        </div>
         <div class="split">
           <div class="card"><h3>Invite friends</h3><p class="muted" style="margin:6px 0 0">When a friend joins with your link, you both get a free day of full access. Up to 10 friends.</p>
             <div class="ref-link"><input class="input" id="ref-url" readonly aria-label="Your invite link"><button class="btn" id="copy-ref"><svg class="ico sm"><use href="#i-copy"/></svg>Copy</button></div>
