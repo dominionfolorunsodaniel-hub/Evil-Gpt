@@ -418,6 +418,7 @@ def usage_status(u):
     month = q_one("SELECT to_char(NOW() AT TIME ZONE 'UTC','YYYY-MM') AS m")["m"]
     row = q_one("SELECT message_count FROM evil_usage WHERE user_id=%s AND usage_month=%s", (u["id"], month))
     used = row["message_count"] if row else 0
+    if u["is_admin"]: return {"used": used, "limit": 99999, "remaining": 99999, "trial": False}  # the admin account is never quota-limited
     if trial: return {"used": used, "limit": 99999, "remaining": 99999, "trial": True, "trialEndsAt": iso(u["trial_ends_at"])}
     limit = PLANS[plan_key]["monthly_messages"] + (u["bonus_messages"] or 0)
     return {"used": used, "limit": limit, "remaining": max(0, limit - used), "trial": False}
@@ -444,25 +445,34 @@ def mail_enabled():
 
 
 def send_mail(to_email, subject, text):
-    """Tries Brevo or Resend over HTTPS first (works on Render free). SMTP is the last resort and is blocked on Render free."""
+    """Tries Brevo or Resend over HTTPS first (works on Render free). SMTP is the last resort and is blocked on Render free.
+    True means a provider ACCEPTED the request. It does NOT prove the email was delivered."""
+    domain = to_email.split("@")[-1]
+    log.info("MAIL initiated to_domain=%s subject=%r", domain, subject)
     try:
         if BREVO_API_KEY and MAIL_FROM:
             r = requests.post("https://api.brevo.com/v3/smtp/email", timeout=15, headers={"api-key": BREVO_API_KEY, "accept": "application/json"},
                               json={"sender": {"name": MAIL_FROM_NAME, "email": MAIL_FROM}, "to": [{"email": to_email}], "subject": subject, "textContent": text})
-            if r.status_code < 300: return True
-            log.error("Brevo error %s %s", r.status_code, r.text[:200])
+            if r.status_code < 300:
+                log.info("MAIL accepted_by_brevo delivery_unconfirmed to_domain=%s", domain)
+                return True
+            log.error("MAIL brevo_rejected status=%s body=%s", r.status_code, r.text[:200])
         if RESEND_API_KEY and MAIL_FROM:
             r = requests.post("https://api.resend.com/emails", timeout=15, headers={"Authorization": f"Bearer {RESEND_API_KEY}"},
                               json={"from": f"{MAIL_FROM_NAME} <{MAIL_FROM}>", "to": [to_email], "subject": subject, "text": text})
-            if r.status_code < 300: return True
-            log.error("Resend error %s %s", r.status_code, r.text[:200])
+            if r.status_code < 300:
+                log.info("MAIL accepted_by_resend delivery_unconfirmed to_domain=%s", domain)
+                return True
+            log.error("MAIL resend_rejected status=%s body=%s", r.status_code, r.text[:200])
         if SMTP_EMAIL and SMTP_PASSWORD:
             msg = MIMEMultipart(); msg["From"], msg["To"], msg["Subject"] = f"{MAIL_FROM_NAME} <{SMTP_EMAIL}>", to_email, subject
             msg.attach(MIMEText(text, "plain"))
             s = smtplib.SMTP("smtp.gmail.com", 587, timeout=10); s.starttls(); s.login(SMTP_EMAIL, SMTP_PASSWORD); s.send_message(msg); s.quit()
+            log.info("MAIL accepted_by_smtp delivery_unconfirmed to_domain=%s", domain)
             return True
+        log.error("MAIL failed no_provider_accepted to_domain=%s", domain)
     except Exception:
-        log.exception("send_mail failed")
+        log.exception("MAIL failed exception to_domain=%s", domain)
     return False
 
 
@@ -472,14 +482,22 @@ def send_code(email, code, purpose):
     return send_mail(email, f"Verify your {BRAND} account", f"Welcome to {BRAND}!\n\nYour verification code is: {code}\n\nIt expires in 15 minutes.")
 
 
-def issue_code(email, purpose):
-    """Creates a 6-digit code. With mail configured it is emailed straight away; otherwise it waits for admin approval."""
-    code = f"{secrets.randbelow(900000) + 100000}"
-    q_run("DELETE FROM evil_otp_requests WHERE email=%s AND purpose=%s", (email, purpose))
-    row = q_one("INSERT INTO evil_otp_requests(email,code,status,purpose) VALUES (%s,%s,'pending',%s) RETURNING id", (email, code, purpose))
+def issue_code(email, purpose, reuse=False):
+    """Creates a 6-digit code. With mail configured it is emailed straight away; otherwise it waits for admin approval.
+    reuse=True re-sends the still-valid code instead of replacing it, so a delayed first email keeps working."""
+    row = None
+    if reuse:
+        row = q_one("SELECT id,code FROM evil_otp_requests WHERE email=%s AND purpose=%s AND attempts < 5 AND created_at > NOW() - INTERVAL '15 minutes' ORDER BY id DESC LIMIT 1", (email, purpose))
+    if row:
+        code = row["code"]
+    else:
+        code = f"{secrets.randbelow(900000) + 100000}"
+        q_run("DELETE FROM evil_otp_requests WHERE email=%s AND purpose=%s", (email, purpose))
+        row = q_one("INSERT INTO evil_otp_requests(email,code,status,purpose) VALUES (%s,%s,'pending',%s) RETURNING id", (email, code, purpose))
     if mail_enabled() and send_code(email, code, purpose):
-        q_run("UPDATE evil_otp_requests SET status='approved' WHERE id=%s", (row["id"],))
+        q_run("UPDATE evil_otp_requests SET status='approved' WHERE id=%s", (row["id"],))  # 'approved' = released to the user, not proof of delivery
         return "emailed"
+    log.warning("OTP not emailed (purpose=%s): waiting for admin approval", purpose)
     return "admin"
 
 
@@ -565,15 +583,16 @@ def get_preferences():
     country = (u.get("country_code") or request.headers.get("CF-IPCountry") or "").upper()[:2]
     defaults = COUNTRY_DEFAULTS.get(country, {"currency": "USD", "language": "English"})
     return jsonify({"country": country or None, "currency": u.get("preferred_currency") or defaults["currency"],
-                    "language": u.get("preferred_language") or defaults["language"], "autoDetected": bool(country)})
+                    "language": u.get("preferred_language") or defaults["language"], "autoDetected": bool(country),
+                    "needsSetup": not u.get("country_code")})
 
 @app.post("/api/preferences")
 @login_required
 def save_preferences():
-    d = body()
-    country = str(d.get("country", "")).upper()[:2]
-    currency = str(d.get("currency", "")).upper()
-    language = str(d.get("language", "English"))
+    d = body(); cur_u = request.user
+    country = str(d["country"]).upper()[:2] if "country" in d else (cur_u.get("country_code") or "")
+    currency = str(d["currency"]).upper() if "currency" in d else (cur_u.get("preferred_currency") or "NGN")
+    language = str(d["language"]) if "language" in d else (cur_u.get("preferred_language") or "English")
     if country and not re.fullmatch(r"[A-Z]{2}", country): return err("Invalid country code.")
     if currency not in SUPPORTED_CURRENCIES: return err("Unsupported currency.")
     if language not in SUPPORTED_LANGUAGES: return err("Unsupported language.")
@@ -600,8 +619,9 @@ def create_project():
 @login_required
 def update_project(project_id):
     d = body()
+    if "name" in d and len(str(d["name"]).strip()) < 2: return err("Project name must contain at least 2 characters.")
     row = q_one("UPDATE evil_projects SET name=COALESCE(%s,name),instructions=COALESCE(%s,instructions),updated_at=NOW() WHERE id=%s AND user_id=%s RETURNING id,name,instructions",
-                (str(d["name"])[:100] if "name" in d else None, str(d["instructions"])[:4000] if "instructions" in d else None, project_id, request.user["id"]))
+                (str(d["name"]).strip()[:100] if "name" in d else None, str(d["instructions"])[:4000] if "instructions" in d else None, project_id, request.user["id"]))
     if not row: return err("Project not found.", 404)
     return jsonify({"success": True, "project": dict(row)})
 
@@ -800,14 +820,27 @@ def register():
     if not valid_email(email): return err("Enter a valid email address.")
     if len(password) < 10: return err("Password must be at least 10 characters.")
     if len(password) > 200: return err("Password is too long.")
+    # Usernames are compared case-insensitively so nobody can register "Admin" next to "admin".
+    clash = q_one("SELECT email FROM evil_users WHERE LOWER(username)=LOWER(%s) LIMIT 1", (username,))
+    if clash and clash["email"] != email: return err("That username or email is already taken.", 409)
     referrer = q_one("SELECT id FROM evil_users WHERE referral_code=%s", (ref,)) if ref else None
+    pw_hash = generate_password_hash(password)
     try:
         # New users start on Free with a one-time 3-day premium Trial. (The old code made them Infinity forever.)
         row = q_one("""INSERT INTO evil_users(username,email,password_hash,plan,trial_ends_at,is_verified,referral_code,referred_by)
                        VALUES (%s,%s,%s,'free', NOW() + (%s || ' days')::interval, FALSE, %s, %s) RETURNING id""",
-                    (username, email, generate_password_hash(password), str(TRIAL_DAYS), new_referral_code(), referrer["id"] if referrer else None))
+                    (username, email, pw_hash, str(TRIAL_DAYS), new_referral_code(), referrer["id"] if referrer else None))
     except psycopg2.errors.UniqueViolation:
-        return err("That username or email is already taken.", 409)
+        # Email already registered. Only an UNVERIFIED, non-admin account with no chats may be resumed (new password, new code).
+        # The email owner must still enter the code, so this cannot give anyone access to an inbox they do not control.
+        existing = q_one("""SELECT id FROM evil_users WHERE email=%s AND is_verified=FALSE AND is_admin=FALSE
+                            AND NOT EXISTS (SELECT 1 FROM evil_conversations c WHERE c.user_id=evil_users.id)""", (email,))
+        if not existing: return err("That username or email is already taken.", 409)
+        try:
+            q_run("UPDATE evil_users SET username=%s, password_hash=%s WHERE id=%s AND is_verified=FALSE", (username, pw_hash, existing["id"]))
+        except psycopg2.errors.UniqueViolation:
+            return err("That username or email is already taken.", 409)
+        log.info("register: resumed unverified account id=%s", existing["id"])
     except Exception:
         log.exception("register failed"); return err("Registration failed. Please try again.", 500)
     how = issue_code(email, "verify")
@@ -820,8 +853,13 @@ def register():
 def resend_otp():
     email = str(body().get("email", "")).strip().lower()
     u = q_one("SELECT is_verified FROM evil_users WHERE email=%s", (email,))
-    if u and not u["is_verified"]: issue_code(email, "verify")
-    return jsonify({"success": True, "message": "If that account needs verification, a new code is on its way."})
+    if u and not u["is_verified"]:
+        if rate_limit("resend_email:" + hashlib.sha256(email.encode()).hexdigest()[:24], 1, 60):
+            how = issue_code(email, "verify", reuse=True)
+            log.info("OTP resend result=%s", how)
+        else:
+            log.info("OTP resend skipped: 60s cooldown")
+    return jsonify({"success": True, "message": "If that account needs verification, a code is on its way. If you just asked for one, wait a minute before trying again."})
 
 
 def check_code(email, code, purpose):
@@ -884,8 +922,15 @@ def reward_referral(u):
 def login():
     d = body(); username, password = str(d.get("username", "")).strip()[:80], str(d.get("password", ""))
     ip = client_ip()
-    fails = q_one("SELECT COUNT(*) AS n FROM evil_login_attempts WHERE success=FALSE AND created_at > NOW() - INTERVAL '15 minutes' AND (LOWER(username)=LOWER(%s) OR ip=%s)", (username, ip))["n"]
-    if fails >= 6: return err("Too many failed attempts. Try again in 15 minutes.", 429)
+    pair_fails = q_one("""SELECT COUNT(*) AS n FROM evil_login_attempts
+        WHERE success=FALSE AND LOWER(username)=LOWER(%s) AND ip=%s AND created_at > NOW() - INTERVAL '15 minutes'
+        AND created_at > COALESCE((SELECT MAX(created_at) FROM evil_login_attempts WHERE success=TRUE AND LOWER(username)=LOWER(%s) AND ip=%s), '-infinity'::timestamptz)""",
+        (username, ip, username, ip))["n"]
+    ip_fails = q_one("SELECT COUNT(*) AS n FROM evil_login_attempts WHERE success=FALSE AND ip=%s AND created_at > NOW() - INTERVAL '15 minutes'", (ip,))["n"]
+    if pair_fails >= 6 or ip_fails >= 30: return err("Too many failed attempts. Try again in 15 minutes.", 429)
+    user_fails = q_one("SELECT COUNT(*) AS n FROM evil_login_attempts WHERE success=FALSE AND LOWER(username)=LOWER(%s) AND created_at > NOW() - INTERVAL '15 minutes'", (username,))["n"]
+    if user_fails >= 20 and not q_one("SELECT 1 FROM evil_login_attempts WHERE success=TRUE AND LOWER(username)=LOWER(%s) AND ip=%s LIMIT 1", (username, ip)):
+        return err("Too many failed attempts. Try again in 15 minutes.", 429)
     user = q_one("SELECT id,username,password_hash,is_verified,is_suspended FROM evil_users WHERE username=%s", (username,))
     if not user or not user["password_hash"] or not check_password_hash(user["password_hash"], password):
         q_run("INSERT INTO evil_login_attempts(username,ip,success) VALUES (%s,%s,FALSE)", (username, ip))
@@ -918,7 +963,7 @@ def reset_password():
     d = body(); email, code, pw = str(d.get("email", "")).strip().lower(), str(d.get("code", "")).strip(), str(d.get("password", ""))
     if len(pw) < 10: return err("Password must be at least 10 characters.")
     if not check_code(email, code, "reset"): return err("That code is wrong, expired or not approved yet.", 401)
-    q_run("UPDATE evil_users SET password_hash=%s WHERE email=%s", (generate_password_hash(pw), email))
+    q_run("UPDATE evil_users SET password_hash=%s, session_version=session_version+1 WHERE email=%s", (generate_password_hash(pw), email))
     q_run("DELETE FROM evil_otp_requests WHERE email=%s AND purpose='reset'", (email,))
     return jsonify({"success": True, "message": "Password changed. You can sign in now."})
 
@@ -941,7 +986,7 @@ def me():
                  "country": u.get("country_code"), "currency": u.get("preferred_currency") or "NGN",
                  "language": u.get("preferred_language") or "English", "trialEndsAt": iso(u["trial_ends_at"])},
         "usage": usage_status(u),
-        "images": {"used": u["images_today"], "limit": PLANS[plan_key]["daily_images"]},
+        "images": {"used": u["images_today"], "limit": 99999 if u["is_admin"] else PLANS[plan_key]["daily_images"]},
         "badges": badges_for(u),
         "plans": PLANS, "paystack": bool(PAYSTACK_SECRET_KEY), "brand": BRAND})
 
@@ -1009,7 +1054,7 @@ def delete_me():
     if u["is_admin"]: return err("The admin account can't be deleted here.", 403)
     pw = str(body().get("password", ""))
     row = q_one("SELECT password_hash FROM evil_users WHERE id=%s", (u["id"],))
-    if not row or not check_password_hash(row["password_hash"], pw): return err("Wrong password.", 401)
+    if not row or not row["password_hash"] or not check_password_hash(row["password_hash"], pw): return err("Wrong password.", 401)
     q_run("DELETE FROM evil_users WHERE id=%s", (u["id"],)); session.clear()
     return jsonify({"success": True})
 
@@ -1090,7 +1135,7 @@ def generate_image():
     if not prompt: return err("Describe the image you want first.")
     if len(prompt) > 600: return err("Keep the description under 600 characters.")
     u = request.user; plan_key, _ = effective_plan(u)
-    limit = PLANS[plan_key]["daily_images"]
+    limit = 99999 if u["is_admin"] else PLANS[plan_key]["daily_images"]
     # Atomic: only counts if still under today's limit, so parallel clicks can't overshoot.
     row = q_one(f"""UPDATE evil_users SET images_generated_today = CASE WHEN last_image_date = {TODAY} THEN images_generated_today+1 ELSE 1 END,
                     last_image_date = {TODAY}
@@ -1335,6 +1380,10 @@ def ask_stream():
     try: temp = max(0.0, min(1.0, float(d.get("temperature", 0.7))))
     except (TypeError, ValueError): temp = 0.7
     extra = str(d.get("fileText", ""))[:6000]
+    trunc = None
+    if d.get("truncateFromId"):
+        try: trunc = int(d["truncateFromId"])
+        except (TypeError, ValueError): return err("Invalid message reference.")
     if not question: return err("Type a message first.")
     if len(question) > MAX_MESSAGE_CHARS: return err(f"That message is too long. Keep it under {MAX_MESSAGE_CHARS} characters.")
     if not GROQ_API_KEY: return err("The AI isn't configured yet. The admin needs to add GROQ_API_KEY.", 503)
@@ -1359,34 +1408,34 @@ def ask_stream():
                 existing_conv = cur.fetchone()
                 if not existing_conv: refund(); return err("Chat not found.", 404)
                 if not project_id: project_id = existing_conv.get("project_id")
-                if d.get("truncateFromId"):  # edit-and-resend or regenerate: drop that message and everything after it
-                    cur.execute("DELETE FROM evil_messages WHERE conversation_id=%s AND id >= %s", (str(conv_id), int(d["truncateFromId"])))
             else:
                 conv_id = str(uuid.uuid4()); is_new = True
                 cur.execute("INSERT INTO evil_conversations(id,user_id,title,project_id) VALUES (%s,%s,%s,%s)", (conv_id, u["id"], (question[:40] + "...") if len(question) > 40 else question, project_id))
-            cur.execute("SELECT role,content FROM evil_messages WHERE conversation_id=%s ORDER BY id DESC LIMIT 16", (conv_id,))
+            if trunc: cur.execute("SELECT role,content FROM evil_messages WHERE conversation_id=%s AND id < %s ORDER BY id DESC LIMIT 16", (conv_id, trunc))  # edit/regenerate: ignore that message and later ones
+            else: cur.execute("SELECT role,content FROM evil_messages WHERE conversation_id=%s ORDER BY id DESC LIMIT 16", (conv_id,))
             history = list(reversed(cur.fetchall()))
     except Exception:
         log.exception("ask_stream setup failed"); refund(); return err("Couldn't start that chat. Please try again.", 500)
 
     can_persona = CUSTOM_PERSONA_FREE or u["is_admin"] or trial or plan_key != "free"
     sys_prompt = u["custom_persona"] if (u["custom_persona"] and can_persona) else PERSONAS.get(persona, PERSONAS["assistant"])["instructions"]
+    sys_prompt += f"\n{BRAND} was created by COLD. If asked who created, built or owns {BRAND}, say it was created by COLD."
     memories = q_all("SELECT memory FROM evil_memories WHERE user_id=%s ORDER BY updated_at DESC LIMIT 12", (u["id"],))
     if memories:
-        sys_prompt += "\\nUser-approved memory (use only when relevant; do not assume it is always current): " + " | ".join(x["memory"] for x in memories)
+        sys_prompt += "\nUser-approved memory (use only when relevant; do not assume it is always current): " + " | ".join(x["memory"] for x in memories)
     if project_id:
         project = q_one("SELECT name,instructions FROM evil_projects WHERE id=%s AND user_id=%s", (project_id, u["id"]))
         project_files = q_all("SELECT filename,content FROM evil_project_files WHERE project_id=%s AND user_id=%s ORDER BY id DESC LIMIT 5", (project_id, u["id"]))
         if project:
-            sys_prompt += f"\\nProject workspace: {project['name']}. Project instructions: {project['instructions']}"
+            sys_prompt += f"\nProject workspace: {project['name']}. Project instructions: {project['instructions']}"
             for pf in project_files:
-                sys_prompt += f"\\nProject file {pf['filename']}: {pf['content'][:5000]}"
+                sys_prompt += f"\nProject file {pf['filename']}: {pf['content'][:5000]}"
     # A saved Skill can be invoked by its slash command at the beginning of a message.
-    skill_match = re.match(r"^/([a-z0-9_-]+)\\s*", question, re.I)
+    skill_match = re.match(r"^/([a-z0-9_-]+)\s*", question, re.I)
     if skill_match:
         skill = q_one("SELECT name,instruction FROM evil_skills WHERE user_id=%s AND slash_command=%s", (u["id"], skill_match.group(1).lower()))
         if skill:
-            sys_prompt += f"\\nActive saved Skill ({skill['name']}): {skill['instruction']}"
+            sys_prompt += f"\nActive saved Skill ({skill['name']}): {skill['instruction']}"
             question = question[skill_match.end():].strip() or "Apply the saved Skill to my next task."
     creator_terms = re.compile(r"\b(who (made|created|built|developed) you|who (is|was) the creator (of )?(vyra|you)|who (is|was) (your|vyra) (creator|developer|founder)|your creator|your developer|who is cold|who created vyra|vyra creator|contact (your|the) creator)\b", re.I)
     if creator_terms.search(question):
@@ -1415,7 +1464,7 @@ def ask_stream():
                         if not draft: raise RuntimeError("The model returned an empty draft.")
                         review_messages = [
                             {"role": "system", "content": "You are a rigorous answer reviewer. Check the draft for factual errors, missed constraints, arithmetic or logic mistakes, unsupported certainty, and unclear wording. Rewrite it into the best final answer. Preserve useful detail. Do not mention this review process."},
-                            {"role": "user", "content": "Original request:\\n" + question + "\\n\\nDraft answer:\\n" + draft}
+                            {"role": "user", "content": "Original request:\n" + question + "\n\nDraft answer:\n" + draft}
                         ]
                         reviewed = make_client().chat.completions.create(model=model, messages=review_messages, temperature=0.2, stream=False)
                         final_text = (reviewed.choices[0].message.content or draft).strip()
@@ -1436,25 +1485,26 @@ def ask_stream():
                         tried_fallback = True; model = GROQ_FAST_MODEL; yield sse({"notice": "Deep mode is busy, switched to Fast mode."}); continue
                     raise
         except GeneratorExit:  # the user pressed Stop or closed the tab: keep what was written
-            if collected: save_turn(conv_id, user_id, question, "".join(collected), False)
+            if collected: save_turn(conv_id, user_id, question, "".join(collected), False, trunc)
             else: refund()
             raise
         except Exception as exc:
             log.error("AI stream failed: %s", exc)
-            if collected: save_turn(conv_id, user_id, question, "".join(collected), False)
+            if collected: save_turn(conv_id, user_id, question, "".join(collected), False, trunc)
             else: refund()
             yield sse({"error": friendly_ai_error(exc)}); return
         answer = "".join(collected).strip()
         if not answer: refund(); yield sse({"error": "The AI sent an empty reply. Try again."}); return
-        ids = save_turn(conv_id, user_id, question, answer, is_new)
+        ids = save_turn(conv_id, user_id, question, answer, is_new, trunc)
         yield sse({"done": conv_id, "messageId": ids[1], "userMessageId": ids[0], "truncated": truncated})
 
     return Response(stream_with_context(generate()), mimetype="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
-def save_turn(conv_id, user_id, question, answer, retitle):
+def save_turn(conv_id, user_id, question, answer, retitle, truncate_from=None):
     try:
         with db() as conn, conn.cursor() as cur:
+            if truncate_from: cur.execute("DELETE FROM evil_messages WHERE conversation_id=%s AND id >= %s", (conv_id, truncate_from))  # same transaction as the new messages
             cur.execute("INSERT INTO evil_messages(conversation_id,user_id,role,content) VALUES (%s,%s,'user',%s) RETURNING id", (conv_id, user_id, question)); uid = cur.fetchone()["id"]
             cur.execute("INSERT INTO evil_messages(conversation_id,user_id,role,content) VALUES (%s,%s,'assistant',%s) RETURNING id", (conv_id, user_id, answer)); aid = cur.fetchone()["id"]
             cur.execute("UPDATE evil_conversations SET updated_at=NOW() WHERE id=%s", (conv_id,))
@@ -1681,7 +1731,7 @@ def admin_suspend(user_id):
 @app.get("/api/admin/payment-requests")
 @admin_required
 def admin_payment_requests():
-    rows = q_all("""SELECT pr.id, pr.user_id, u.username, pr.plan, pr.amount_ngn, pr.status, pr.provider, pr.created_at,
+    rows = q_all("""SELECT pr.id, pr.user_id, u.username, pr.plan, pr.amount_ngn, pr.status, pr.provider, pr.billing_period, pr.duration_days, pr.created_at,
                     (SELECT id FROM evil_payment_proofs p WHERE p.payment_request_id=pr.id ORDER BY id DESC LIMIT 1) AS proof_id
                     FROM evil_payment_requests pr JOIN evil_users u ON u.id = pr.user_id ORDER BY pr.id DESC LIMIT 200""")
     return jsonify({"requests": [{**r, "created_at": iso(r["created_at"])} for r in rows]})
@@ -1705,10 +1755,13 @@ def admin_review_payment(request_id, action):
     row = q_one("SELECT id,user_id,plan,status,duration_days FROM evil_payment_requests WHERE id=%s", (request_id,))
     if not row or row["status"] != "pending": return err("That request was already handled.", 404)
     if action == "approve":
-        q_run("UPDATE evil_payment_requests SET status='approved', reviewed_at=NOW() WHERE id=%s", (request_id,))
-        activate_plan(row["user_id"], row["plan"])
+        # Claim atomically so a double tap cannot activate twice; honour the billing period the customer chose (weekly/monthly/annual).
+        claimed = q_one("UPDATE evil_payment_requests SET status='approved', reviewed_at=NOW() WHERE id=%s AND status='pending' RETURNING id", (request_id,))
+        if not claimed: return err("That request was already handled.", 404)
+        activate_plan(row["user_id"], row["plan"], int(row["duration_days"] or PLAN_DAYS))
     else:
-        q_run("UPDATE evil_payment_requests SET status='rejected', reviewed_at=NOW() WHERE id=%s", (request_id,))
+        claimed = q_one("UPDATE evil_payment_requests SET status='rejected', reviewed_at=NOW() WHERE id=%s AND status='pending' RETURNING id", (request_id,))
+        if not claimed: return err("That request was already handled.", 404)
         q_run("INSERT INTO evil_notifications(user_id,message) VALUES (%s,%s)", (row["user_id"], "We couldn't confirm your payment. Please check and send the screenshot again."))
     audit(request.user["username"], f"payment_{action}", f"request {request_id}")
     return jsonify({"success": True})
@@ -1719,7 +1772,8 @@ def admin_review_payment(request_id, action):
 def admin_approve(user_id):
     plan = str(body().get("plan", ""))
     if plan not in PLANS or plan == "free": return err("Invalid plan.")
-    activate_plan(user_id, plan)
+    pending = q_one("SELECT duration_days FROM evil_payment_requests WHERE user_id=%s AND plan=%s AND status='pending' ORDER BY id DESC LIMIT 1", (user_id, plan))
+    activate_plan(user_id, plan, int(pending["duration_days"] or PLAN_DAYS) if pending else PLAN_DAYS)
     q_run("UPDATE evil_payment_requests SET status='approved', reviewed_at=NOW() WHERE user_id=%s AND plan=%s AND status='pending'", (user_id, plan))
     audit(request.user["username"], "approve", f"user {user_id} -> {plan}")
     return jsonify({"success": True})
