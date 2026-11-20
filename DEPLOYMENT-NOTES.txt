@@ -1,34 +1,23 @@
-VYRA SETTINGS, ZIP FILE GENERATION, AND CACHE REFRESH PATCH
+VYRA TARGETED FIX PATCH — ADMIN INFINITY DISPLAY + CREATOR ANSWER
 
-Modified files:
+Modified files (relative paths):
 - app.py
-- templates/index.html
 - static/script.js
-- static/style.css
-- static/sw.js
 
-Included changes:
-1. Chat composer is simplified to a compact settings chip instead of showing the full set of controls.
-2. Fast/Balanced/Deep, assistant persona, reply language, and creativity now live in Settings > AI & Chat. Existing request payload controls are retained.
-3. Settings has category navigation for AI & Chat, Personalization, Tools & Workspace, and Data & Security.
-4. Creativity preference is persisted locally.
-5. Added authenticated multi-file ZIP endpoint (`/api/export-files-zip`) with file count, size, duplicate name and path traversal checks.
-6. Existing answer ZIP export now packages named code fences as separate files when a response uses a format such as ```index.html or ```file:src/app.js. If no named code files are found, it exports the answer as Markdown as before.
-7. Added a project ZIP export interface in Projects & Memory. Select a project, paste a JSON array of `{path, content}` files, and export. Project ownership is checked server-side.
-8. Service-worker cache version bumped and static assets switched to network-first caching with offline fallback. Asset URLs have a build version query to reduce stale frontend versions after deployment.
+Fixes:
+1. Admin account displays Infinity instead of Enterprise in plan badge/sidebar.
+2. Admin plan page shows a separate Infinity Admin Access notice and hides customer checkout plan cards.
+3. Admin message and image quotas use a very large server-enforced limit while usage remains tracked.
+4. Creator questions matching common forms are answered deterministically: creator COLD and official Telegram/WhatsApp contact links. This no longer relies on the AI model to follow a system prompt.
 
 Deployment:
-- Extract this ZIP and replace each included file in your existing repository at the same relative path.
-- Commit to the existing deployment branch/service and redeploy.
-- Close the old browser tab, then reopen VYRA. If testing for cache issues, compare normal browsing with Incognito.
-- Test settings tabs, mode, persona, language, creativity, Tune reply, existing chat export, ZIP from named code blocks, and project ZIP export.
+Replace only app.py and static/script.js in the existing project with these files. Do not replace the database or environment variables. Deploy, close the old browser tab, reopen the website, then test admin badge, plan page, creator question, chat, and Image Studio.
 
 Tests performed:
-- Python compile check: passed.
-- JavaScript syntax check: passed.
-- Service worker syntax check: passed.
-- HTML duplicate-ID and required settings/ZIP elements check: passed.
-- Sample ZIP integrity/structure check: passed.
-- Live DB/auth endpoint integration and actual HTTP download tests: not run in this environment.
-
-This patch does not claim that all 50 feature ideas have been implemented. It implements the concrete settings redesign, ZIP generation/export and cache refresh fixes listed above.
+- Python compile: passed.
+- JavaScript syntax: passed.
+- Service worker syntax: passed.
+- Duplicate HTML IDs check: passed.
+- Creator intent detector: passed for 5 sample queries.
+- ZIP integrity: passed.
+- Live database/auth/image/chat provider integration: not run.

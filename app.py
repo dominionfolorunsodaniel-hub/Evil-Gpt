@@ -75,6 +75,7 @@ PLANS = {
     "enterprise": {"name": "Enterprise", "price": 100000, "price_usd": 99.99, "monthly_messages": 10000, "daily_images": 800},
 }
 PLAN_ORDER = list(PLANS.keys())
+INFINITY_LIMIT = 999999999  # Admin Infinity: effectively unlimited, enforced server-side.
 LEGACY_PLAN_MAP = {"ultra": "pro", "business_elite": "enterprise", "infinity": "enterprise"}
 BILLING_DAYS = {"weekly": 7, "monthly": 30, "annual": 365}
 BILLING_MULTIPLIERS = {"weekly": 0.35, "monthly": 1.0, "annual": 10.0}  # annual ~= two months free
@@ -395,6 +396,7 @@ def usage_status(u):
     month = q_one("SELECT to_char(NOW() AT TIME ZONE 'UTC','YYYY-MM') AS m")["m"]
     row = q_one("SELECT message_count FROM evil_usage WHERE user_id=%s AND usage_month=%s", (u["id"], month))
     used = row["message_count"] if row else 0
+    if u["is_admin"]: return {"used": used, "limit": INFINITY_LIMIT, "remaining": INFINITY_LIMIT, "trial": False, "infinity": True}
     if trial: return {"used": used, "limit": 99999, "remaining": 99999, "trial": True, "trialEndsAt": iso(u["trial_ends_at"])}
     limit = PLANS[plan_key]["monthly_messages"] + (u["bonus_messages"] or 0)
     return {"used": used, "limit": limit, "remaining": max(0, limit - used), "trial": False}
@@ -918,7 +920,7 @@ def me():
                  "country": u.get("country_code"), "currency": u.get("preferred_currency") or "NGN",
                  "language": u.get("preferred_language") or "English", "trialEndsAt": iso(u["trial_ends_at"])},
         "usage": usage_status(u),
-        "images": {"used": u["images_today"], "limit": PLANS[plan_key]["daily_images"]},
+        "images": {"used": u["images_today"], "limit": INFINITY_LIMIT if u["is_admin"] else PLANS[plan_key]["daily_images"]},
         "badges": badges_for(u),
         "plans": PLANS, "paystack": bool(PAYSTACK_SECRET_KEY), "brand": BRAND})
 
@@ -1059,7 +1061,8 @@ def generate_image():
     if not prompt: return err("Describe the image you want first.")
     if len(prompt) > 600: return err("Keep the description under 600 characters.")
     u = request.user; plan_key, _ = effective_plan(u)
-    limit = PLANS[plan_key]["daily_images"]
+    limit = INFINITY_LIMIT if u["is_admin"] else PLANS[plan_key]["daily_images"]
+    # Admin Infinity bypasses customer image caps; the usage counter is still tracked.
     # Atomic: only counts if still under today's limit, so parallel clicks can't overshoot.
     row = q_one(f"""UPDATE evil_users SET images_generated_today = CASE WHEN last_image_date = {TODAY} THEN images_generated_today+1 ELSE 1 END,
                     last_image_date = {TODAY}
@@ -1415,9 +1418,8 @@ def ask_stream():
         if skill:
             sys_prompt += f"\\nActive saved Skill ({skill['name']}): {skill['instruction']}"
             question = question[skill_match.end():].strip() or "Apply the saved Skill to my next task."
-    creator_terms = re.compile(r"\b(who (made|created|built|developed) you|who (is|was) the creator (of )?(vyra|you)|who (is|was) (your|vyra) (creator|developer|founder)|your creator|your developer|who is cold|who created vyra|vyra creator|contact (your|the) creator)\b", re.I)
-    if creator_terms.search(question):
-        sys_prompt += "\nIf the user asks who created/developed VYRA or asks to contact its creator, identify the creator as COLD. Share only these official contact options: Telegram support https://t.me/COLDFX26 and WhatsApp support https://wa.me/2348100481004. Invite them to use the official support channel for reports and enquiries. Do not invent additional contact accounts or personal details."
+    creator_terms = re.compile(r"\b(who (made|created|built|developed) (you|vyra)|who (is|was) the creator (of )?(vyra|you)|who (is|was) (your|vyra) (creator|developer|founder)|your creator|your developer|who is cold|who is cold to you|who created vyra|vyra creator|who owns vyra|vyra owner|contact (your|the) creator|contact cold)\b", re.I)
+    creator_request = bool(creator_terms.search(question))
 
     if LANGUAGES.get(language): sys_prompt += " " + LANGUAGES[language] + " Keep code and technical terms in English."
     if length_pref: sys_prompt += " " + LENGTH_PROMPTS[length_pref]
@@ -1433,6 +1435,14 @@ def ask_stream():
     def generate():
         collected, model, tried_fallback, started, truncated = [], start_model, False, False, False
         yield sse({"start": conv_id})
+        if creator_request:
+            answer = ("VYRA was created by **COLD**.\n\nFor support, feedback or enquiries, contact the creator through the official channels:\n\n- Telegram: https://t.me/COLDFX26\n- WhatsApp: https://wa.me/2348100481004\n\nPlease use these channels for VYRA-related questions.")
+            collected.append(answer)
+            for offset in range(0, len(answer), 180):
+                yield sse({"t": answer[offset:offset+180]})
+            ids = save_turn(conv_id, user_id, question, answer, is_new)
+            yield sse({"done": conv_id, "messageId": ids[1], "userMessageId": ids[0], "truncated": False})
+            return
         try:
             while True:
                 try:
