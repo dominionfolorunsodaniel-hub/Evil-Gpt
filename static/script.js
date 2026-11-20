@@ -176,7 +176,7 @@ async function enterApp() {
   await refreshMe();
   const tasks = [loadPersonas(), loadHistory(), loadNotifs(), loadDailyPrompt()];
   await Promise.all(tasks.map((t) => t.catch(() => {})));
-  setGreeting(); newChat(); maybeTour();
+  setGreeting(); const rememberedPage = store.get("vyra-page"); newChat(); maybeTour(); if (["chat","toolbox","images","plans"].includes(rememberedPage)) showPage(rememberedPage);
   const paid = new URLSearchParams(location.search).get("paid");
   if (paid) {
     history.replaceState(null, "", "/?login=1"); showPage("plans");
@@ -233,7 +233,7 @@ async function loadDailyPrompt() {
 /* ---------------------------------------------------------------- navigation */
 const TITLES = { chat: "", toolbox: "AI Toolbox", images: "Image Studio", plans: "Plans", admin: "Admin" };
 function showPage(name) {
-  S.page = name;
+  S.page = name; store.set("vyra-page", name);
   ["chat", "toolbox", "images", "plans", "admin"].forEach((p) => $(p + "-page").classList.toggle("hidden", p !== name));
   document.querySelectorAll(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.page === name));
   $("page-heading").textContent = TITLES[name] || document.querySelector(".brand").textContent.trim();
@@ -243,6 +243,21 @@ function showPage(name) {
   if (name === "admin") renderAdmin(S.adminTab);
 }
 document.querySelectorAll(".nav-item").forEach((b) => (b.onclick = () => showPage(b.dataset.page)));
+const TOOL_PROMPTS = {
+  study: "Act as my patient study tutor. Ask what subject and topic I am learning, then teach step by step with a short practice question.",
+  research: "Help me create a research brief. Clarify the topic if needed, organize key questions, distinguish facts from assumptions, and suggest reliable source types to verify.",
+  writing: "Open Writing Studio. Ask what I need to write and help me draft, revise, or polish it with the requested tone.",
+  coding: "Act as my coding assistant. Ask for my code or error if needed, explain the issue clearly, and propose a careful fix with reasoning.",
+  planner: "Help me plan my tasks and goals. Ask for the goal and timeframe, then create a realistic checklist and schedule.",
+  data: "Act as a data analyst. Ask me to paste or attach data, then help summarize it, identify patterns, and explain limitations.",
+  creative: "Start Creative Lab. Help me brainstorm original ideas, concepts, characters, story outlines, or creative projects.",
+  decision: "Help me compare choices fairly. Ask for the options and priorities, then create a clear pros/cons comparison and explain trade-offs without choosing for me."
+};
+document.querySelectorAll("[data-tool]").forEach((card) => card.addEventListener("click", () => {
+  const prompt = TOOL_PROMPTS[card.dataset.tool]; if (!prompt) return;
+  showPage("chat"); newChat(); $("message-input").value = prompt; autosize(); $("message-input").focus();
+}));
+
 function closeSidebar() { $("sidebar").classList.remove("open"); $("scrim").classList.add("hidden"); }
 $("mobile-menu").onclick = () => { $("sidebar").classList.add("open"); $("scrim").classList.remove("hidden"); };
 $("scrim").onclick = closeSidebar;
@@ -326,7 +341,7 @@ $("tune-btn").onclick = () => {
 function msgActions(m) {
   if (m.role === "user") return `<div class="msg-actions"><button type="button" data-act="edit" aria-label="Edit and resend" title="Edit and resend">${ico("edit", "sm")}</button><button type="button" data-act="copy" aria-label="Copy" title="Copy">${ico("copy", "sm")}</button></div>`;
   const last = S.msgs.filter((x) => x.role === "assistant").slice(-1)[0] === m;
-  return `<div class="msg-actions">${last && m.truncated ? `<button type="button" data-act="continue" class="chip" aria-label="Continue" title="The reply got cut off">${ico("arrow-up", "sm")}Continue</button>` : ""}<button type="button" data-act="copy" aria-label="Copy" title="Copy">${ico("copy", "sm")}</button><button type="button" data-act="speak" aria-label="Read aloud" title="Read aloud">${ico("volume", "sm")}</button>${last ? `<button type="button" data-act="regen" aria-label="Regenerate" title="Regenerate">${ico("refresh", "sm")}</button>` : ""}<button type="button" data-act="up" class="${m.feedback === 1 ? "on" : ""}" aria-label="Good answer" title="Good answer">${ico("thumb-up", "sm")}</button><button type="button" data-act="down" class="${m.feedback === -1 ? "on" : ""}" aria-label="Bad answer" title="Bad answer">${ico("thumb-down", "sm")}</button></div>`;
+  return `<div class="msg-actions">${last && m.truncated ? `<button type="button" data-act="continue" class="chip" aria-label="Continue" title="The reply got cut off">${ico("arrow-up", "sm")}Continue</button>` : ""}<button type="button" data-act="copy" aria-label="Copy" title="Copy">${ico("copy", "sm")}</button><button type="button" data-act="download" aria-label="Download answer as text" title="Download answer">${ico("download", "sm")}</button><button type="button" data-act="zip" aria-label="Download answer as ZIP" title="Download answer as ZIP">${ico("archive", "sm")}</button><button type="button" data-act="speak" aria-label="Read aloud" title="Read aloud">${ico("volume", "sm")}</button>${last ? `<button type="button" data-act="regen" aria-label="Regenerate" title="Regenerate">${ico("refresh", "sm")}</button>` : ""}<button type="button" data-act="up" class="${m.feedback === 1 ? "on" : ""}" aria-label="Good answer" title="Good answer">${ico("thumb-up", "sm")}</button><button type="button" data-act="down" class="${m.feedback === -1 ? "on" : ""}" aria-label="Bad answer" title="Bad answer">${ico("thumb-down", "sm")}</button></div>`;
 }
 function msgEl(m) {
   const el = document.createElement("article"); el.className = "msg " + m.role; m.el = el;
@@ -370,6 +385,8 @@ $("chat-messages").addEventListener("click", async (e) => {
   const btn = e.target.closest("[data-act]"); if (!btn) return;
   const idx = S.msgs.findIndex((m) => m.el === btn.closest(".msg")); const m = S.msgs[idx]; if (!m) return; const act = btn.dataset.act;
   if (act === "copy") { toast((await copyText(m.content)) ? "Copied" : "Couldn't copy"); }
+  if (act === "download") { const blob=new Blob([m.content||""],{type:"text/markdown;charset=utf-8"}); const url=URL.createObjectURL(blob); const a=document.createElement("a"); a.href=url; a.download="vyra-answer.md"; a.click(); setTimeout(()=>URL.revokeObjectURL(url),1000); }
+  if (act === "zip") { try { const r=await fetch("/api/export-answer-zip",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({content:m.content||"",filename:"vyra-answer.md"})}); if(!r.ok){const d=await r.json().catch(()=>({}));throw new Error(d.error||"ZIP export failed");} const blob=await r.blob(); const url=URL.createObjectURL(blob); const a=document.createElement("a"); a.href=url; a.download="vyra-answer.zip"; a.click(); setTimeout(()=>URL.revokeObjectURL(url),1000); } catch(err){toast(err.message,"error");} }
   if (act === "speak") speak(m.content);
   if (act === "edit") { if (!m.id) return toast("Give it a second, this message is still saving."); S.editFromId = m.id; $("message-input").value = m.content; autosize(); $("message-input").focus(); toast("Editing. Send to replace this message and everything after it."); }
   if (act === "regen") { const u = S.msgs[idx - 1]; if (!u || !u.id) return toast("Give it a second, then try again."); send(u.content, { truncateFromId: u.id }); }
@@ -431,28 +448,6 @@ async function send(text, opts = {}) {
 $("chat-messages").addEventListener("click", (e) => { if (e.target.closest("[data-retry]")) { const t = S.lastFailed; S.msgs = S.msgs.filter((m) => !(m.el && m.el.dataset.failed)); renderMessages(); if (t) send(t); } });
 async function syncIds() { // after Stop: learn the saved ids so edit/regenerate/feedback work
   try { const d = await api("/api/conversations/" + S.conv); S.msgs = d.messages.map((m) => ({ id: m.id, role: m.role, content: m.content, feedback: m.feedback })); renderMessages(); } catch (e) {}
-}
-
-/* ---------------------------------------------------------------- AI Toolbox prompt workflows */
-const TOOL_PROMPTS = {
-  study: "Act as a patient learning tutor. Teach the topic in clear steps, check understanding, give a short example, then offer a few practice questions without overwhelming me.\n\nTopic/task:\n",
-  research: "Create a structured research brief. Separate established facts from claims or opinions, identify questions that need verification, compare major viewpoints, and suggest credible source types. Do not invent citations or claim you browsed.\n\nResearch topic:\n",
-  writing: "Help me in the Writing Studio. First infer the purpose and audience; produce a useful draft, then briefly explain key choices and offer a revision direction. Preserve any facts I provide.\n\nWriting task and details:\n",
-  coding: "Act as a coding mentor. Analyze the code or issue, explain the likely cause, propose a minimal safe fix, and include a corrected snippet plus how to test it. Do not assume files or run tests you cannot access.\n\nCode/task/error:\n",
-  planning: "Turn this into a practical plan. Break it into milestones, small steps, priorities, time estimates, dependencies, and a checklist. Keep it realistic and point out assumptions.\n\nGoal and constraints:\n",
-  data: "Act as a data analyst. Inspect the supplied data, state assumptions, calculate summaries where possible, highlight patterns and anomalies, and explain the findings in plain language. Do not fabricate values or imply you processed a file that was not provided.\n\nData/question:\n",
-  creative: "Act as a creative collaborator. Generate varied original concepts, make each option distinct, and include a short rationale and next-step suggestion.\n\nCreative brief:\n",
-  decision: "Help compare these options objectively. Build a comparison using the criteria I mention, identify trade-offs, list uncertainties, and provide a conditional recommendation rather than pretending there is one universally correct choice.\n\nOptions and criteria:\n"
-};
-function setToolboxActive(tool){
-  $("toolbox-select").value=tool;
-  document.querySelectorAll(".toolbox-card").forEach(c=>c.classList.toggle("active",c.dataset.tool===tool));
-}
-if($("toolbox-grid")){
-  $("toolbox-grid").addEventListener("click",e=>{const c=e.target.closest("[data-tool]");if(c)setToolboxActive(c.dataset.tool);});
-  $("toolbox-select").addEventListener("change",e=>setToolboxActive(e.target.value));
-  $("toolbox-clear").onclick=()=>{$("toolbox-input").value="";$ ("toolbox-input").focus();};
-  $("toolbox-run").onclick=()=>{const task=$("toolbox-input").value.trim();if(!task)return toast("Describe your task first.");const prompt=(TOOL_PROMPTS[$("toolbox-select").value]||TOOL_PROMPTS.study)+task;newChat();showPage("chat");send(prompt);};
 }
 
 /* PDF attach */
