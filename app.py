@@ -61,7 +61,7 @@ SITE_URL = (os.environ.get("SITE_URL") or "").rstrip("/")
 PAYSTACK_SECRET_KEY = os.environ.get("PAYSTACK_SECRET_KEY")
 WHATSAPP_SUPPORT_NUMBER = re.sub(r"\D", "", os.environ.get("WHATSAPP_SUPPORT_NUMBER", ""))
 CUSTOM_PERSONA_FREE = os.environ.get("CUSTOM_PERSONA_FREE") == "1"  # set to 1 to let Free users use custom personas
-TRIAL_DAYS = int(os.environ.get("TRIAL_DAYS", "3"))
+TRIAL_DAYS = int(os.environ.get("TRIAL_DAYS", "7"))
 PLAN_DAYS = int(os.environ.get("PLAN_DAYS", "30"))
 MAX_MESSAGE_CHARS = 8000
 
@@ -75,7 +75,6 @@ PLANS = {
     "enterprise": {"name": "Enterprise", "price": 100000, "price_usd": 99.99, "monthly_messages": 10000, "daily_images": 800},
 }
 PLAN_ORDER = list(PLANS.keys())
-INFINITY_LIMIT = 999999999  # Admin Infinity: effectively unlimited, enforced server-side.
 LEGACY_PLAN_MAP = {"ultra": "pro", "business_elite": "enterprise", "infinity": "enterprise"}
 BILLING_DAYS = {"weekly": 7, "monthly": 30, "annual": 365}
 BILLING_MULTIPLIERS = {"weekly": 0.35, "monthly": 1.0, "annual": 10.0}  # annual ~= two months free
@@ -204,6 +203,9 @@ SCHEMA = [
     "CREATE TABLE IF NOT EXISTS evil_notifications (id BIGSERIAL PRIMARY KEY, user_id BIGINT REFERENCES evil_users(id) ON DELETE CASCADE, message TEXT NOT NULL, is_read BOOLEAN DEFAULT FALSE, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
     # ---- new in Vyra AI (all additive, nothing existing is changed) ----
     "ALTER TABLE evil_users ADD COLUMN IF NOT EXISTS plan_expires_at TIMESTAMPTZ",
+    "ALTER TABLE evil_users ADD COLUMN IF NOT EXISTS public_id VARCHAR(16)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS evil_users_public_id_idx ON evil_users(public_id)",
+    "CREATE TABLE IF NOT EXISTS evil_admin_messages (id BIGSERIAL PRIMARY KEY, admin_id BIGINT NOT NULL REFERENCES evil_users(id), user_id BIGINT NOT NULL REFERENCES evil_users(id) ON DELETE CASCADE, message TEXT NOT NULL, read_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
     "ALTER TABLE evil_users ADD COLUMN IF NOT EXISTS referral_code VARCHAR(12)",
     "ALTER TABLE evil_users ADD COLUMN IF NOT EXISTS referred_by BIGINT",
     "ALTER TABLE evil_users ADD COLUMN IF NOT EXISTS is_suspended BOOLEAN NOT NULL DEFAULT FALSE",
@@ -229,6 +231,7 @@ SCHEMA = [
     "CREATE TABLE IF NOT EXISTS evil_plan_gifts (id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES evil_users(id) ON DELETE CASCADE, admin_id BIGINT NOT NULL REFERENCES evil_users(id), plan VARCHAR(32) NOT NULL, duration_days INTEGER NOT NULL, reason TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
     "CREATE TABLE IF NOT EXISTS evil_reward_requests (id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES evil_users(id) ON DELETE CASCADE, message TEXT NOT NULL, status VARCHAR(20) NOT NULL DEFAULT 'pending', admin_note TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), reviewed_at TIMESTAMPTZ)",
     "CREATE TABLE IF NOT EXISTS evil_settings (key VARCHAR(40) PRIMARY KEY, value TEXT NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS evil_coupons (id BIGSERIAL PRIMARY KEY, code VARCHAR(32) UNIQUE NOT NULL, discount_type VARCHAR(12) NOT NULL, discount_value NUMERIC(12,2) NOT NULL, applicable_plan VARCHAR(32), max_uses INTEGER, uses INTEGER NOT NULL DEFAULT 0, expires_at TIMESTAMPTZ, active BOOLEAN NOT NULL DEFAULT TRUE, created_by BIGINT REFERENCES evil_users(id), created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
     # ---- second Vyra AI batch (all additive) ----
     "ALTER TABLE evil_conversations ADD COLUMN IF NOT EXISTS tags VARCHAR(200)",
     "ALTER TABLE evil_conversations ADD COLUMN IF NOT EXISTS archived BOOLEAN NOT NULL DEFAULT FALSE",
@@ -271,6 +274,21 @@ def init_db():
                         if not cur.fetchone():
                             cur.execute("INSERT INTO evil_users(username,email,password_hash,plan,is_admin,is_verified) VALUES (%s,%s,%s,'enterprise',TRUE,TRUE)",
                                         (ADMIN_USERNAME, (ADMIN_USERNAME.lower() + "@admin.invalid")[:254], generate_password_hash(ADMIN_PASSWORD)))
+                    # Every account receives a private, human-readable VYRA ID (collision checked by unique index).
+                    cur.execute("SELECT id FROM evil_users WHERE public_id IS NULL")
+                    for r in cur.fetchall():
+                        while True:
+                            pid = new_vyra_id()
+                            cur.execute("SELECT 1 FROM evil_users WHERE public_id=%s", (pid,))
+                            if not cur.fetchone(): break
+                        cur.execute("UPDATE evil_users SET public_id=%s WHERE id=%s", (pid, r["id"]))
+                    # One-time launch promotion: extend eligible existing Free accounts to 7 days.
+                    cur.execute("SELECT 1 FROM evil_settings WHERE key='migration_existing_users_7day_trial'")
+                    if not cur.fetchone():
+                        cur.execute("""UPDATE evil_users u SET trial_ends_at=NOW() + INTERVAL '7 days'
+                                    WHERE is_admin=FALSE AND plan='free'
+                                    AND NOT EXISTS (SELECT 1 FROM evil_payment_requests p WHERE p.user_id=u.id AND p.status='approved')""")
+                        cur.execute("INSERT INTO evil_settings(key,value) VALUES ('migration_existing_users_7day_trial','done')")
                     # Everyone gets a referral code.
                     cur.execute("SELECT id FROM evil_users WHERE referral_code IS NULL")
                     for r in cur.fetchall():
@@ -290,6 +308,10 @@ def init_db():
                 if attempt == 2: raise
                 time.sleep(1)
 
+
+def new_vyra_id():
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    return "VYR-" + "".join(secrets.choice(alphabet) for _ in range(4)) + "-" + "".join(secrets.choice(alphabet) for _ in range(4) )
 
 def new_referral_code():
     return "".join(secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(7))
@@ -339,7 +361,7 @@ def limited(name, limit, window, per="ip"):
     return deco
 
 
-USER_COLS = """id,username,email,plan,is_admin,is_verified,trial_ends_at,bonus_messages,streak_count,custom_persona,referral_code,is_suspended,
+USER_COLS = """id,username,email,public_id,plan,is_admin,is_verified,trial_ends_at,bonus_messages,streak_count,custom_persona,referral_code,is_suspended,
     about_me,ai_nickname,session_version,last_seen_changelog,country_code,preferred_language,preferred_currency,
     (trial_ends_at IS NOT NULL AND trial_ends_at > NOW()) AS trial_active,
     (plan_expires_at IS NOT NULL AND plan_expires_at < NOW()) AS plan_expired,
@@ -396,7 +418,6 @@ def usage_status(u):
     month = q_one("SELECT to_char(NOW() AT TIME ZONE 'UTC','YYYY-MM') AS m")["m"]
     row = q_one("SELECT message_count FROM evil_usage WHERE user_id=%s AND usage_month=%s", (u["id"], month))
     used = row["message_count"] if row else 0
-    if u["is_admin"]: return {"used": used, "limit": INFINITY_LIMIT, "remaining": INFINITY_LIMIT, "trial": False, "infinity": True}
     if trial: return {"used": used, "limit": 99999, "remaining": 99999, "trial": True, "trialEndsAt": iso(u["trial_ends_at"])}
     limit = PLANS[plan_key]["monthly_messages"] + (u["bonus_messages"] or 0)
     return {"used": used, "limit": limit, "remaining": max(0, limit - used), "trial": False}
@@ -912,7 +933,7 @@ def me():
     refs_row = q_one("SELECT COUNT(*) AS n FROM evil_users WHERE referred_by::text=%s AND referral_rewarded=TRUE", (str(u["id"]),))
     refs = (refs_row or {}).get("n", 0)
     return jsonify({
-        "user": {"username": u["username"], "email": u["email"], "plan": plan_key, "paidPlan": u["plan"], "isAdmin": u["is_admin"],
+        "user": {"username": u["username"], "email": u["email"], "publicId": u.get("public_id"), "plan": plan_key, "paidPlan": u["plan"], "isAdmin": u["is_admin"],
                  "streak": u["streak_count"] or 0, "checkedInToday": bool(u["checked_in_today"]), "trial": trial,
                  "planExpiresAt": iso(u["plan_expires_at"]), "customPersona": u["custom_persona"] or "", "canUsePersona": can_persona,
                  "referralCode": u["referral_code"], "referrals": refs, "aboutMe": u["about_me"] or "", "aiNickname": u["ai_nickname"] or "",
@@ -920,7 +941,7 @@ def me():
                  "country": u.get("country_code"), "currency": u.get("preferred_currency") or "NGN",
                  "language": u.get("preferred_language") or "English", "trialEndsAt": iso(u["trial_ends_at"])},
         "usage": usage_status(u),
-        "images": {"used": u["images_today"], "limit": INFINITY_LIMIT if u["is_admin"] else PLANS[plan_key]["daily_images"]},
+        "images": {"used": u["images_today"], "limit": PLANS[plan_key]["daily_images"]},
         "badges": badges_for(u),
         "plans": PLANS, "paystack": bool(PAYSTACK_SECRET_KEY), "brand": BRAND})
 
@@ -1035,6 +1056,14 @@ def get_notifications():
     return jsonify({"notifications": [{"id": r["id"], "message": r["message"], "is_read": r["is_read"], "created_at": iso(r["created_at"])} for r in rows]})
 
 
+@app.get("/api/user/direct-messages")
+@login_required
+def user_direct_messages():
+    rows=q_all("SELECT id,message,created_at,read_at FROM evil_admin_messages WHERE user_id=%s ORDER BY id DESC LIMIT 100", (request.user["id"],))
+    q_run("UPDATE evil_admin_messages SET read_at=NOW() WHERE user_id=%s AND read_at IS NULL", (request.user["id"],))
+    return jsonify({"messages":[{**r,"created_at":iso(r["created_at"]),"read_at":iso(r["read_at"])} for r in rows]})
+
+
 @app.post("/api/notifications/read")
 @login_required
 def mark_notifications_read():
@@ -1061,8 +1090,7 @@ def generate_image():
     if not prompt: return err("Describe the image you want first.")
     if len(prompt) > 600: return err("Keep the description under 600 characters.")
     u = request.user; plan_key, _ = effective_plan(u)
-    limit = INFINITY_LIMIT if u["is_admin"] else PLANS[plan_key]["daily_images"]
-    # Admin Infinity bypasses customer image caps; the usage counter is still tracked.
+    limit = PLANS[plan_key]["daily_images"]
     # Atomic: only counts if still under today's limit, so parallel clicks can't overshoot.
     row = q_one(f"""UPDATE evil_users SET images_generated_today = CASE WHEN last_image_date = {TODAY} THEN images_generated_today+1 ELSE 1 END,
                     last_image_date = {TODAY}
@@ -1288,64 +1316,6 @@ def export_answer_zip():
     return send_file(buf, mimetype="application/zip", as_attachment=True, download_name="vyra-answer.zip")
 
 
-@app.post("/api/export-files-zip")
-@login_required
-def export_files_zip():
-    d = body(); files = d.get("files")
-    if not isinstance(files, list) or not files or len(files) > 30: return err("Provide between 1 and 30 files.", 400)
-    total = 0; validated = []; seen = set()
-    for item in files:
-        if not isinstance(item, dict): return err("Each file must include a path and content.", 400)
-        path = str(item.get("path", item.get("filename", ""))).strip().replace("\\", "/")
-        content = item.get("content", "")
-        if not path or path.startswith("/") or any(part in ("", ".", "..") for part in path.split("/")) or re.match(r"^[A-Za-z]:", path) or "\x00" in path or any(ord(ch) < 32 for ch in path): return err("Unsafe file path detected.", 400)
-        if not isinstance(content, str): return err("File content must be text.", 400)
-        if len(path) > 180 or len(content) > 200000: return err("File name or content is too large.", 400)
-        if path.lower() == "readme.md": return err("README.md is reserved for the generated export notes.", 400)
-        if path.lower() in seen: return err("Duplicate file path detected.", 400)
-        seen.add(path.lower()); total += len(content.encode("utf-8")); validated.append((path, content))
-        if total > 750000: return err("ZIP contents exceed 750 KB.", 400)
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for path, content in validated: zf.writestr(path, content)
-        zf.writestr("README.md", "# VYRA AI file export\n\nGenerated files are included in this ZIP.\n")
-    buf.seek(0)
-    return send_file(buf, mimetype="application/zip", as_attachment=True, download_name="vyra-files.zip")
-
-
-@app.post("/api/export-project-zip")
-@login_required
-def export_project_zip():
-    d = body()
-    project_id = d.get("projectId")
-    try: project_id = int(project_id)
-    except (TypeError, ValueError): return err("Select a valid project.", 400)
-    project = q_one("SELECT id,name FROM evil_projects WHERE id=%s AND user_id=%s", (project_id, request.user["id"]))
-    if not project: return err("Project not found.", 404)
-    files = d.get("files")
-    if not isinstance(files, list) or not files or len(files) > 30: return err("Provide between 1 and 30 files.", 400)
-    total = 0; validated = []; seen = set()
-    for item in files:
-        if not isinstance(item, dict): return err("Each file must include a path and content.", 400)
-        path = str(item.get("path", item.get("filename", ""))).strip().replace("\\", "/")
-        content = item.get("content", "")
-        if not path or path.startswith("/") or any(part in ("", ".", "..") for part in path.split("/")) or re.match(r"^[A-Za-z]:", path) or "\x00" in path or any(ord(ch) < 32 for ch in path): return err("Unsafe file path detected.", 400)
-        if not isinstance(content, str): return err("File content must be text.", 400)
-        if len(path) > 180 or len(content) > 200000: return err("File name or content is too large.", 400)
-        if path.lower() == "readme.md": return err("README.md is reserved for the generated export notes.", 400)
-        if path.lower() in seen: return err("Duplicate file path detected.", 400)
-        seen.add(path.lower()); total += len(content.encode("utf-8")); validated.append((path, content))
-        if total > 750000: return err("ZIP contents exceed 750 KB.", 400)
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for path, content in validated: zf.writestr(path, content)
-        project_name = re.sub(r"[^A-Za-z0-9 _-]", "", str(project["name"]))[:80] or "Project"
-        zf.writestr("README.md", f"# {project_name}\n\nGenerated file bundle from VYRA AI.\n\nFiles: {len(validated)}\n")
-    buf.seek(0)
-    safe_project = re.sub(r"[^A-Za-z0-9_-]", "-", str(project["name"]))[:60] or "project"
-    return send_file(buf, mimetype="application/zip", as_attachment=True, download_name=f"vyra-{safe_project}.zip")
-
-
 @app.post("/ask/stream")
 @login_required
 @limited("chat", 25, 60, per="user")
@@ -1418,8 +1388,9 @@ def ask_stream():
         if skill:
             sys_prompt += f"\\nActive saved Skill ({skill['name']}): {skill['instruction']}"
             question = question[skill_match.end():].strip() or "Apply the saved Skill to my next task."
-    creator_terms = re.compile(r"\b(who (made|created|built|developed) (you|vyra)|who (is|was) the creator (of )?(vyra|you)|who (is|was) (your|vyra) (creator|developer|founder)|your creator|your developer|who is cold|who is cold to you|who created vyra|vyra creator|who owns vyra|vyra owner|contact (your|the) creator|contact cold)\b", re.I)
-    creator_request = bool(creator_terms.search(question))
+    creator_terms = re.compile(r"\b(who (made|created|built|developed) you|who (is|was) the creator (of )?(vyra|you)|who (is|was) (your|vyra) (creator|developer|founder)|your creator|your developer|who is cold|who created vyra|vyra creator|contact (your|the) creator)\b", re.I)
+    if creator_terms.search(question):
+        sys_prompt += "\nIf the user asks who created/developed VYRA or asks to contact its creator, identify the creator as COLD. Share only these official contact options: Telegram support https://t.me/COLDFX26 and WhatsApp support https://wa.me/2348100481004. Invite them to use the official support channel for reports and enquiries. Do not invent additional contact accounts or personal details."
 
     if LANGUAGES.get(language): sys_prompt += " " + LANGUAGES[language] + " Keep code and technical terms in English."
     if length_pref: sys_prompt += " " + LENGTH_PROMPTS[length_pref]
@@ -1435,14 +1406,6 @@ def ask_stream():
     def generate():
         collected, model, tried_fallback, started, truncated = [], start_model, False, False, False
         yield sse({"start": conv_id})
-        if creator_request:
-            answer = ("VYRA was created by **COLD**.\n\nFor support, feedback or enquiries, contact the creator through the official channels:\n\n- Telegram: https://t.me/COLDFX26\n- WhatsApp: https://wa.me/2348100481004\n\nPlease use these channels for VYRA-related questions.")
-            collected.append(answer)
-            for offset in range(0, len(answer), 180):
-                yield sse({"t": answer[offset:offset+180]})
-            ids = save_turn(conv_id, user_id, question, answer, is_new)
-            yield sse({"done": conv_id, "messageId": ids[1], "userMessageId": ids[0], "truncated": False})
-            return
         try:
             while True:
                 try:
@@ -1631,9 +1594,68 @@ def paystack_webhook():
 @app.get("/api/admin/users")
 @admin_required
 def admin_users():
-    rows = q_all("""SELECT id,username,email,plan,is_suspended,is_verified,plan_expires_at,created_at,last_seen_at,
+    rows = q_all("""SELECT id,username,email,public_id,plan,is_suspended,is_verified,plan_expires_at,created_at,last_seen_at,
                     (trial_ends_at IS NOT NULL AND trial_ends_at > NOW()) AS trial FROM evil_users WHERE is_admin=FALSE ORDER BY id DESC LIMIT 500""")
     return jsonify({"users": [{**r, "plan_expires_at": iso(r["plan_expires_at"]), "created_at": iso(r["created_at"]), "last_seen_at": iso(r["last_seen_at"])} for r in rows]})
+
+
+@app.post("/api/admin/users/<int:user_id>/message")
+@admin_required
+def admin_direct_message(user_id):
+    message = str(body().get("message", "")).strip()[:2000]
+    if not message: return err("Write a message first.")
+    target = q_one("SELECT id,username FROM evil_users WHERE id=%s AND is_admin=FALSE", (user_id,))
+    if not target: return err("Customer not found.", 404)
+    q_run("INSERT INTO evil_admin_messages(admin_id,user_id,message) VALUES (%s,%s,%s)", (request.user["id"], user_id, message))
+    q_run("INSERT INTO evil_notifications(user_id,message) VALUES (%s,%s)", (user_id, "You have a new private message from VYRA Admin."))
+    audit(request.user["username"], "private_message", f"user {user_id}")
+    return jsonify({"success": True, "username": target["username"]})
+
+
+@app.get("/api/admin/users/<int:user_id>/messages")
+@admin_required
+def admin_direct_message_history(user_id):
+    rows = q_all("SELECT id,message,created_at,read_at FROM evil_admin_messages WHERE user_id=%s ORDER BY id DESC LIMIT 100", (user_id,))
+    return jsonify({"messages": [{**r, "created_at": iso(r["created_at"]), "read_at": iso(r["read_at"])} for r in rows]})
+
+
+@app.get("/api/admin/coupons")
+@admin_required
+def admin_coupons_list():
+    rows = q_all("SELECT id,code,discount_type,discount_value,applicable_plan,max_uses,uses,expires_at,active,created_at FROM evil_coupons ORDER BY id DESC LIMIT 200")
+    return jsonify({"coupons": [{**r, "expires_at": iso(r["expires_at"]), "created_at": iso(r["created_at"])} for r in rows]})
+
+
+@app.post("/api/admin/coupons")
+@admin_required
+def admin_coupon_create():
+    d=body(); code=re.sub(r"[^A-Z0-9_-]", "", str(d.get("code", "")).upper())[:32]
+    kind=str(d.get("discount_type", "percent")); value=d.get("discount_value")
+    plan=str(d.get("applicable_plan", "")) or None
+    max_uses=d.get("max_uses"); expiry=str(d.get("expires_at", "")).strip() or None
+    if not code or kind not in ("percent","fixed"): return err("Enter a valid coupon code and discount type.")
+    try: value=float(value); max_uses=int(max_uses) if max_uses not in (None, "") else None
+    except (ValueError,TypeError): return err("Discount and usage limit must be numeric.")
+    if value<=0 or (kind=="percent" and value>100) or (max_uses is not None and max_uses<1): return err("Discount value or usage limit is invalid.")
+    if plan and plan not in PLANS: return err("Invalid plan.")
+    try:
+        q_run("INSERT INTO evil_coupons(code,discount_type,discount_value,applicable_plan,max_uses,expires_at,created_by) VALUES (%s,%s,%s,%s,%s,%s,%s)", (code,kind,value,plan,max_uses,expiry,request.user["id"]))
+    except psycopg2.errors.UniqueViolation: return err("Coupon code already exists.",409)
+    audit(request.user["username"], "coupon_create", code)
+    return jsonify({"success":True,"code":code})
+
+
+@app.post("/api/coupons/validate")
+@login_required
+def coupon_validate():
+    d=body(); code=re.sub(r"[^A-Z0-9_-]", "", str(d.get("code", "")).upper())[:32]
+    plan=str(d.get("plan", ""))
+    row=q_one("SELECT code,discount_type,discount_value,applicable_plan,max_uses,uses,expires_at FROM evil_coupons WHERE code=%s AND active=TRUE", (code,))
+    if not row: return err("Coupon is invalid or inactive.",404)
+    if row["expires_at"] and row["expires_at"]<=__import__('datetime').datetime.now(__import__('datetime').timezone.utc): return err("Coupon has expired.",410)
+    if row["max_uses"] is not None and row["uses"]>=row["max_uses"]: return err("Coupon usage limit reached.",409)
+    if row["applicable_plan"] and row["applicable_plan"]!=plan: return err("Coupon does not apply to that plan.")
+    return jsonify({"valid":True,"code":row["code"],"discountType":row["discount_type"],"discountValue":float(row["discount_value"]),"message":"Coupon is valid. Checkout discount redemption is not yet connected."})
 
 
 @app.post("/api/admin/users/<int:user_id>/plan")
