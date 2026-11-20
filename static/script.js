@@ -9,7 +9,7 @@ const fmtDate = (iso) => { try { return new Date(iso).toLocaleDateString("en-NG"
 
 const S = {
   user: null, usage: null, images: null, plans: {}, paystack: document.body.dataset.paystack === "1",
-  conv: null, msgs: [], busy: false, abort: null, mode: store.get("vyra-mode") || "deep",
+  conv: null, projectId: null, msgs: [], busy: false, abort: null, mode: store.get("vyra-mode") || "deep",
   fileText: "", fileName: "", editFromId: null, chats: [], personas: [], lbMode: "weekly",
   pendingEmail: "", page: "chat", adminTab: "overview", imgStyle: "", historyView: "active",
   length: store.get("vyra-length") || "normal", tone: store.get("vyra-tone") || "friendly", eli5: store.get("vyra-eli5") === "1",
@@ -176,7 +176,7 @@ async function enterApp() {
   await refreshMe();
   const tasks = [loadPersonas(), loadHistory(), loadNotifs(), loadDailyPrompt()];
   await Promise.all(tasks.map((t) => t.catch(() => {})));
-  setGreeting(); const rememberedPage = store.get("vyra-page"); newChat(); maybeTour(); if (["chat","toolbox","images","plans"].includes(rememberedPage)) showPage(rememberedPage);
+  setGreeting(); const rememberedPage = store.get("vyra-page"); newChat(); maybeTour(); if (["chat","toolbox","images","plans","workspace"].includes(rememberedPage)) showPage(rememberedPage);
   const paid = new URLSearchParams(location.search).get("paid");
   if (paid) {
     history.replaceState(null, "", "/?login=1"); showPage("plans");
@@ -190,7 +190,7 @@ function setGreeting() {
   $("greeting").textContent = `${g}, ${S.user.username}`;
   $("welcome").querySelector(".sub").textContent = "What are we creating today?";
 }
-const TOP = ["business_elite", "infinity"];
+const TOP = ["business", "enterprise"];
 function planLabel() { const u = S.user; return u.trial ? "Free trial" : (S.plans[u.plan]?.name || "Free"); }
 async function refreshMe() {
   const d = await api("/api/me"); S.user = d.user; S.usage = d.usage; S.images = d.images; S.plans = d.plans; S.paystack = d.paystack; S.badges = d.badges;
@@ -231,15 +231,16 @@ async function loadDailyPrompt() {
 }
 
 /* ---------------------------------------------------------------- navigation */
-const TITLES = { chat: "", toolbox: "AI Toolbox", images: "Image Studio", plans: "Plans", admin: "Admin" };
+const TITLES = { chat: "", toolbox: "AI Toolbox", workspace: "Projects & Memory", images: "Image Studio", plans: "Plans", admin: "Admin" };
 function showPage(name) {
   S.page = name; store.set("vyra-page", name);
-  ["chat", "toolbox", "images", "plans", "admin"].forEach((p) => $(p + "-page").classList.toggle("hidden", p !== name));
+  ["chat", "toolbox", "workspace", "images", "plans", "admin"].forEach((p) => $(p + "-page").classList.toggle("hidden", p !== name));
   document.querySelectorAll(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.page === name));
   $("page-heading").textContent = TITLES[name] || document.querySelector(".brand").textContent.trim();
   closeSidebar(); $("notif-panel").classList.add("hidden");
   if (name === "plans") { renderPlans(); loadLeaderboard(); renderReferral(); }
   if (name === "images") loadGallery();
+  if (name === "workspace") loadWorkspace();
   if (name === "admin") renderAdmin(S.adminTab);
 }
 document.querySelectorAll(".nav-item").forEach((b) => (b.onclick = () => showPage(b.dataset.page)));
@@ -415,7 +416,7 @@ async function send(text, opts = {}) {
   const paint = () => { raf = 0; const stick = nearBottom(); body.innerHTML = md(ai.content); if (stick) toBottom(); };
   try {
     const res = await fetch("/ask/stream", { method: "POST", credentials: "same-origin", signal: ctrl.signal, headers: { "Content-Type": "application/json", "X-Requested-With": "vyra" },
-      body: JSON.stringify({ question: text, conversationId: S.conv, persona: $("persona-select").value, language: $("lang-select").value, modelType: S.mode, temperature: $("temp-slider").value, truncateFromId, fileText, length: S.length, tone: S.tone, eli5: S.eli5 }) });
+      body: JSON.stringify({ question: text, conversationId: S.conv, persona: $("persona-select").value, language: $("lang-select").value, modelType: S.mode, temperature: $("temp-slider").value, truncateFromId, fileText, length: S.length, tone: S.tone, eli5: S.eli5, projectId: S.projectId }) });
     if (!res.ok) { const d = await res.json().catch(() => ({})); const err = new Error(d.error || "Something went wrong. Please try again."); err.data = d; throw err; }
     const reader = res.body.getReader(), dec = new TextDecoder(); let buf = "";
     while (true) {
@@ -554,56 +555,50 @@ async function loadGallery() {
 $("gallery").onclick = async (e) => { const b = e.target.closest("[data-del-img]"); if (!b) return; try { await post(`/api/images/${b.dataset.delImg}/delete`); loadGallery(); } catch (err) { toast(err.message, "error"); } };
 
 /* ---------------------------------------------------------------- Plans, checkout, referral, leaderboard */
+let BILLING_PERIOD = "monthly";
+const BILLING_FACTORS = { weekly: 0.35, monthly: 1, annual: 10 };
+const BILLING_LABELS = { weekly: "7 days", monthly: "30 days", annual: "365 days" };
 function renderPlans() {
-  const grid = $("plans-grid");
-  const u = S.user || {};
-  const plans = (S.plans && typeof S.plans === "object") ? S.plans : {};
-  const entries = Object.entries(plans).filter(([k, p]) => p && typeof p === "object" && p.name);
-  // Keep the Plans page usable if /api/me temporarily omits plan metadata.
-  const fallbackPlans = {
-    free: {name:"Free",price:0,monthly_messages:20,daily_images:5},
-    starter: {name:"Starter",price:1500,monthly_messages:100,daily_images:20},
-    plus: {name:"Plus",price:3500,monthly_messages:300,daily_images:50},
-    pro: {name:"Pro",price:7500,monthly_messages:750,daily_images:100},
-    ultra: {name:"Ultra",price:15000,monthly_messages:2000,daily_images:200},
-    enterprise: {name:"Enterprise",price:35000,monthly_messages:5000,daily_images:500},
-    business_elite: {name:"Business Elite",price:50000,monthly_messages:10000,daily_images:1000},
-    infinity: {name:"Infinity",price:100000,monthly_messages:20000,daily_images:2500}
+  const grid=$("plans-grid"), u=S.user||{}, plans=S.plans||{};
+  const entries=Object.entries(plans).filter(([k,p])=>p&&p.name&&["free","starter","plus","pro","business","enterprise"].includes(k));
+  const fallback={
+    free:{name:"Free",price:0,price_usd:0,monthly_messages:20,daily_images:3},
+    starter:{name:"Starter",price:1500,price_usd:5,monthly_messages:120,daily_images:10},
+    plus:{name:"Plus",price:5000,price_usd:12.99,monthly_messages:400,daily_images:30},
+    pro:{name:"Pro",price:15000,price_usd:29.99,monthly_messages:1200,daily_images:100},
+    business:{name:"Business",price:40000,price_usd:59.99,monthly_messages:4000,daily_images:300},
+    enterprise:{name:"Enterprise",price:100000,price_usd:99.99,monthly_messages:10000,daily_images:800}
   };
-  const catalog = entries.length ? entries : Object.entries(fallbackPlans);
-  const cur = u.trial ? "free" : (u.plan || "free");
-  grid.innerHTML = catalog.map(([k, p]) => {
-    const messages = Number(p.monthly_messages || 0), images = Number(p.daily_images || 0), price = Number(p.price || 0);
-    const feats = [`${messages.toLocaleString()} messages a month`, `${images.toLocaleString()} images a day`, "Fast and Deep modes", k === "free" ? "Chat history" : "Custom persona"];
-    const isCur = k === cur;
-    const btn = k === "free" ? `<button class="btn" disabled>${isCur ? "Your plan" : "Included"}</button>` : isCur ? `<button class="btn" data-plan="${esc(k)}">Renew for 30 days</button>` : `<button class="btn primary" data-plan="${esc(k)}">Choose ${esc(p.name)}</button>`;
-    return `<div class="plan ${k === "pro" ? "popular" : ""} ${isCur ? "current" : ""}">${k === "pro" ? `<span class="pill brand tag">Most popular</span>` : ""}<h3>${TOP.includes(k) ? ico("crown", "sm") : ""}${esc(p.name)}</h3><div class="price">${price ? money(price) + "<small> / 30 days</small>" : "Free"}</div><ul>${feats.map((f) => `<li>${ico("check")}${esc(f)}</li>`).join("")}</ul>${btn}</div>`;
+  const catalog=entries.length?entries:Object.entries(fallback), cur=u.trial?"free":(u.plan||"free"), factor=BILLING_FACTORS[BILLING_PERIOD]||1;
+  grid.innerHTML=catalog.map(([k,p])=>{
+    const messages=Number(p.monthly_messages||0), images=Number(p.daily_images||0), ngn=Math.round(Number(p.price||0)*factor), usd=(Number(p.price_usd||0)*factor).toFixed(2), isCur=k===cur;
+    const feats=[`${messages.toLocaleString()} messages a month`,`${images.toLocaleString()} images a day`,"Fast and Deep modes",k==="free"?"Chat history":"Premium feature allowance"];
+    const price=k==="free"?"Free":`${money(ngn)} <small>/ ${BILLING_LABELS[BILLING_PERIOD]}</small><div class="tiny muted">US$${usd} reference price</div>`;
+    const btn=k==="free"?`<button class="btn" disabled>${isCur?"Your plan":"Included"}</button>`:isCur?`<button class="btn" data-plan="${esc(k)}">Renew ${esc(BILLING_PERIOD)}</button>`:`<button class="btn primary" data-plan="${esc(k)}">Choose ${esc(p.name)}</button>`;
+    return `<div class="plan ${k==="pro"?"popular":""} ${isCur?"current":""}">${k==="pro"?`<span class="pill brand tag">Most popular</span>`:""}<h3>${TOP.includes(k)?ico("crown","sm"):""}${esc(p.name)}</h3><div class="price">${price}</div><ul>${feats.map(f=>`<li>${ico("check")}${esc(f)}</li>`).join("")}</ul>${btn}</div>`;
   }).join("");
 }
+$("billing-period")?.addEventListener("change",e=>{BILLING_PERIOD=e.target.value;renderPlans();});
 $("plans-grid").onclick = (e) => { const b = e.target.closest("[data-plan]"); if (b) openCheckout(b.dataset.plan); };
 function openCheckout(plan) {
-  const p = S.plans[plan];
-  $("pay-card").innerHTML = `<div class="modal-head"><h2 id="pay-title">${esc(p.name)} plan</h2><button class="icon-btn" data-close aria-label="Close">${ico("x")}</button></div>
-    <p class="muted" style="margin:0">${money(p.price)} for 30 days. ${p.monthly_messages.toLocaleString()} messages and ${p.daily_images.toLocaleString()} images a day.</p>
-    ${S.paystack ? `<button class="btn primary block" id="pay-card-btn" style="margin-top:16px">${ico("card")}Pay ${money(p.price)} by card</button><p class="tiny muted center" style="margin:8px 0">Activates instantly. Secured by Paystack.</p>` : ""}
-    <button class="btn block" id="pay-bank-btn" style="margin-top:${S.paystack ? 4 : 16}px">Pay by bank transfer</button><div id="bank-box"></div>`;
+  const p=S.plans[plan]||{}, factor=BILLING_FACTORS[BILLING_PERIOD]||1, amount=Math.round(Number(p.price||0)*factor);
+  const usd=(Number(p.price_usd||0)*factor).toFixed(2), days=BILLING_LABELS[BILLING_PERIOD]||"30 days";
+  $("pay-card").innerHTML=`<div class="modal-head"><h2 id="pay-title">${esc(p.name)} plan</h2><button class="icon-btn" data-close aria-label="Close">${ico("x")}</button></div>
+    <p class="muted" style="margin:0">${money(amount)} · US$${usd} reference · ${days}. ${Number(p.monthly_messages||0).toLocaleString()} messages/month and ${Number(p.daily_images||0).toLocaleString()} images/day.</p>
+    ${S.paystack?`<button class="btn primary block" id="pay-card-btn" style="margin-top:16px">${ico("card")}Pay ${money(amount)} by card</button><p class="tiny muted center" style="margin:8px 0">NGN checkout secured by Paystack.</p>`:""}
+    <button class="btn block" id="pay-bank-btn" style="margin-top:${S.paystack?4:16}px">Pay by bank transfer</button><div id="bank-box"></div>`;
   openModal("pay-modal");
-  if (S.paystack) $("pay-card-btn").onclick = async (e) => { const b = e.currentTarget; setBtn(b, true); try { const d = await post("/api/paystack/init", { plan }); location.href = d.url; } catch (err) { toast(err.message, "error"); setBtn(b, false); } };
-  $("pay-bank-btn").onclick = async (e) => {
-    const b = e.currentTarget; setBtn(b, true);
-    try {
-      const up = await post("/api/upgrade", { plan }); const info = (await api("/api/payment-info")).payment;
-      if (!info) { $("bank-box").innerHTML = `<p class="notice error">Bank details aren't set up yet. Please contact support.</p>`; return; }
-      $("bank-box").innerHTML = `<div class="kv"><div><span>Bank</span><b>${esc(info.bank_name)}</b></div><div><span>Account number</span><b>${esc(info.account_number)} <button class="btn sm" id="copy-acct" style="margin-left:6px">Copy</button></b></div><div><span>Account name</span><b>${esc(info.account_name)}</b></div><div><span>Amount</span><b>${money(up.amount)}</b></div></div>
-        <p class="tiny muted" style="margin:0 0 8px">${esc(info.extra_note || "")}</p><label class="field" style="margin-top:0">Payment screenshot<input class="input" type="file" id="proof-file" accept="image/*"></label>
-        <button class="btn primary block" id="proof-send" style="margin-top:12px">Send screenshot</button><p class="notice" id="proof-note"></p>`;
-      $("copy-acct").onclick = async () => toast((await copyText(info.account_number)) ? "Account number copied" : "Couldn't copy");
-      $("proof-send").onclick = async (ev) => {
-        const f = $("proof-file").files[0]; if (!f) return toast("Choose your screenshot first."); const sb = ev.currentTarget; setBtn(sb, true); const fd = new FormData(); fd.append("screenshot", f);
-        try { const d = await api("/api/payment-proof/" + up.requestId, { method: "POST", body: fd }); $("proof-note").textContent = d.message; $("proof-note").className = "notice success"; sb.classList.add("hidden"); }
-        catch (err) { $("proof-note").textContent = err.message; $("proof-note").className = "notice error"; setBtn(sb, false); }
-      };
-    } catch (err) { toast(err.message, "error"); } finally { b.classList.add("hidden"); }
+  if(S.paystack)$("pay-card-btn").onclick=async e=>{const b=e.currentTarget;setBtn(b,true);try{const d=await post("/api/paystack/init",{plan,billingPeriod:BILLING_PERIOD});location.href=d.url;}catch(err){toast(err.message,"error");setBtn(b,false);}};
+  $("pay-bank-btn").onclick=async e=>{
+    const b=e.currentTarget;setBtn(b,true);
+    try{
+      const up=await post("/api/upgrade",{plan,billingPeriod:BILLING_PERIOD}),info=(await api("/api/payment-info")).payment;
+      if(!info){$("bank-box").innerHTML=`<p class="notice error">Bank details aren't set up yet. Please contact support.</p>`;return;}
+      $("bank-box").innerHTML=`<div class="kv"><div><span>Bank</span><b>${esc(info.bank_name)}</b></div><div><span>Account number</span><b>${esc(info.account_number)} <button class="btn sm" id="copy-acct" style="margin-left:6px">Copy</button></b></div><div><span>Account name</span><b>${esc(info.account_name)}</b></div><div><span>Amount</span><b>${money(up.amount)}</b></div><div><span>Duration</span><b>${esc(days)}</b></div></div>
+      <p class="tiny muted" style="margin:0 0 8px">${esc(info.extra_note||"")}</p><label class="field" style="margin-top:0">Payment screenshot<input class="input" type="file" id="proof-file" accept="image/*"></label><button class="btn primary block" id="proof-send" style="margin-top:12px">Send screenshot</button><p class="notice" id="proof-note"></p>`;
+      $("copy-acct").onclick=async()=>toast((await copyText(info.account_number))?"Account number copied":"Couldn't copy");
+      $("proof-send").onclick=async ev=>{const f=$("proof-file").files[0];if(!f)return toast("Choose your screenshot first.");const sb=ev.currentTarget;setBtn(sb,true);const fd=new FormData();fd.append("screenshot",f);try{const d=await api("/api/payment-proof/"+up.requestId,{method:"POST",body:fd});$("proof-note").textContent=d.message;$("proof-note").className="notice success";sb.classList.add("hidden");}catch(err){$("proof-note").textContent=err.message;$("proof-note").className="notice error";setBtn(sb,false);}};
+    }catch(err){toast(err.message,"error");}finally{setBtn(b,false);}
   };
 }
 function renderReferral() {
@@ -743,6 +738,47 @@ if (SR) {
     rec.start(); $("mic-btn").classList.add("rec");
   };
 }
+
+async function loadWorkspace() {
+  try {
+    const [projects, memories, skills, prefs] = await Promise.all([
+      api("/api/projects"), api("/api/memory"), api("/api/skills"), api("/api/preferences")
+    ]);
+    $("project-list").innerHTML = (projects.projects||[]).map(x=>`<div class="board-row"><b>${esc(x.name)}</b><div class="tiny muted">${esc(x.instructions||"No extra instructions")}</div><button class="btn sm" data-project-select="${x.id}">Select</button><button class="btn sm danger" data-project-delete="${x.id}">Delete</button></div>`).join("") || `<p class="tiny muted">No projects yet.</p>`;
+    $("memory-list").innerHTML = (memories.memories||[]).map(x=>`<div class="board-row">${esc(x.memory)} <button class="btn sm danger" data-memory-delete="${x.id}">Delete</button></div>`).join("") || `<p class="tiny muted">No saved memories.</p>`;
+    $("skill-list").innerHTML = (skills.skills||[]).map(x=>`<div class="board-row"><b>${esc(x.name)}</b> <code>/${esc(x.slash_command)}</code><button class="btn sm danger" data-skill-delete="${x.id}">Delete</button></div>`).join("") || `<p class="tiny muted">No Skills saved.</p>`;
+    let detectedCountry = prefs.country || "";
+    const localeParts=(navigator.language||"en-US").split("-");
+    const localeCountry=(localeParts.length>1 && localeParts[1].length===2)?localeParts[1].toUpperCase():"";
+    const tz=(Intl.DateTimeFormat().resolvedOptions().timeZone||"");
+    if(!detectedCountry) detectedCountry=localeCountry || (tz==="Africa/Lagos"?"NG":"");
+    const localCurrency=({NG:"NGN",US:"USD",GB:"GBP",CA:"CAD",GH:"GHS",KE:"KES",ZA:"ZAR",FR:"EUR",DE:"EUR",ES:"EUR",BR:"BRL"})[detectedCountry] || prefs.currency || "USD";
+    const localLanguage=({fr:"French",es:"Spanish",de:"German",pt:"Portuguese",yo:"Yoruba",ha:"Hausa",ig:"Igbo"})[localeParts[0]] || prefs.language || "English";
+    $("pref-country").value=detectedCountry;
+    $("pref-currency").value=prefs.currency || localCurrency;
+    $("pref-language").value=prefs.language || localLanguage;
+  } catch(e) { toast(e.message,"error"); }
+}
+$("project-create").onclick=async()=>{try{await post("/api/projects",{name:$("project-name").value,instructions:$("project-instructions").value});$("project-name").value="";$("project-instructions").value="";await loadWorkspace();toast("Project created.");}catch(e){toast(e.message,"error");}};
+$("project-list").onclick=async e=>{
+  const select=e.target.closest("[data-project-select]"), del=e.target.closest("[data-project-delete]");
+  if(select){S.projectId=Number(select.dataset.projectSelect);$("project-file-tools").classList.remove("hidden");toast("Project selected. New chats will use its context.");}
+  if(del){try{await api("/api/projects/"+del.dataset.projectDelete,{method:"DELETE"});if(S.projectId===Number(del.dataset.projectDelete))S.projectId=null;await loadWorkspace();}catch(err){toast(err.message,"error");}}
+};
+$("project-file-add").onclick=async()=>{if(!S.projectId)return toast("Select a project first.");try{await post(`/api/projects/${S.projectId}/files`,{filename:$("project-file-name").value||"project-notes.txt",content:$("project-file-content").value});$("project-file-content").value="";toast("Project file added.");}catch(e){toast(e.message,"error");}};
+$("project-use-chat").onclick=()=>{if(!S.projectId)return toast("Select a project first.");showPage("chat");newChat();toast("Project context will be used in this chat.");};
+$("memory-add").onclick=async()=>{try{await post("/api/memory",{memory:$("memory-input").value});$("memory-input").value="";await loadWorkspace();toast("Memory saved.");}catch(e){toast(e.message,"error");}};
+$("memory-list").onclick=async e=>{const b=e.target.closest("[data-memory-delete]");if(b){try{await api("/api/memory/"+b.dataset.memoryDelete,{method:"DELETE"});await loadWorkspace();}catch(err){toast(err.message,"error");}}};
+$("skill-add").onclick=async()=>{try{const r=await post("/api/skills",{name:$("skill-name").value,command:$("skill-command").value,instruction:$("skill-instruction").value});$("skill-name").value="";$("skill-command").value="";$("skill-instruction").value="";await loadWorkspace();toast("Skill saved. Invoke /"+r.command.replace("/","")+" in chat.");}catch(e){toast(e.message,"error");}};
+$("skill-list").onclick=async e=>{const b=e.target.closest("[data-skill-delete]");if(b){try{await api("/api/skills/"+b.dataset.skillDelete,{method:"DELETE"});await loadWorkspace();}catch(err){toast(err.message,"error");}}};
+$("pref-save").onclick=async()=>{try{await post("/api/preferences",{country:$("pref-country").value,currency:$("pref-currency").value,language:$("pref-language").value});toast("Preferences saved.");}catch(e){toast(e.message,"error");}};
+function renderResearch(data) {
+  const groups=data.results||[];
+  $("research-results").innerHTML=groups.map(g=>`<div class="board-row"><b>${esc(g.topic||g.title||"Search results")}</b>${(g.sources||[]).map(x=>`<p><a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.title||x.url)}</a><br><span class="tiny muted">${esc(x.snippet||"")}</span></p>`).join("")}</div>`).join("") || (data.answer?`<p>${esc(data.answer)}</p>`:"<p class='tiny muted'>No results.</p>");
+}
+$("web-search").onclick=async()=>{try{const d=await post("/api/tools/web-search",{query:$("web-query").value});renderResearch({results:[{topic:d.answer||d.query,sources:d.results}]});}catch(e){toast(e.message,"error");}};
+$("agent-run").onclick=async()=>{try{const topics=$("agent-topics").value.split("\\n").map(x=>x.trim()).filter(Boolean).slice(0,3);const d=await post("/api/tools/agent-research",{topics});renderResearch(d);}catch(e){toast(e.message,"error");}};
+
 function maybeTour() {
   if (store.get("vyra-tour")) return; store.set("vyra-tour", "1");
   $("generic-card").innerHTML = `<div class="modal-head"><h2>Welcome to Vyra AI</h2><button class="icon-btn" data-close aria-label="Close">${ico("x")}</button></div>

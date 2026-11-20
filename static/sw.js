@@ -1,6 +1,6 @@
 // Vyra AI service worker: caches the app shell so it opens fast and shows a friendly page offline.
 // Never caches API calls, chat streams or anything private.
-const CACHE = "vyra-shell-v2";
+const CACHE = "vyra-shell-v3";
 const SHELL = ["/static/style.css", "/static/script.js", "/static/theme.js", "/static/icon-192.png", "/offline.html"];
 
 self.addEventListener("install", (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())); });
