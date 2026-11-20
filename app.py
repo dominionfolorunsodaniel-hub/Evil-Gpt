@@ -61,22 +61,23 @@ SITE_URL = (os.environ.get("SITE_URL") or "").rstrip("/")
 PAYSTACK_SECRET_KEY = os.environ.get("PAYSTACK_SECRET_KEY")
 WHATSAPP_SUPPORT_NUMBER = re.sub(r"\D", "", os.environ.get("WHATSAPP_SUPPORT_NUMBER", ""))
 CUSTOM_PERSONA_FREE = os.environ.get("CUSTOM_PERSONA_FREE") == "1"  # set to 1 to let Free users use custom personas
-TRIAL_DAYS = int(os.environ.get("TRIAL_DAYS", "2"))
+TRIAL_DAYS = int(os.environ.get("TRIAL_DAYS", "3"))
 PLAN_DAYS = int(os.environ.get("PLAN_DAYS", "30"))
 MAX_MESSAGE_CHARS = 8000
 
-# Plans are unchanged from Evil GPT (same names, prices and limits).
+# VYRA subscription catalog: five paid tiers plus Free.
 PLANS = {
-    "free": {"name": "Free", "price": 0, "monthly_messages": 20, "daily_images": 5},
-    "starter": {"name": "Starter", "price": 1500, "monthly_messages": 100, "daily_images": 20},
-    "plus": {"name": "Plus", "price": 3500, "monthly_messages": 300, "daily_images": 50},
-    "pro": {"name": "Pro", "price": 7500, "monthly_messages": 750, "daily_images": 100},
-    "ultra": {"name": "Ultra", "price": 15000, "monthly_messages": 2000, "daily_images": 200},
-    "enterprise": {"name": "Enterprise", "price": 35000, "monthly_messages": 5000, "daily_images": 500},
-    "business_elite": {"name": "Business Elite", "price": 50000, "monthly_messages": 10000, "daily_images": 1000},
-    "infinity": {"name": "Infinity", "price": 100000, "monthly_messages": 20000, "daily_images": 2500},
+    "free": {"name": "Free", "price": 0, "price_usd": 0, "monthly_messages": 20, "daily_images": 3},
+    "starter": {"name": "Starter", "price": 1500, "price_usd": 5.00, "monthly_messages": 120, "daily_images": 10},
+    "plus": {"name": "Plus", "price": 5000, "price_usd": 12.99, "monthly_messages": 400, "daily_images": 30},
+    "pro": {"name": "Pro", "price": 15000, "price_usd": 29.99, "monthly_messages": 1200, "daily_images": 100},
+    "business": {"name": "Business", "price": 40000, "price_usd": 59.99, "monthly_messages": 4000, "daily_images": 300},
+    "enterprise": {"name": "Enterprise", "price": 100000, "price_usd": 99.99, "monthly_messages": 10000, "daily_images": 800},
 }
 PLAN_ORDER = list(PLANS.keys())
+LEGACY_PLAN_MAP = {"ultra": "pro", "business_elite": "enterprise", "infinity": "enterprise"}
+BILLING_DAYS = {"weekly": 7, "monthly": 30, "annual": 365}
+BILLING_MULTIPLIERS = {"weekly": 0.35, "monthly": 1.0, "annual": 10.0}  # annual ~= two months free
 
 DAILY_PROMPTS = [
     "What is a small habit that has a huge impact?",
@@ -101,7 +102,7 @@ SUGGESTIONS = [
     {"icon": "briefcase", "title": "Plan a business idea", "prompt": "Help me turn a business idea into a simple plan. Ask me about the idea first."},
 ]
 
-LANGUAGES = {"English": "", "Nigerian Pidgin": "Reply in Nigerian Pidgin English.", "Yoruba": "Reply in Yoruba.", "Hausa": "Reply in Hausa.", "Igbo": "Reply in Igbo."}
+LANGUAGES = {"English": "", "Nigerian Pidgin": "Reply in Nigerian Pidgin English.", "Yoruba": "Reply in Yoruba.", "Hausa": "Reply in Hausa.", "Igbo": "Reply in Igbo.", "French": "Reply in French.", "Spanish": "Reply in Spanish.", "German": "Reply in German.", "Portuguese": "Reply in Portuguese."}
 
 LENGTH_PROMPTS = {"concise": "Keep answers short and to the point.", "detailed": "Give thorough, detailed answers with examples where useful."}
 TONE_PROMPTS = {"formal": "Use a formal, professional tone.", "casual": "Use a relaxed, casual, conversational tone."}
@@ -234,6 +235,16 @@ SCHEMA = [
     "ALTER TABLE evil_users ADD COLUMN IF NOT EXISTS ai_nickname VARCHAR(40)",
     "ALTER TABLE evil_users ADD COLUMN IF NOT EXISTS session_version INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE evil_users ADD COLUMN IF NOT EXISTS last_seen_changelog INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE evil_users ADD COLUMN IF NOT EXISTS country_code VARCHAR(2)",
+    "ALTER TABLE evil_users ADD COLUMN IF NOT EXISTS preferred_language VARCHAR(40) NOT NULL DEFAULT 'English'",
+    "ALTER TABLE evil_users ADD COLUMN IF NOT EXISTS preferred_currency VARCHAR(3) NOT NULL DEFAULT 'NGN'",
+    "CREATE TABLE IF NOT EXISTS evil_projects (id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES evil_users(id) ON DELETE CASCADE, name VARCHAR(100) NOT NULL, instructions TEXT NOT NULL DEFAULT '', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
+    "CREATE TABLE IF NOT EXISTS evil_project_files (id BIGSERIAL PRIMARY KEY, project_id BIGINT NOT NULL REFERENCES evil_projects(id) ON DELETE CASCADE, user_id BIGINT NOT NULL REFERENCES evil_users(id) ON DELETE CASCADE, filename VARCHAR(200) NOT NULL, content TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
+    "CREATE TABLE IF NOT EXISTS evil_memories (id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES evil_users(id) ON DELETE CASCADE, memory TEXT NOT NULL, source VARCHAR(30) NOT NULL DEFAULT 'user', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
+    "CREATE TABLE IF NOT EXISTS evil_skills (id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES evil_users(id) ON DELETE CASCADE, name VARCHAR(80) NOT NULL, instruction TEXT NOT NULL, slash_command VARCHAR(40) NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE(user_id, slash_command))",
+    "ALTER TABLE evil_conversations ADD COLUMN IF NOT EXISTS project_id BIGINT REFERENCES evil_projects(id) ON DELETE SET NULL",
+    "ALTER TABLE evil_payment_requests ADD COLUMN IF NOT EXISTS billing_period VARCHAR(12) NOT NULL DEFAULT 'monthly'",
+    "ALTER TABLE evil_payment_requests ADD COLUMN IF NOT EXISTS duration_days INTEGER NOT NULL DEFAULT 30",
 ]
 _db_ready = False
 _db_lock = threading.Lock()
@@ -257,7 +268,7 @@ def init_db():
                     if ADMIN_USERNAME and ADMIN_PASSWORD:
                         cur.execute("SELECT id FROM evil_users WHERE username=%s", (ADMIN_USERNAME,))
                         if not cur.fetchone():
-                            cur.execute("INSERT INTO evil_users(username,email,password_hash,plan,is_admin,is_verified) VALUES (%s,%s,%s,'infinity',TRUE,TRUE)",
+                            cur.execute("INSERT INTO evil_users(username,email,password_hash,plan,is_admin,is_verified) VALUES (%s,%s,%s,'enterprise',TRUE,TRUE)",
                                         (ADMIN_USERNAME, (ADMIN_USERNAME.lower() + "@admin.invalid")[:254], generate_password_hash(ADMIN_PASSWORD)))
                     # Everyone gets a referral code.
                     cur.execute("SELECT id FROM evil_users WHERE referral_code IS NULL")
@@ -328,7 +339,7 @@ def limited(name, limit, window, per="ip"):
 
 
 USER_COLS = """id,username,email,plan,is_admin,is_verified,trial_ends_at,bonus_messages,streak_count,custom_persona,referral_code,is_suspended,
-    about_me,ai_nickname,session_version,last_seen_changelog,
+    about_me,ai_nickname,session_version,last_seen_changelog,country_code,preferred_language,preferred_currency,
     (trial_ends_at IS NOT NULL AND trial_ends_at > NOW()) AS trial_active,
     (plan_expires_at IS NOT NULL AND plan_expires_at < NOW()) AS plan_expired,
     plan_expires_at, (last_streak_date = """ + TODAY + """) AS checked_in_today,
@@ -349,11 +360,12 @@ def current_user():
 
 
 def effective_plan(u):
-    """The plan that decides limits right now: trial acts as Infinity, an expired paid plan falls back to Free."""
-    if u["is_admin"]: return "infinity", False
-    plan = u["plan"] if u["plan"] in PLANS else "free"
+    """Resolve legacy subscriptions; a one-time 3-day trial unlocks the Enterprise feature set."""
+    if u["is_admin"]: return "enterprise", False
+    raw = u["plan"] or "free"
+    plan = raw if raw in PLANS else LEGACY_PLAN_MAP.get(raw, "free")
     if plan != "free" and u["plan_expired"]: plan = "free"
-    if u["trial_active"] and PLAN_ORDER.index(plan) < PLAN_ORDER.index("infinity"): return "infinity", True
+    if u["trial_active"]: return "enterprise", True
     return plan, False
 
 
@@ -505,6 +517,171 @@ def server_error(e):
     return err("Something went wrong on our side. Please try again.", 500)
 
 
+
+# ----------------------------------------------------------------------------- VYRA global settings, Projects, Memory, Skills and research
+COUNTRY_DEFAULTS = {
+    "NG": {"currency": "NGN", "language": "English"},
+    "US": {"currency": "USD", "language": "English"},
+    "GB": {"currency": "GBP", "language": "English"},
+    "CA": {"currency": "CAD", "language": "English"},
+    "GH": {"currency": "GHS", "language": "English"},
+    "KE": {"currency": "KES", "language": "English"},
+    "ZA": {"currency": "ZAR", "language": "English"},
+    "FR": {"currency": "EUR", "language": "French"},
+    "DE": {"currency": "EUR", "language": "German"},
+    "ES": {"currency": "EUR", "language": "Spanish"},
+    "BR": {"currency": "BRL", "language": "Portuguese"},
+}
+SUPPORTED_CURRENCIES = {"NGN", "USD", "GBP", "EUR", "CAD", "GHS", "KES", "ZAR", "BRL"}
+SUPPORTED_LANGUAGES = {"English", "Nigerian Pidgin", "Yoruba", "Hausa", "Igbo", "French", "Spanish", "German", "Portuguese"}
+
+@app.get("/api/preferences")
+@login_required
+def get_preferences():
+    u = request.user
+    country = (u.get("country_code") or request.headers.get("CF-IPCountry") or "").upper()[:2]
+    defaults = COUNTRY_DEFAULTS.get(country, {"currency": "USD", "language": "English"})
+    return jsonify({"country": country or None, "currency": u.get("preferred_currency") or defaults["currency"],
+                    "language": u.get("preferred_language") or defaults["language"], "autoDetected": bool(country)})
+
+@app.post("/api/preferences")
+@login_required
+def save_preferences():
+    d = body()
+    country = str(d.get("country", "")).upper()[:2]
+    currency = str(d.get("currency", "")).upper()
+    language = str(d.get("language", "English"))
+    if country and not re.fullmatch(r"[A-Z]{2}", country): return err("Invalid country code.")
+    if currency not in SUPPORTED_CURRENCIES: return err("Unsupported currency.")
+    if language not in SUPPORTED_LANGUAGES: return err("Unsupported language.")
+    q_run("UPDATE evil_users SET country_code=%s,preferred_currency=%s,preferred_language=%s WHERE id=%s",
+          (country or None, currency, language, request.user["id"]))
+    return jsonify({"success": True, "country": country or None, "currency": currency, "language": language})
+
+@app.get("/api/projects")
+@login_required
+def list_projects():
+    rows = q_all("SELECT id,name,instructions,created_at,updated_at FROM evil_projects WHERE user_id=%s ORDER BY updated_at DESC", (request.user["id"],))
+    return jsonify({"projects": [{"id": r["id"], "name": r["name"], "instructions": r["instructions"], "createdAt": iso(r["created_at"]), "updatedAt": iso(r["updated_at"])} for r in rows]})
+
+@app.post("/api/projects")
+@login_required
+def create_project():
+    d = body(); name = str(d.get("name", "")).strip()[:100]; instructions = str(d.get("instructions", "")).strip()[:4000]
+    if len(name) < 2: return err("Project name must contain at least 2 characters.")
+    row = q_one("INSERT INTO evil_projects(user_id,name,instructions) VALUES (%s,%s,%s) RETURNING id,name,instructions,created_at",
+                (request.user["id"], name, instructions))
+    return jsonify({"success": True, "project": {"id": row["id"], "name": row["name"], "instructions": row["instructions"], "createdAt": iso(row["created_at"])}}), 201
+
+@app.patch("/api/projects/<int:project_id>")
+@login_required
+def update_project(project_id):
+    d = body()
+    row = q_one("UPDATE evil_projects SET name=COALESCE(%s,name),instructions=COALESCE(%s,instructions),updated_at=NOW() WHERE id=%s AND user_id=%s RETURNING id,name,instructions",
+                (str(d["name"])[:100] if "name" in d else None, str(d["instructions"])[:4000] if "instructions" in d else None, project_id, request.user["id"]))
+    if not row: return err("Project not found.", 404)
+    return jsonify({"success": True, "project": dict(row)})
+
+@app.delete("/api/projects/<int:project_id>")
+@login_required
+def delete_project(project_id):
+    n = q_run("DELETE FROM evil_projects WHERE id=%s AND user_id=%s", (project_id, request.user["id"]))
+    return jsonify({"success": bool(n)}), (200 if n else 404)
+
+@app.get("/api/projects/<int:project_id>/files")
+@login_required
+def project_files(project_id):
+    if not q_one("SELECT id FROM evil_projects WHERE id=%s AND user_id=%s", (project_id, request.user["id"])): return err("Project not found.", 404)
+    rows = q_all("SELECT id,filename,LEFT(content,1200) AS preview,created_at FROM evil_project_files WHERE project_id=%s AND user_id=%s ORDER BY id DESC", (project_id, request.user["id"]))
+    return jsonify({"files": [{"id": r["id"], "filename": r["filename"], "preview": r["preview"], "createdAt": iso(r["created_at"])} for r in rows]})
+
+@app.post("/api/projects/<int:project_id>/files")
+@login_required
+def add_project_file(project_id):
+    d = body(); filename = str(d.get("filename", "file.txt"))[:200]; content = str(d.get("content", ""))[:30000]
+    if not content: return err("File content is empty.")
+    if not q_one("SELECT id FROM evil_projects WHERE id=%s AND user_id=%s", (project_id, request.user["id"])): return err("Project not found.", 404)
+    row = q_one("INSERT INTO evil_project_files(project_id,user_id,filename,content) VALUES (%s,%s,%s,%s) RETURNING id",
+                (project_id, request.user["id"], filename, content))
+    return jsonify({"success": True, "fileId": row["id"]}), 201
+
+@app.get("/api/memory")
+@login_required
+def list_memories():
+    rows = q_all("SELECT id,memory,source,created_at FROM evil_memories WHERE user_id=%s ORDER BY updated_at DESC LIMIT 100", (request.user["id"],))
+    return jsonify({"memories": [{"id": r["id"], "memory": r["memory"], "source": r["source"], "createdAt": iso(r["created_at"])} for r in rows]})
+
+@app.post("/api/memory")
+@login_required
+def add_memory():
+    d = body(); memory = str(d.get("memory", "")).strip()[:1000]
+    if len(memory) < 3: return err("Enter a useful memory.")
+    count = q_one("SELECT COUNT(*) AS n FROM evil_memories WHERE user_id=%s", (request.user["id"],))["n"]
+    if count >= 100: return err("Memory limit reached. Review or delete older memories first.", 429)
+    row = q_one("INSERT INTO evil_memories(user_id,memory,source) VALUES (%s,%s,'user') RETURNING id", (request.user["id"], memory))
+    return jsonify({"success": True, "id": row["id"]}), 201
+
+@app.delete("/api/memory/<int:memory_id>")
+@login_required
+def delete_memory(memory_id):
+    n = q_run("DELETE FROM evil_memories WHERE id=%s AND user_id=%s", (memory_id, request.user["id"]))
+    return jsonify({"success": bool(n)}), (200 if n else 404)
+
+@app.get("/api/skills")
+@login_required
+def list_skills():
+    rows = q_all("SELECT id,name,instruction,slash_command FROM evil_skills WHERE user_id=%s ORDER BY name", (request.user["id"],))
+    return jsonify({"skills": [dict(r) for r in rows]})
+
+@app.post("/api/skills")
+@login_required
+def create_skill():
+    d = body(); name = str(d.get("name", "")).strip()[:80]; instruction = str(d.get("instruction", "")).strip()[:3000]
+    command = re.sub(r"[^a-z0-9_-]", "", str(d.get("command", name.lower().replace(" ", "-"))).lower())[:40]
+    if len(name) < 2 or len(instruction) < 5 or not command: return err("Provide a name, slash command and instruction.")
+    try:
+        row = q_one("INSERT INTO evil_skills(user_id,name,instruction,slash_command) VALUES (%s,%s,%s,%s) RETURNING id",
+                    (request.user["id"], name, instruction, command))
+    except psycopg2.errors.UniqueViolation: return err("That slash command already exists.", 409)
+    return jsonify({"success": True, "id": row["id"], "command": "/" + command}), 201
+
+@app.delete("/api/skills/<int:skill_id>")
+@login_required
+def delete_skill(skill_id):
+    n = q_run("DELETE FROM evil_skills WHERE id=%s AND user_id=%s", (skill_id, request.user["id"]))
+    return jsonify({"success": bool(n)}), (200 if n else 404)
+
+@app.post("/api/tools/web-search")
+@login_required
+@limited("web_search", 15, 60, per="user")
+def web_search():
+    if not os.environ.get("TAVILY_API_KEY"): return err("Web Search needs the TAVILY_API_KEY environment variable. Add it in Render to enable live research.", 503)
+    query = str(body().get("query", "")).strip()[:400]
+    if len(query) < 3: return err("Enter a search question.")
+    try:
+        r = requests.post("https://api.tavily.com/search", json={"api_key": os.environ["TAVILY_API_KEY"], "query": query, "search_depth": "basic", "max_results": 5, "include_answer": True}, timeout=18)
+        r.raise_for_status(); data = r.json()
+        results = [{"title": x.get("title",""), "url": x.get("url",""), "snippet": x.get("content","")[:900]} for x in data.get("results", []) if x.get("url","").startswith("http")]
+        return jsonify({"query": query, "answer": data.get("answer"), "results": results})
+    except Exception:
+        log.exception("Tavily search failed"); return err("Web search is temporarily unavailable.", 502)
+
+@app.post("/api/tools/agent-research")
+@login_required
+@limited("agent", 4, 3600, per="user")
+def agent_research():
+    if not os.environ.get("TAVILY_API_KEY"): return err("Agent research needs TAVILY_API_KEY. Add it in Render to enable web research.", 503)
+    topics = body().get("topics", [])
+    if not isinstance(topics, list): return err("Topics must be a list.")
+    topics = [str(x).strip()[:180] for x in topics[:3] if str(x).strip()]
+    if not topics: return err("Add at least one research topic.")
+    gathered = []
+    for topic in topics:
+        r = requests.post("https://api.tavily.com/search", json={"api_key": os.environ["TAVILY_API_KEY"], "query": topic, "search_depth": "basic", "max_results": 3}, timeout=18)
+        r.raise_for_status()
+        gathered.append({"topic": topic, "sources": [{"title": x.get("title",""), "url": x.get("url",""), "snippet": x.get("content","")[:650]} for x in r.json().get("results", []) if x.get("url","").startswith("http")]})
+    return jsonify({"results": gathered})
+
 # ----------------------------------------------------------------------------- pages
 @app.route("/")
 def index():
@@ -602,7 +779,7 @@ def register():
     if len(password) > 200: return err("Password is too long.")
     referrer = q_one("SELECT id FROM evil_users WHERE referral_code=%s", (ref,)) if ref else None
     try:
-        # New users start on the Free plan with a 2-day trial window. (The old code made them Infinity forever.)
+        # New users start on Free with a one-time 3-day premium Trial. (The old code made them Infinity forever.)
         row = q_one("""INSERT INTO evil_users(username,email,password_hash,plan,trial_ends_at,is_verified,referral_code,referred_by)
                        VALUES (%s,%s,%s,'free', NOW() + (%s || ' days')::interval, FALSE, %s, %s) RETURNING id""",
                     (username, email, generate_password_hash(password), str(TRIAL_DAYS), new_referral_code(), referrer["id"] if referrer else None))
@@ -737,7 +914,9 @@ def me():
                  "streak": u["streak_count"] or 0, "checkedInToday": bool(u["checked_in_today"]), "trial": trial,
                  "planExpiresAt": iso(u["plan_expires_at"]), "customPersona": u["custom_persona"] or "", "canUsePersona": can_persona,
                  "referralCode": u["referral_code"], "referrals": refs, "aboutMe": u["about_me"] or "", "aiNickname": u["ai_nickname"] or "",
-                 "hasNewsUpdate": (u["last_seen_changelog"] or 0) < CHANGELOG_VERSION},
+                 "hasNewsUpdate": (u["last_seen_changelog"] or 0) < CHANGELOG_VERSION,
+                 "country": u.get("country_code"), "currency": u.get("preferred_currency") or "NGN",
+                 "language": u.get("preferred_language") or "English", "trialEndsAt": iso(u["trial_ends_at"])},
         "usage": usage_status(u),
         "images": {"used": u["images_today"], "limit": PLANS[plan_key]["daily_images"]},
         "badges": badges_for(u),
@@ -1113,6 +1292,11 @@ def ask_stream():
     d = body(); u = request.user
     question = str(d.get("question", "")).strip()
     conv_id = d.get("conversationId"); persona = str(d.get("persona", "assistant")); language = str(d.get("language", "English"))
+    project_id = d.get("projectId")
+    if project_id:
+        try: project_id = int(project_id)
+        except (TypeError, ValueError): return err("Invalid project.")
+        if not q_one("SELECT id FROM evil_projects WHERE id=%s AND user_id=%s", (project_id, u["id"])): return err("Project not found.", 404)
     model_type = str(d.get("modelType")) if d.get("modelType") in ("fast", "balanced", "deep") else "deep"
     length_pref = str(d.get("length")) if d.get("length") in LENGTH_PROMPTS else None
     tone_pref = str(d.get("tone")) if d.get("tone") in TONE_PROMPTS else None
@@ -1140,13 +1324,15 @@ def ask_stream():
     try:
         with db() as conn, conn.cursor() as cur:
             if conv_id:
-                cur.execute("SELECT id FROM evil_conversations WHERE id=%s AND user_id=%s", (str(conv_id), u["id"]))
-                if not cur.fetchone(): refund(); return err("Chat not found.", 404)
+                cur.execute("SELECT id,project_id FROM evil_conversations WHERE id=%s AND user_id=%s", (str(conv_id), u["id"]))
+                existing_conv = cur.fetchone()
+                if not existing_conv: refund(); return err("Chat not found.", 404)
+                if not project_id: project_id = existing_conv.get("project_id")
                 if d.get("truncateFromId"):  # edit-and-resend or regenerate: drop that message and everything after it
                     cur.execute("DELETE FROM evil_messages WHERE conversation_id=%s AND id >= %s", (str(conv_id), int(d["truncateFromId"])))
             else:
                 conv_id = str(uuid.uuid4()); is_new = True
-                cur.execute("INSERT INTO evil_conversations(id,user_id,title) VALUES (%s,%s,%s)", (conv_id, u["id"], (question[:40] + "...") if len(question) > 40 else question))
+                cur.execute("INSERT INTO evil_conversations(id,user_id,title,project_id) VALUES (%s,%s,%s,%s)", (conv_id, u["id"], (question[:40] + "...") if len(question) > 40 else question, project_id))
             cur.execute("SELECT role,content FROM evil_messages WHERE conversation_id=%s ORDER BY id DESC LIMIT 16", (conv_id,))
             history = list(reversed(cur.fetchall()))
     except Exception:
@@ -1154,6 +1340,23 @@ def ask_stream():
 
     can_persona = CUSTOM_PERSONA_FREE or u["is_admin"] or trial or plan_key != "free"
     sys_prompt = u["custom_persona"] if (u["custom_persona"] and can_persona) else PERSONAS.get(persona, PERSONAS["assistant"])["instructions"]
+    memories = q_all("SELECT memory FROM evil_memories WHERE user_id=%s ORDER BY updated_at DESC LIMIT 12", (u["id"],))
+    if memories:
+        sys_prompt += "\\nUser-approved memory (use only when relevant; do not assume it is always current): " + " | ".join(x["memory"] for x in memories)
+    if project_id:
+        project = q_one("SELECT name,instructions FROM evil_projects WHERE id=%s AND user_id=%s", (project_id, u["id"]))
+        project_files = q_all("SELECT filename,content FROM evil_project_files WHERE project_id=%s AND user_id=%s ORDER BY id DESC LIMIT 5", (project_id, u["id"]))
+        if project:
+            sys_prompt += f"\\nProject workspace: {project['name']}. Project instructions: {project['instructions']}"
+            for pf in project_files:
+                sys_prompt += f"\\nProject file {pf['filename']}: {pf['content'][:5000]}"
+    # A saved Skill can be invoked by its slash command at the beginning of a message.
+    skill_match = re.match(r"^/([a-z0-9_-]+)\\s*", question, re.I)
+    if skill_match:
+        skill = q_one("SELECT name,instruction FROM evil_skills WHERE user_id=%s AND slash_command=%s", (u["id"], skill_match.group(1).lower()))
+        if skill:
+            sys_prompt += f"\\nActive saved Skill ({skill['name']}): {skill['instruction']}"
+            question = question[skill_match.end():].strip() or "Apply the saved Skill to my next task."
     creator_terms = re.compile(r"\b(who (made|created|built|developed) you|who (is|was) the creator (of )?(vyra|you)|who (is|was) (your|vyra) (creator|developer|founder)|your creator|your developer|who is cold|who created vyra|vyra creator|contact (your|the) creator)\b", re.I)
     if creator_terms.search(question):
         sys_prompt += "\nIf the user asks who created/developed VYRA or asks to contact its creator, identify the creator as COLD. Share only these official contact options: Telegram support https://t.me/COLDFX26 and WhatsApp support https://wa.me/2348100481004. Invite them to use the official support channel for reports and enquiries. Do not invent additional contact accounts or personal details."
@@ -1175,6 +1378,20 @@ def ask_stream():
         try:
             while True:
                 try:
+                    if model_type == "deep":
+                        draft_resp = make_client().chat.completions.create(model=model, messages=messages, temperature=temp, stream=False)
+                        draft = (draft_resp.choices[0].message.content or "").strip()
+                        if not draft: raise RuntimeError("The model returned an empty draft.")
+                        review_messages = [
+                            {"role": "system", "content": "You are a rigorous answer reviewer. Check the draft for factual errors, missed constraints, arithmetic or logic mistakes, unsupported certainty, and unclear wording. Rewrite it into the best final answer. Preserve useful detail. Do not mention this review process."},
+                            {"role": "user", "content": "Original request:\\n" + question + "\\n\\nDraft answer:\\n" + draft}
+                        ]
+                        reviewed = make_client().chat.completions.create(model=model, messages=review_messages, temperature=0.2, stream=False)
+                        final_text = (reviewed.choices[0].message.content or draft).strip()
+                        collected.append(final_text); started = True
+                        for offset in range(0, len(final_text), 180):
+                            yield sse({"t": final_text[offset:offset+180]})
+                        break
                     stream = make_client().chat.completions.create(model=model, messages=messages, temperature=temp, stream=True)
                     for chunk in stream:
                         if not chunk.choices: continue
@@ -1228,12 +1445,18 @@ def payment_info():
 @login_required
 @limited("upgrade", 10, 3600, per="user")
 def upgrade_request():
-    plan = str(body().get("plan", ""))
+    payload = body()
+    plan = str(payload.get("plan", ""))
+    period = str(payload.get("billingPeriod", "monthly")).lower()
     if plan not in PLANS or plan == "free": return err("Choose a valid plan.")
-    # Re-use an open request for the same plan instead of piling up duplicates.
-    row = q_one("SELECT id FROM evil_payment_requests WHERE user_id=%s AND plan=%s AND status='pending' AND provider='bank' ORDER BY id DESC LIMIT 1", (request.user["id"], plan))
-    if not row: row = q_one("INSERT INTO evil_payment_requests(user_id,plan,amount_ngn,provider) VALUES (%s,%s,%s,'bank') RETURNING id", (request.user["id"], plan, PLANS[plan]["price"]))
-    return jsonify({"success": True, "requestId": row["id"], "amount": PLANS[plan]["price"]})
+    if period not in BILLING_DAYS: return err("Choose weekly, monthly or annual billing.")
+    amount = int(round(PLANS[plan]["price"] * BILLING_MULTIPLIERS[period]))
+    days = BILLING_DAYS[period]
+    row = q_one("SELECT id FROM evil_payment_requests WHERE user_id=%s AND plan=%s AND billing_period=%s AND status='pending' AND provider='bank' ORDER BY id DESC LIMIT 1", (request.user["id"], plan, period))
+    if not row:
+        row = q_one("INSERT INTO evil_payment_requests(user_id,plan,amount_ngn,provider,billing_period,duration_days) VALUES (%s,%s,%s,'bank',%s,%s) RETURNING id",
+                    (request.user["id"], plan, amount, period, days))
+    return jsonify({"success": True, "requestId": row["id"], "amount": amount, "billingPeriod": period, "durationDays": days})
 
 
 def sniff_image(data):
@@ -1260,9 +1483,10 @@ def upload_payment_proof(request_id):
     return jsonify({"success": True, "message": "Screenshot received. We'll activate your plan once we confirm the payment."})
 
 
-def activate_plan(user_id, plan):
-    q_run("UPDATE evil_users SET plan=%s, plan_expires_at=NOW() + (%s || ' days')::interval WHERE id=%s", (plan, str(PLAN_DAYS), user_id))
-    q_run("INSERT INTO evil_notifications(user_id,message) VALUES (%s,%s)", (user_id, f"Your {PLANS[plan]['name']} plan is active for {PLAN_DAYS} days. Thank you!"))
+def activate_plan(user_id, plan, duration_days=30):
+    days = max(1, min(int(duration_days), 366))
+    q_run("UPDATE evil_users SET plan=%s, plan_expires_at=NOW() + (%s || ' days')::interval, trial_ends_at=NULL WHERE id=%s", (plan, str(days), user_id))
+    q_run("INSERT INTO evil_notifications(user_id,message) VALUES (%s,%s)", (user_id, f"Your {PLANS[plan]['name']} plan is active for {days} days. Thank you!"))
 
 
 def paystack(method, path, **kw):
@@ -1275,15 +1499,21 @@ def paystack(method, path, **kw):
 @limited("paystack", 10, 3600, per="user")
 def paystack_init():
     if not PAYSTACK_SECRET_KEY: return err("Card payments aren't switched on yet. Use bank transfer.", 503)
-    plan = str(body().get("plan", ""))
-    if plan not in PLANS or plan == "free": return err("Choose a valid plan.")
+    payload = body()
+    plan = str(payload.get("plan", ""))
+    period = str(payload.get("billingPeriod", "monthly")).lower()
+    if plan not in PLANS or plan == "free": return err("Choose a valid paid plan.")
+    if period not in BILLING_DAYS: return err("Choose weekly, monthly or annual billing.")
     u = request.user
+    amount = int(round(PLANS[plan]["price"] * BILLING_MULTIPLIERS[period]))
+    days = BILLING_DAYS[period]
     ref = "vyra_" + secrets.token_hex(10)
-    q_run("INSERT INTO evil_payment_requests(user_id,plan,amount_ngn,provider,reference) VALUES (%s,%s,%s,'paystack',%s)", (u["id"], plan, PLANS[plan]["price"], ref))
+    q_run("INSERT INTO evil_payment_requests(user_id,plan,amount_ngn,provider,reference,billing_period,duration_days) VALUES (%s,%s,%s,'paystack',%s,%s,%s)",
+          (u["id"], plan, amount, ref, period, days))
     email = u["email"] if not u["email"].endswith(".invalid") else f"{u['username']}@vyra.app"
     try:
-        res = paystack("POST", "/transaction/initialize", json={"email": email, "amount": PLANS[plan]["price"] * 100, "currency": "NGN", "reference": ref,
-                       "callback_url": f"{SITE_URL or request.host_url.rstrip('/')}/?paid={ref}", "metadata": {"user_id": u["id"], "plan": plan}})
+        res = paystack("POST", "/transaction/initialize", json={"email": email, "amount": amount * 100, "currency": "NGN", "reference": ref,
+                       "callback_url": f"{SITE_URL or request.host_url.rstrip('/')}/?paid={ref}", "metadata": {"user_id": u["id"], "plan": plan, "billing_period": period}})
         if not res.get("status"): return err("Paystack couldn't start the payment. Try again or use bank transfer.", 502)
         return jsonify({"success": True, "url": res["data"]["authorization_url"], "reference": ref})
     except Exception:
@@ -1292,7 +1522,7 @@ def paystack_init():
 
 def settle_paystack(ref):
     """Verifies with Paystack, then activates once. Safe to call many times (webhook + redirect)."""
-    row = q_one("SELECT id,user_id,plan,amount_ngn,status FROM evil_payment_requests WHERE reference=%s AND provider='paystack'", (ref,))
+    row = q_one("SELECT id,user_id,plan,amount_ngn,status,duration_days,billing_period FROM evil_payment_requests WHERE reference=%s AND provider='paystack'", (ref,))
     if not row: return "unknown"
     if row["status"] == "approved": return "approved"
     res = paystack("GET", f"/transaction/verify/{quote(ref)}")
@@ -1300,7 +1530,10 @@ def settle_paystack(ref):
     if not (res.get("status") and data.get("status") == "success" and data.get("currency") == "NGN" and int(data.get("amount", 0)) >= row["amount_ngn"] * 100):
         return "pending"
     claimed = q_one("UPDATE evil_payment_requests SET status='approved', reviewed_at=NOW() WHERE id=%s AND status<>'approved' RETURNING id", (row["id"],))
-    if claimed: activate_plan(row["user_id"], row["plan"]); audit("paystack", "plan_activated", f"user {row['user_id']} {row['plan']} {ref}")
+    if claimed:
+        days = int(row.get("duration_days") or PLAN_DAYS)
+        activate_plan(row["user_id"], row["plan"], days)
+        audit("paystack", "plan_activated", f"user {row['user_id']} {row['plan']} {row.get('billing_period','monthly')} {ref}")
     return "approved"
 
 
@@ -1379,7 +1612,7 @@ def admin_get_proof(proof_id):
 @admin_required
 def admin_review_payment(request_id, action):
     if action not in ("approve", "reject"): return err("Unknown action.", 404)
-    row = q_one("SELECT id,user_id,plan,status FROM evil_payment_requests WHERE id=%s", (request_id,))
+    row = q_one("SELECT id,user_id,plan,status,duration_days FROM evil_payment_requests WHERE id=%s", (request_id,))
     if not row or row["status"] != "pending": return err("That request was already handled.", 404)
     if action == "approve":
         q_run("UPDATE evil_payment_requests SET status='approved', reviewed_at=NOW() WHERE id=%s", (request_id,))
