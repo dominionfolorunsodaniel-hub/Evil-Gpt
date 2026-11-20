@@ -360,7 +360,7 @@ def current_user():
 
 
 def effective_plan(u):
-    """Resolve plan entitlements. Admin Infinity is separate from customer plans."""
+    """Resolve legacy subscriptions; a one-time 3-day trial unlocks the Enterprise feature set."""
     if u["is_admin"]: return "enterprise", False
     raw = u["plan"] or "free"
     plan = raw if raw in PLANS else LEGACY_PLAN_MAP.get(raw, "free")
@@ -392,7 +392,6 @@ def admin_required(fn):
 
 def usage_status(u):
     plan_key, trial = effective_plan(u)
-    if u["is_admin"]: return {"used": 0, "limit": None, "remaining": None, "trial": False, "unlimited": True, "label": "Infinity"}
     month = q_one("SELECT to_char(NOW() AT TIME ZONE 'UTC','YYYY-MM') AS m")["m"]
     row = q_one("SELECT message_count FROM evil_usage WHERE user_id=%s AND usage_month=%s", (u["id"], month))
     used = row["message_count"] if row else 0
@@ -621,15 +620,6 @@ def add_memory():
     if count >= 100: return err("Memory limit reached. Review or delete older memories first.", 429)
     row = q_one("INSERT INTO evil_memories(user_id,memory,source) VALUES (%s,%s,'user') RETURNING id", (request.user["id"], memory))
     return jsonify({"success": True, "id": row["id"]}), 201
-
-@app.put("/api/memory/<int:memory_id>")
-@login_required
-def update_memory(memory_id):
-    d = body(); memory = str(d.get("memory", "")).strip()[:1000]
-    if len(memory) < 3: return err("Enter a useful memory.")
-    row = q_one("UPDATE evil_memories SET memory=%s,updated_at=NOW() WHERE id=%s AND user_id=%s RETURNING id,memory", (memory, memory_id, request.user["id"]))
-    if not row: return err("Memory not found.", 404)
-    return jsonify({"success": True, "memory": dict(row)})
 
 @app.delete("/api/memory/<int:memory_id>")
 @login_required
@@ -920,7 +910,7 @@ def me():
     refs_row = q_one("SELECT COUNT(*) AS n FROM evil_users WHERE referred_by::text=%s AND referral_rewarded=TRUE", (str(u["id"]),))
     refs = (refs_row or {}).get("n", 0)
     return jsonify({
-        "user": {"username": u["username"], "email": u["email"], "plan": plan_key, "paidPlan": u["plan"], "isAdmin": u["is_admin"], "entitlement": ("Infinity" if u["is_admin"] else plan_key),
+        "user": {"username": u["username"], "email": u["email"], "plan": plan_key, "paidPlan": u["plan"], "isAdmin": u["is_admin"],
                  "streak": u["streak_count"] or 0, "checkedInToday": bool(u["checked_in_today"]), "trial": trial,
                  "planExpiresAt": iso(u["plan_expires_at"]), "customPersona": u["custom_persona"] or "", "canUsePersona": can_persona,
                  "referralCode": u["referral_code"], "referrals": refs, "aboutMe": u["about_me"] or "", "aiNickname": u["ai_nickname"] or "",
@@ -928,7 +918,7 @@ def me():
                  "country": u.get("country_code"), "currency": u.get("preferred_currency") or "NGN",
                  "language": u.get("preferred_language") or "English", "trialEndsAt": iso(u["trial_ends_at"])},
         "usage": usage_status(u),
-        "images": {"used": u["images_today"], "limit": (None if u["is_admin"] else PLANS[plan_key]["daily_images"]), "unlimited": bool(u["is_admin"])},
+        "images": {"used": u["images_today"], "limit": PLANS[plan_key]["daily_images"]},
         "badges": badges_for(u),
         "plans": PLANS, "paystack": bool(PAYSTACK_SECRET_KEY), "brand": BRAND})
 
@@ -1070,15 +1060,11 @@ def generate_image():
     if len(prompt) > 600: return err("Keep the description under 600 characters.")
     u = request.user; plan_key, _ = effective_plan(u)
     limit = PLANS[plan_key]["daily_images"]
-    # Admin Infinity bypasses ordinary image limits; customer limits remain atomic.
-    if u["is_admin"]:
-        row = q_one(f"""UPDATE evil_users SET images_generated_today = CASE WHEN last_image_date = {TODAY} THEN images_generated_today+1 ELSE 1 END,
-                        last_image_date = {TODAY} WHERE id=%s RETURNING images_generated_today""", (u["id"]))
-    else:
-        row = q_one(f"""UPDATE evil_users SET images_generated_today = CASE WHEN last_image_date = {TODAY} THEN images_generated_today+1 ELSE 1 END,
-                        last_image_date = {TODAY}
-                        WHERE id=%s AND (CASE WHEN last_image_date = {TODAY} THEN images_generated_today ELSE 0 END) < %s RETURNING images_generated_today""", (u["id"], limit))
-        if not row: return err(f"You've used all {limit} images for today. They reset at midnight, or upgrade for more.", 429)
+    # Atomic: only counts if still under today's limit, so parallel clicks can't overshoot.
+    row = q_one(f"""UPDATE evil_users SET images_generated_today = CASE WHEN last_image_date = {TODAY} THEN images_generated_today+1 ELSE 1 END,
+                    last_image_date = {TODAY}
+                    WHERE id=%s AND (CASE WHEN last_image_date = {TODAY} THEN images_generated_today ELSE 0 END) < %s RETURNING images_generated_today""", (u["id"], limit))
+    if not row: return err(f"You've used all {limit} images for today. They reset at midnight, or upgrade for more.", 429)
     seed = secrets.randbelow(10 ** 8)
     url = f"https://image.pollinations.ai/prompt/{quote(prompt)}?width=1024&height=1024&nologo=true&seed={seed}"
     img = q_one("INSERT INTO evil_images(user_id,prompt,url) VALUES (%s,%s,%s) RETURNING id", (u["id"], prompt, url))
@@ -1299,6 +1285,64 @@ def export_answer_zip():
     return send_file(buf, mimetype="application/zip", as_attachment=True, download_name="vyra-answer.zip")
 
 
+@app.post("/api/export-files-zip")
+@login_required
+def export_files_zip():
+    d = body(); files = d.get("files")
+    if not isinstance(files, list) or not files or len(files) > 30: return err("Provide between 1 and 30 files.", 400)
+    total = 0; validated = []; seen = set()
+    for item in files:
+        if not isinstance(item, dict): return err("Each file must include a path and content.", 400)
+        path = str(item.get("path", item.get("filename", ""))).strip().replace("\\", "/")
+        content = item.get("content", "")
+        if not path or path.startswith("/") or any(part in ("", ".", "..") for part in path.split("/")) or re.match(r"^[A-Za-z]:", path) or "\x00" in path or any(ord(ch) < 32 for ch in path): return err("Unsafe file path detected.", 400)
+        if not isinstance(content, str): return err("File content must be text.", 400)
+        if len(path) > 180 or len(content) > 200000: return err("File name or content is too large.", 400)
+        if path.lower() == "readme.md": return err("README.md is reserved for the generated export notes.", 400)
+        if path.lower() in seen: return err("Duplicate file path detected.", 400)
+        seen.add(path.lower()); total += len(content.encode("utf-8")); validated.append((path, content))
+        if total > 750000: return err("ZIP contents exceed 750 KB.", 400)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for path, content in validated: zf.writestr(path, content)
+        zf.writestr("README.md", "# VYRA AI file export\n\nGenerated files are included in this ZIP.\n")
+    buf.seek(0)
+    return send_file(buf, mimetype="application/zip", as_attachment=True, download_name="vyra-files.zip")
+
+
+@app.post("/api/export-project-zip")
+@login_required
+def export_project_zip():
+    d = body()
+    project_id = d.get("projectId")
+    try: project_id = int(project_id)
+    except (TypeError, ValueError): return err("Select a valid project.", 400)
+    project = q_one("SELECT id,name FROM evil_projects WHERE id=%s AND user_id=%s", (project_id, request.user["id"]))
+    if not project: return err("Project not found.", 404)
+    files = d.get("files")
+    if not isinstance(files, list) or not files or len(files) > 30: return err("Provide between 1 and 30 files.", 400)
+    total = 0; validated = []; seen = set()
+    for item in files:
+        if not isinstance(item, dict): return err("Each file must include a path and content.", 400)
+        path = str(item.get("path", item.get("filename", ""))).strip().replace("\\", "/")
+        content = item.get("content", "")
+        if not path or path.startswith("/") or any(part in ("", ".", "..") for part in path.split("/")) or re.match(r"^[A-Za-z]:", path) or "\x00" in path or any(ord(ch) < 32 for ch in path): return err("Unsafe file path detected.", 400)
+        if not isinstance(content, str): return err("File content must be text.", 400)
+        if len(path) > 180 or len(content) > 200000: return err("File name or content is too large.", 400)
+        if path.lower() == "readme.md": return err("README.md is reserved for the generated export notes.", 400)
+        if path.lower() in seen: return err("Duplicate file path detected.", 400)
+        seen.add(path.lower()); total += len(content.encode("utf-8")); validated.append((path, content))
+        if total > 750000: return err("ZIP contents exceed 750 KB.", 400)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for path, content in validated: zf.writestr(path, content)
+        project_name = re.sub(r"[^A-Za-z0-9 _-]", "", str(project["name"]))[:80] or "Project"
+        zf.writestr("README.md", f"# {project_name}\n\nGenerated file bundle from VYRA AI.\n\nFiles: {len(validated)}\n")
+    buf.seek(0)
+    safe_project = re.sub(r"[^A-Za-z0-9_-]", "-", str(project["name"]))[:60] or "project"
+    return send_file(buf, mimetype="application/zip", as_attachment=True, download_name=f"vyra-{safe_project}.zip")
+
+
 @app.post("/ask/stream")
 @login_required
 @limited("chat", 25, 60, per="user")
@@ -1326,7 +1370,7 @@ def ask_stream():
     status = usage_status(u)
     plan_key, trial = effective_plan(u)
     month = q_one("SELECT to_char(NOW() AT TIME ZONE 'UTC','YYYY-MM') AS m")["m"]
-    if not u["is_admin"] and not trial and status["remaining"] <= 0:
+    if not trial and status["remaining"] <= 0:
         return err("You've used all your messages for this month. Check in daily for bonus messages, or upgrade.", 429, limitReached=True)
     q_run("INSERT INTO evil_usage(user_id,usage_month,message_count) VALUES (%s,%s,1) ON CONFLICT (user_id,usage_month) DO UPDATE SET message_count=evil_usage.message_count+1", (u["id"], month))
 
@@ -1448,12 +1492,6 @@ def save_turn(conv_id, user_id, question, answer, retitle):
 
 
 # ----------------------------------------------------------------------------- payments
-@app.get("/api/service-status")
-def service_status():
-    # App process status only; does not claim upstream AI/payment providers are healthy.
-    return jsonify({"status": "operational", "service": BRAND, "timestamp": iso(q_one("SELECT NOW() AS t")["t"])})
-
-
 @app.get("/api/payment-info")
 @login_required
 def payment_info():
@@ -1635,8 +1673,8 @@ def admin_review_payment(request_id, action):
     row = q_one("SELECT id,user_id,plan,status,duration_days FROM evil_payment_requests WHERE id=%s", (request_id,))
     if not row or row["status"] != "pending": return err("That request was already handled.", 404)
     if action == "approve":
-        q_run("UPDATE evil_payment_requests SET status='approved', reviewed_at=NOW() WHERE id=%s AND status='pending'", (request_id,))
-        activate_plan(row["user_id"], row["plan"], row.get("duration_days") or 30)
+        q_run("UPDATE evil_payment_requests SET status='approved', reviewed_at=NOW() WHERE id=%s", (request_id,))
+        activate_plan(row["user_id"], row["plan"])
     else:
         q_run("UPDATE evil_payment_requests SET status='rejected', reviewed_at=NOW() WHERE id=%s", (request_id,))
         q_run("INSERT INTO evil_notifications(user_id,message) VALUES (%s,%s)", (row["user_id"], "We couldn't confirm your payment. Please check and send the screenshot again."))
