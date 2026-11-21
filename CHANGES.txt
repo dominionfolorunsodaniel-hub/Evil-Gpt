@@ -1,10 +1,23 @@
-VYRA AI - FIXED FILES (copy each file to the same path in your repo; do not touch the database or env vars)
+VYRA AI - FIXED FILES (copy each file to the same path in your repo. No database reset. Database changes are additive only and run automatically on startup.)
 
-1. static/script.js - Image gallery fixed (uses display_url). Page start now retries while the server wakes up and shows a message instead of a silent sign-in form; all api() calls time out after 45s.
-2. app.py - (a) Registering an existing unverified email no longer overwrites its password (account-hijack fix). (b) Renewing the same active plan now adds days on top of the remaining time. (c) max_tokens added to chat calls (cost control).
-3. templates/landing.html + static/landing.js - inline script moved out so the CSP no longer blocks it.
-4. templates/offline.html - "Try again" is now a link (the inline onclick was blocked).
-5. .github/workflows/keepalive.yml - pings /healthz every 10 min. Then add GitHub repo variable SITE_URL (Settings > Secrets and variables > Actions > Variables), e.g. https://evil-gpt-j2rx.onrender.com
-6. .env.example - list of environment variable names (no values).
+FILES: app.py, static/script.js, static/landing.js (new), templates/index.html, templates/landing.html, templates/offline.html, .github/workflows/keepalive.yml (new), .env.example (new)
 
-Checked: app.py compiles, JS syntax OK. NOT tested live (no database/keys here): test register, login, chat, gallery, a renewal.
+FIXED
+- Image gallery showed nothing (wrong field name). Failed images are removed and the daily credit returned.
+- Page start retries while the server wakes up; requests time out after 45s.
+- Re-registering an unverified email can no longer overwrite its password.
+- Plans: renewing the same plan adds days; USD/NGN price view with a picker; prices come from the server.
+- Admin shows "Infinity" and has no plan to buy.
+- Coupons now really reduce the price (bank and card), checked on the server, counted per user and per max uses.
+- Admin: Inbox tab (customers message support, admin replies, history kept), bank-details editor, coupon enable/disable, feedback and referral tiles.
+- Settings > Contact support for users.
+- Projects: select is remembered, rename/edit, list and remove files, load PDF/txt files, chats keep their own project (no more project leaking into normal chats).
+- Memory: edit memories; "remember that ..." in chat saves for real; the most relevant memories are used.
+- Creator question gets a fixed answer (COLD) in every mode, costs no tokens.
+- A failed first answer no longer leaves an empty chat in history.
+- Email: one retry, clear log lines (initiated / accepted_by_brevo / failed / user_verified), welcome email sent in the background, password-reset codes can't be re-rolled for guessing, login not case-sensitive.
+- max_tokens limits added. Faster queries via new indexes. CSP-blocked inline scripts removed.
+- Keep-awake workflow: add repo variable SITE_URL.
+
+TESTED: python and javascript compile; 17 unit checks on coupons, memory choice, plan prices, creator/remember patterns, login/CSRF protection of the new routes.
+NOT TESTED (needs the live site): email delivery, Paystack, AI replies, image provider, phone layout. Please test register, login, chat, a coupon, a project and the inbox after you upload.
