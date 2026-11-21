@@ -94,6 +94,7 @@
     </nav>
     <div class="search"><svg class="ico sm"><use href="#i-search"/></svg><input id="search-chats" type="search" placeholder="Search chats (Ctrl+K)" aria-label="Search chats"></div>
     <div class="sub-tabs history-tabs"><button id="hist-active" class="on">Chats</button><button id="hist-archived">Archived</button></div>
+    <div class="folder-bar"><button type="button" id="new-folder" class="chip">+ Folder</button></div>
     <div id="history-list" class="history"></div>
     <div class="side-bottom">
       <div><div class="meter" id="side-meter"><span></span></div><div class="side-note" style="margin-top:6px"><span id="side-usage">Loading</span><span id="side-plan-note"></span></div></div>
@@ -109,6 +110,8 @@
       <h1 id="page-heading">{{ brand }}</h1>
       <div class="top-actions">
         <button id="theme-btn" class="icon-btn" aria-label="Switch theme"><svg class="ico"><use href="#i-sun"/></svg></button>
+        <button id="pins-btn" class="icon-btn hidden" aria-label="Pinned messages" title="Pinned messages"><svg class="ico"><use href="#i-pin"/></svg></button>
+        <button id="notes-btn" class="icon-btn" aria-label="Saved notes" title="Saved notes"><svg class="ico"><use href="#i-book"/></svg></button>
         <button id="copy-chat-btn" class="icon-btn hidden" aria-label="Copy whole conversation" title="Copy whole conversation"><svg class="ico"><use href="#i-copy"/></svg></button>
         <button id="shortcuts-btn" class="icon-btn" aria-label="Keyboard shortcuts" title="Keyboard shortcuts"><svg class="ico"><use href="#i-help"/></svg></button>
         <button id="notif-btn" class="icon-btn" aria-label="Notifications"><svg class="ico"><use href="#i-bell"/></svg><span id="notif-dot" class="dot hidden"></span></button>
@@ -145,15 +148,22 @@
               <button type="button" id="mode-balanced" aria-pressed="false"><svg class="ico sm"><use href="#i-star"/></svg>Balanced</button>
               <button type="button" id="mode-deep" class="on" aria-pressed="true"><svg class="ico sm"><use href="#i-cpu"/></svg>Deep</button>
             </div>
-            <select id="persona-select" class="select" aria-label="Persona"></select>
-            <select id="lang-select" class="select" aria-label="Reply language"><option>English</option><option>Nigerian Pidgin</option><option>Yoruba</option><option>Hausa</option><option>Igbo</option><option>French</option><option>Spanish</option><option>German</option><option>Portuguese</option></select>
-            <label class="creativity" title="Lower is precise, higher is more creative">Creativity<input type="range" id="temp-slider" min="0" max="1" step="0.1" value="0.7" aria-label="Creativity"></label>
-            <button type="button" id="tune-btn" class="chip" title="Response length, tone and Explain Simply"><svg class="ico sm"><use href="#i-settings"/></svg>Tune reply</button>
+            <button type="button" id="opts-btn" class="chip" aria-expanded="false" aria-controls="opts-panel"><svg class="ico sm"><use href="#i-settings"/></svg>Options<span id="opts-dot" class="opts-dot hidden"></span></button>
             <span id="file-chip" class="file-chip hidden"></span>
           </div>
+          <div class="opts-panel hidden" id="opts-panel">
+            <label class="opt"><span>Persona</span><select id="persona-select" class="select" aria-label="Persona"></select></label>
+            <label class="opt"><span>Reply language</span><select id="lang-select" class="select" aria-label="Reply language"><option>English</option><option>Nigerian Pidgin</option><option>Yoruba</option><option>Hausa</option><option>Igbo</option><option>French</option><option>Spanish</option><option>German</option><option>Portuguese</option></select></label>
+            <label class="creativity opt-wide" title="Lower is precise, higher is more creative"><span>Creativity</span><input type="range" id="temp-slider" min="0" max="1" step="0.1" value="0.7" aria-label="Creativity"></label>
+            <label class="field-row opt-wide"><input type="checkbox" id="mem-switch" checked><span>Use my memory in this chat</span></label>
+            <label class="opt opt-wide"><span>Reply style</span><select id="style-select" class="select" aria-label="Reply style"><option value="">Default</option></select></label>
+            <button type="button" id="styles-btn" class="chip opt-wide">Manage reply styles</button>
+            <button type="button" id="tune-btn" class="chip opt-wide" title="Response length, tone and Explain Simply"><svg class="ico sm"><use href="#i-settings"/></svg>Tune reply (length, tone, simple words)</button>
+          </div>
+          <div class="quick-chips" id="quick-chips" aria-label="Quick prompts"></div>
           <form id="chat-form" class="composer">
-            <button type="button" id="attach-btn" class="icon-btn" aria-label="Attach a PDF" title="Attach a PDF"><svg class="ico"><use href="#i-paperclip"/></svg></button>
-            <input type="file" id="file-input" accept="application/pdf" class="hidden">
+            <button type="button" id="attach-btn" class="icon-btn" aria-label="Attach a PDF, Word or Excel file" title="Attach a PDF, Word or Excel file"><svg class="ico"><use href="#i-paperclip"/></svg></button>
+            <input type="file" id="file-input" accept=".pdf,.docx,.xlsx,application/pdf" class="hidden">
             <button type="button" id="mic-btn" class="icon-btn hidden" aria-label="Speak your message" title="Speak your message"><svg class="ico"><use href="#i-mic"/></svg></button>
             <textarea id="message-input" rows="1" placeholder="Message {{ brand }}" aria-label="Message" maxlength="8000"></textarea>
             <button class="send" id="send-btn" type="submit" aria-label="Send">
@@ -191,6 +201,7 @@
         <div class="split">
           <div class="card">
             <h3>Projects</h3>
+            <label class="field">Start from a template<select class="select" id="project-template" style="max-width:none;width:100%"><option value="">Blank project</option><option value="business">Business plan</option><option value="study">Study plan</option><option value="content">Content calendar</option></select></label>
             <label class="field">Project name<input class="input" id="project-name" maxlength="100" placeholder="e.g. My business plan"></label>
             <label class="field">Project instructions<textarea class="input" id="project-instructions" rows="3" placeholder="Instructions VYRA should follow in this project"></textarea></label>
             <button class="btn primary" id="project-create">Create project</button>
@@ -198,7 +209,8 @@
             <div id="project-file-tools" class="hidden" style="margin-top:12px">
               <p class="tiny muted">The 5 newest files of the selected project are included as context in chats started with "Use this project in Chat".</p>
               <div id="project-file-list" style="margin-bottom:10px"></div>
-              <label class="field">Load a file (PDF, .txt, .md, .csv, .json)<input class="input" type="file" id="project-file-upload" accept=".pdf,.txt,.md,.csv,.json"></label>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px"><button type="button" class="btn sm" id="proj-dash">Dashboard</button><button type="button" class="btn sm" id="proj-search">Search</button><button type="button" class="btn sm" id="proj-sum">Summarise</button><button type="button" class="btn sm" id="proj-zip">Export ZIP</button></div>
+              <label class="field">Load a file (PDF, Word .docx, Excel .xlsx, .txt, .md, .csv, .json)<input class="input" type="file" id="project-file-upload" accept=".pdf,.docx,.xlsx,.txt,.md,.csv,.json"></label>
               <input class="input" id="project-file-name" placeholder="File name">
               <textarea class="input" id="project-file-content" rows="3" placeholder="Paste text from a project document"></textarea>
               <button class="btn sm" id="project-file-add">Add project file</button>
@@ -207,7 +219,9 @@
           </div>
           <div class="card">
             <h3>Saved Memory</h3><p class="tiny muted">Only save details you choose. You can review or delete them.</p>
+            <button type="button" class="btn sm" id="knows-btn" style="margin-bottom:10px">What Vyra knows about me</button>
             <textarea class="input" id="memory-input" rows="3" placeholder="A preference or fact you want VYRA to remember"></textarea>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0"><select id="memory-cat" class="select" aria-label="Category"><option value="general">General</option><option value="personal">Personal</option><option value="work">Work</option><option value="preferences">Preferences</option><option value="goals">Goals</option></select><select id="memory-exp" class="select" aria-label="Forget after"><option value="">Never forget</option><option value="7">Forget in 7 days</option><option value="30">Forget in 30 days</option><option value="90">Forget in 90 days</option></select></div>
             <button class="btn primary" id="memory-add">Save memory</button><div id="memory-list" style="margin-top:12px"></div>
           </div>
         </div>
