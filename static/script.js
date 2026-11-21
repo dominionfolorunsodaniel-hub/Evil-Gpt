@@ -43,8 +43,10 @@ async function api(url, opts = {}) {
   const headers = { "X-Requested-With": "vyra", ...(opts.headers || {}) };
   if (opts.body && !(opts.body instanceof FormData)) headers["Content-Type"] = "application/json";
   let res;
-  try { res = await fetch(url, { credentials: "same-origin", ...opts, headers }); }
-  catch (e) { throw new Error("You're offline or the server is unreachable. Check your connection and try again."); }
+  const ctrl = (!opts.signal && typeof AbortController !== "undefined") ? new AbortController() : null;
+  const timer = ctrl ? setTimeout(() => ctrl.abort(), 45000) : null; // never hang forever on a sleeping server
+  try { res = await fetch(url, { credentials: "same-origin", ...(ctrl ? { signal: ctrl.signal } : {}), ...opts, headers }); if (timer) clearTimeout(timer); }
+  catch (e) { if (timer) clearTimeout(timer); throw new Error("You're offline or the server is unreachable. Check your connection and try again."); }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) { const err = new Error(data.error || "Something went wrong. Please try again."); err.status = res.status; err.data = data; throw err; }
   return data;
@@ -552,7 +554,7 @@ $("generate-img-btn").onclick = async () => {
   } catch (e) { toast(e.message, "error"); } finally { setBtn(btn, false, ico("zap") + "Generate image"); }
 };
 async function loadGallery() {
-  try { const d = await api("/api/images"); $("gallery").innerHTML = d.images.length ? d.images.map((i) => `<div class="g-item"><img loading="lazy" src="${esc(i.url)}" alt="${esc(i.prompt)}"><div class="g-actions"><a href="${esc(i.url)}" download target="_blank" rel="noopener" aria-label="Download">${ico("download", "sm")}</a><button type="button" data-del-img="${i.id}" aria-label="Delete">${ico("trash", "sm")}</button></div></div>`).join("") : `<div class="empty" style="grid-column:1/-1">Images you make will be saved here.</div>`; } catch (e) {}
+  try { const d = await api("/api/images"); $("gallery").innerHTML = d.images.length ? d.images.map((i) => `<div class="g-item"><img loading="lazy" src="${esc(i.display_url)}" alt="${esc(i.prompt)}"><div class="g-actions"><a href="${esc(i.display_url)}" download target="_blank" rel="noopener" aria-label="Download">${ico("download", "sm")}</a><button type="button" data-del-img="${i.id}" aria-label="Delete">${ico("trash", "sm")}</button></div></div>`).join("") : `<div class="empty" style="grid-column:1/-1">Images you make will be saved here.</div>`; } catch (e) {}
 }
 $("gallery").onclick = async (e) => { const b = e.target.closest("[data-del-img]"); if (!b) return; try { await post(`/api/images/${b.dataset.delImg}/delete`); loadGallery(); } catch (err) { toast(err.message, "error"); } };
 
@@ -816,5 +818,14 @@ function maybeTour() { if(store.get("vyra-tour")) return; runTour(0); }
 (async function boot() {
   const ref = document.body.dataset.ref || new URLSearchParams(location.search).get("ref") || "";
   if (ref) { $("reg-ref").value = ref.toUpperCase(); showForm("register"); }
-  try { await api("/api/me"); await enterApp(); } catch (e) { /* not signed in: the sign-in form is already showing */ }
+  // Free hosting can be asleep: retry a few times on "waking up"/network errors instead of silently showing the sign-in form.
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try { await api("/api/me"); await enterApp(); return; }
+    catch (e) {
+      if (e.status === 401) return; // genuinely not signed in: the sign-in form is already showing
+      if (attempt === 0) setNote("Waking the server up, this can take a few seconds...", "");
+      if (attempt === 3) { setNote("The server is slow to respond. Refresh in a moment, or sign in below.", "error"); return; }
+      await new Promise((r) => setTimeout(r, 4000));
+    }
+  }
 })();
