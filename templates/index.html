@@ -196,7 +196,9 @@
             <button class="btn primary" id="project-create">Create project</button>
             <div id="project-list" style="margin-top:14px"></div>
             <div id="project-file-tools" class="hidden" style="margin-top:12px">
-              <p class="tiny muted">Selected project files are included as context in chats started with this project.</p>
+              <p class="tiny muted">The 5 newest files of the selected project are included as context in chats started with "Use this project in Chat".</p>
+              <div id="project-file-list" style="margin-bottom:10px"></div>
+              <label class="field">Load a file (PDF, .txt, .md, .csv, .json)<input class="input" type="file" id="project-file-upload" accept=".pdf,.txt,.md,.csv,.json"></label>
               <input class="input" id="project-file-name" placeholder="File name">
               <textarea class="input" id="project-file-content" rows="3" placeholder="Paste text from a project document"></textarea>
               <button class="btn sm" id="project-file-add">Add project file</button>
@@ -302,6 +304,7 @@
       <button class="btn sm primary" id="save-about" style="margin-top:8px">Save</button></div>
     <div class="setting"><h3>Badges</h3><div id="badges-list" class="badges"></div></div>
     <div class="setting"><h3>Install the app</h3><p class="muted tiny" style="margin:0 0 8px">Add {{ brand }} to your home screen for a full-screen app.</p><button class="btn sm" id="install-btn">Install {{ brand }}</button></div>
+    <div class="setting"><h3>Contact support</h3><p class="muted tiny" style="margin:0 0 8px">Send a message to the {{ brand }} admin and read the reply here.</p><button class="btn sm primary" id="open-support">Message support</button></div>
     <div class="setting"><h3>Sign-ins and devices</h3><div id="sessions-list" class="tiny muted" style="margin:0 0 8px"></div><button class="btn sm" id="logout-others">Log out of all other devices</button></div>
     <div class="setting"><h3>Your data</h3><div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn sm" href="/api/user/export" download><svg class="ico sm"><use href="#i-download"/></svg>Download my data</a><a class="btn sm" href="/api/conversations/export-all" download><svg class="ico sm"><use href="#i-download"/></svg>Export all chats</a><button class="btn sm danger" id="delete-account">Delete my account</button></div></div>
     <div class="setting"><button class="btn block" id="logout"><svg class="ico"><use href="#i-logout"/></svg>Sign out</button></div>
