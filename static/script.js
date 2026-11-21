@@ -192,10 +192,11 @@ function setGreeting() {
   $("greeting").textContent = `${g}, ${S.user.username}`;
   $("welcome").querySelector(".sub").textContent = "What are we creating today?";
 }
-const TOP = ["business", "enterprise"];
-function planLabel() { const u = S.user; return u.trial ? "Free trial" : (S.plans[u.plan]?.name || "Free"); }
+const TOP = ["business", "enterprise", "infinity"];
+function planLabel() { const u = S.user; if (u.isAdmin) return "Infinity"; return u.trial ? "Free trial" : (S.plans[u.plan]?.name || "Free"); }
 async function refreshMe() {
   const d = await api("/api/me"); S.user = d.user; S.usage = d.usage; S.images = d.images; S.plans = d.plans; S.paystack = d.paystack; S.badges = d.badges;
+  if (d.billing && d.billing.multipliers) Object.assign(BILLING_FACTORS, d.billing.multipliers); // one source of truth: the server
   const u = S.user, us = S.usage;
   $("news-dot").classList.toggle("hidden", !u.hasNewsUpdate);
   $("side-username").textContent = u.username; $("avatar").textContent = u.username[0].toUpperCase();
@@ -234,11 +235,15 @@ async function loadDailyPrompt() {
 
 /* ---------------------------------------------------------------- navigation */
 const TITLES = { chat: "", toolbox: "AI Toolbox", workspace: "Projects & Memory", images: "Image Studio", plans: "Plans", admin: "Admin" };
+function updateHeading(name) {
+  const proj = name === "chat" && S.projectId ? (S.projectCache || []).find((x) => x.id === S.projectId) : null;
+  $("page-heading").textContent = proj ? "Project: " + proj.name : (TITLES[name] || document.querySelector(".brand").textContent.trim());
+}
 function showPage(name) {
   S.page = name; store.set("vyra-page", name);
   ["chat", "toolbox", "workspace", "images", "plans", "admin"].forEach((p) => $(p + "-page").classList.toggle("hidden", p !== name));
   document.querySelectorAll(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.page === name));
-  $("page-heading").textContent = TITLES[name] || document.querySelector(".brand").textContent.trim();
+  updateHeading(name);
   closeSidebar(); $("notif-panel").classList.add("hidden");
   if (name === "plans") { renderPlans(); loadLeaderboard(); renderReferral(); }
   if (name === "images") loadGallery();
@@ -367,14 +372,15 @@ function renderMessages() {
   $("copy-chat-btn").classList.toggle("hidden", S.msgs.length === 0);
 }
 function refreshActions() { S.msgs.forEach((m) => { if (m.pending || !m.el) return; const old = m.el.querySelector(".msg-actions"); if (old) old.remove(); m.el.insertAdjacentHTML("beforeend", msgActions(m)); }); }
-function newChat() {
+function newChat(keepProject) {
   if (S.busy && S.abort) S.abort.abort();
+  if (!keepProject) S.projectId = null; // a normal new chat never inherits a project
   S.conv = null; S.msgs = []; S.editFromId = null; clearFile(); renderMessages(); $("message-input").value = ""; autosize(); markActive(); showPage("chat"); $("message-input").focus();
 }
 $("new-chat").onclick = newChat;
 async function openConversation(id) {
   try {
-    const d = await api("/api/conversations/" + id); S.conv = id; S.editFromId = null;
+    const d = await api("/api/conversations/" + id); S.conv = id; S.editFromId = null; S.projectId = d.projectId || null; // each chat keeps its own project
     S.msgs = d.messages.map((m) => ({ id: m.id, role: m.role, content: m.content, feedback: m.feedback, createdAt: m.created_at })); renderMessages(); markActive(); showPage("chat"); toBottom();
   } catch (e) { toast(e.message, "error"); }
 }
@@ -409,6 +415,7 @@ function setBusy(b) {
 }
 async function send(text, opts = {}) {
   if (S.busy) return;
+  const wasNew = !S.conv;
   const truncateFromId = opts.truncateFromId || S.editFromId || null; S.editFromId = null;
   if (truncateFromId) { const i = S.msgs.findIndex((m) => m.id === truncateFromId); if (i >= 0) S.msgs = S.msgs.slice(0, i); }
   const userMsg = { role: "user", content: text }; const ai = { role: "assistant", content: "", pending: true };
@@ -438,11 +445,12 @@ async function send(text, opts = {}) {
       }
     }
   } catch (e) {
-    if (ctrl.signal.aborted) { if (ctrl.signal.reason === "timeout") failed = "The AI took too long to answer."; else if (!started) { S.msgs = S.msgs.slice(0, -2); } }
+    if (ctrl.signal.aborted) { if (ctrl.signal.reason === "timeout") failed = "The AI took too long to answer."; else if (!started) { S.msgs = S.msgs.slice(0, -2); if (wasNew) S.conv = null; } }
     else { failed = e.message; if (e.data && e.data.limitReached) { toast(e.message); refreshMe(); } }
   }
   clearTimeout(idle); cancelAnimationFrame(raf); delete ai.pending; setBusy(false); S.abort = null;
   if (failed && !started) {
+    if (wasNew) S.conv = null; // the server removes an empty chat whose first answer failed
     S.msgs = S.msgs.slice(0, -1); renderMessages();
     const last = S.msgs[S.msgs.length - 1]; if (last) last.el.insertAdjacentHTML("beforeend", `<div class="msg-error">${ico("x", "sm")}<span>${esc(failed)}</span><button type="button" class="btn sm" data-retry>Try again</button></div>`);
     S.lastFailed = text; S.msgs = S.msgs.slice(0, -1); // the failed question isn't saved on the server, so retry re-sends it
@@ -562,8 +570,15 @@ $("gallery").onclick = async (e) => { const b = e.target.closest("[data-del-img]
 let BILLING_PERIOD = "monthly";
 const BILLING_FACTORS = { weekly: 0.35, monthly: 1, annual: 10 };
 const BILLING_LABELS = { weekly: "7 days", monthly: "30 days", annual: "365 days" };
+function ensureCurrencyPicker() {
+  if ($("currency-view")) return; const bp = $("billing-period"); if (!bp) return;
+  bp.insertAdjacentHTML("afterend", `<select id="currency-view" class="input" style="max-width:170px" aria-label="Show prices in"><option value="NGN">Prices in ₦ (NGN)</option><option value="USD">Prices in US$ (USD)</option></select>`);
+  $("currency-view").onchange = async (e) => { const v = e.target.value; try { await post("/api/preferences", { currency: v }); S.user.currency = v; renderPlans(); } catch (err) { toast(err.message, "error"); } };
+}
 function renderPlans() {
   const grid=$("plans-grid"), u=S.user||{}, plans=S.plans||{};
+  if(u.isAdmin){grid.innerHTML=`<div class="plan current"><h3>${ico("crown","sm")}Infinity (Admin)</h3><p class="muted">The administrator account has its own privileged access: no message or image limits and no plan to buy. Customer plans are managed in Admin > Users.</p></div>`;return;}
+  ensureCurrencyPicker(); const usdView=((u.currency||"NGN")!=="NGN"); $("currency-view").value=usdView?"USD":"NGN";
   const entries=Object.entries(plans).filter(([k,p])=>p&&p.name&&["free","starter","plus","pro","business","enterprise"].includes(k));
   const fallback={
     free:{name:"Free",price:0,price_usd:0,monthly_messages:20,daily_images:3},
@@ -577,7 +592,7 @@ function renderPlans() {
   grid.innerHTML=catalog.map(([k,p])=>{
     const messages=Number(p.monthly_messages||0), images=Number(p.daily_images||0), ngn=Math.round(Number(p.price||0)*factor), usd=(Number(p.price_usd||0)*factor).toFixed(2), isCur=k===cur;
     const feats=[`${messages.toLocaleString()} messages a month`,`${images.toLocaleString()} images a day`,"Fast and Deep modes",k==="free"?"Chat history":"Premium feature allowance"];
-    const price=k==="free"?"Free":`${money(ngn)} <small>/ ${BILLING_LABELS[BILLING_PERIOD]}</small><div class="tiny muted">US$${usd} reference price</div>`;
+    const price=k==="free"?"Free":(usdView?`US$${usd} <small>/ ${BILLING_LABELS[BILLING_PERIOD]}</small><div class="tiny muted">Charged as ${money(ngn)} (naira)</div>`:`${money(ngn)} <small>/ ${BILLING_LABELS[BILLING_PERIOD]}</small><div class="tiny muted">About US$${usd}</div>`);
     const btn=k==="free"?`<button class="btn" disabled>${isCur?"Your plan":"Included"}</button>`:isCur?`<button class="btn" data-plan="${esc(k)}">Renew ${esc(BILLING_PERIOD)}</button>`:`<button class="btn primary" data-plan="${esc(k)}">Choose ${esc(p.name)}</button>`;
     return `<div class="plan ${k==="pro"?"popular":""} ${isCur?"current":""}">${k==="pro"?`<span class="pill brand tag">Most popular</span>`:""}<h3>${TOP.includes(k)?ico("crown","sm"):""}${esc(p.name)}</h3><div class="price">${price}</div><ul>${feats.map(f=>`<li>${ico("check")}${esc(f)}</li>`).join("")}</ul>${btn}</div>`;
   }).join("");
@@ -586,22 +601,28 @@ $("billing-period")?.addEventListener("change",e=>{BILLING_PERIOD=e.target.value
 $("plans-grid").onclick = (e) => { const b = e.target.closest("[data-plan]"); if (b) openCheckout(b.dataset.plan); };
 function openCheckout(plan) {
   const p=S.plans[plan]||{}, factor=BILLING_FACTORS[BILLING_PERIOD]||1, amount=Math.round(Number(p.price||0)*factor);
-  const usd=(Number(p.price_usd||0)*factor).toFixed(2), days=BILLING_LABELS[BILLING_PERIOD]||"30 days";
+  const usd=(Number(p.price_usd||0)*factor).toFixed(2), days=BILLING_LABELS[BILLING_PERIOD]||"30 days", usdView=((S.user||{}).currency||"NGN")!=="NGN";
+  const priceLine=usdView?`US$${usd} (charged as ${money(amount)})`:`${money(amount)} (about US$${usd})`;
   $("pay-card").innerHTML=`<div class="modal-head"><h2 id="pay-title">${esc(p.name)} plan</h2><button class="icon-btn" data-close aria-label="Close">${ico("x")}</button></div>
-    <p class="muted" style="margin:0">${money(amount)} · US$${usd} reference · ${days}. ${Number(p.monthly_messages||0).toLocaleString()} messages/month and ${Number(p.daily_images||0).toLocaleString()} images/day.</p>
-    ${S.paystack?`<button class="btn primary block" id="pay-card-btn" style="margin-top:16px">${ico("card")}Pay ${money(amount)} by card</button><p class="tiny muted center" style="margin:8px 0">NGN checkout secured by Paystack.</p>`:""}
-    <button class="btn block" id="pay-bank-btn" style="margin-top:${S.paystack?4:16}px">Pay by bank transfer</button><div id="bank-box"></div>`;
+    <p class="muted" id="pay-summary" style="margin:0">${priceLine} · ${days}. ${Number(p.monthly_messages||0).toLocaleString()} messages/month and ${Number(p.daily_images||0).toLocaleString()} images/day.</p>
+    <div style="display:flex;gap:8px;margin-top:12px"><input class="input" id="pay-coupon" placeholder="Coupon code (optional)" maxlength="32" autocapitalize="characters" style="margin:0;flex:1"><button class="btn" id="pay-coupon-apply" type="button">Apply</button></div><p class="tiny" id="pay-coupon-note" style="margin:6px 0 0"></p>
+    ${S.paystack?`<button class="btn primary block" id="pay-card-btn" style="margin-top:12px">${ico("card")}Pay by card (naira)</button><p class="tiny muted center" style="margin:8px 0">NGN checkout secured by Paystack.</p>`:""}
+    <button class="btn block" id="pay-bank-btn" style="margin-top:${S.paystack?4:12}px">Pay by bank transfer</button><div id="bank-box"></div>`;
   openModal("pay-modal");
-  if(S.paystack)$("pay-card-btn").onclick=async e=>{const b=e.currentTarget;setBtn(b,true);try{const d=await post("/api/paystack/init",{plan,billingPeriod:BILLING_PERIOD});location.href=d.url;}catch(err){toast(err.message,"error");setBtn(b,false);}};
+  const couponCode=()=>($("pay-coupon").value||"").trim();
+  $("pay-coupon-apply").onclick=async()=>{const code=couponCode(),note=$("pay-coupon-note"); if(!code){note.textContent="";return;}
+    try{const d=await post("/api/coupons/validate",{code,plan,billingPeriod:BILLING_PERIOD}); note.textContent=d.message; note.style.color="var(--mint, #4ade80)"; $("pay-summary").textContent=`${money(d.amount)} instead of ${money(d.originalAmount)} · ${days}.`;}
+    catch(err){note.textContent=err.message; note.style.color="var(--danger, #f87171)";}};
+  if(S.paystack)$("pay-card-btn").onclick=async e=>{const b=e.currentTarget;setBtn(b,true);try{const d=await post("/api/paystack/init",{plan,billingPeriod:BILLING_PERIOD,coupon:couponCode()});location.href=d.url;}catch(err){toast(err.message,"error");setBtn(b,false);}};
   $("pay-bank-btn").onclick=async e=>{
     const b=e.currentTarget;setBtn(b,true);
     try{
-      const up=await post("/api/upgrade",{plan,billingPeriod:BILLING_PERIOD}),info=(await api("/api/payment-info")).payment;
+      const up=await post("/api/upgrade",{plan,billingPeriod:BILLING_PERIOD,coupon:couponCode()}),info=(await api("/api/payment-info")).payment;
       if(!info){$("bank-box").innerHTML=`<p class="notice error">Bank details aren't set up yet. Please contact support.</p>`;return;}
-      $("bank-box").innerHTML=`<div class="kv"><div><span>Bank</span><b>${esc(info.bank_name)}</b></div><div><span>Account number</span><b>${esc(info.account_number)} <button class="btn sm" id="copy-acct" style="margin-left:6px">Copy</button></b></div><div><span>Account name</span><b>${esc(info.account_name)}</b></div><div><span>Amount</span><b>${money(up.amount)}</b></div><div><span>Duration</span><b>${esc(days)}</b></div></div>
+      $("bank-box").innerHTML=`<div class="kv"><div><span>Bank</span><b>${esc(info.bank_name)}</b></div><div><span>Account number</span><b>${esc(info.account_number)} <button class="btn sm" id="copy-acct" style="margin-left:6px">Copy</button></b></div><div><span>Account name</span><b>${esc(info.account_name)}</b></div><div><span>Amount to send</span><b>${money(up.amount)}</b></div><div><span>Duration</span><b>${esc(days)}</b></div></div>
       <p class="tiny muted" style="margin:0 0 8px">${esc(info.extra_note||"")}</p><label class="field" style="margin-top:0">Payment screenshot<input class="input" type="file" id="proof-file" accept="image/*"></label><button class="btn primary block" id="proof-send" style="margin-top:12px">Send screenshot</button><p class="notice" id="proof-note"></p>`;
       $("copy-acct").onclick=async()=>toast((await copyText(info.account_number))?"Account number copied":"Couldn't copy");
-      $("proof-send").onclick=async ev=>{const f=$("proof-file").files[0];if(!f)return toast("Choose your screenshot first.");const sb=ev.currentTarget;setBtn(sb,true);const fd=new FormData();fd.append("screenshot",f);try{const d=await api("/api/payment-proof/"+up.requestId,{method:"POST",body:fd});$("proof-note").textContent=d.message;$("proof-note").className="notice success";sb.classList.add("hidden");}catch(err){$("proof-note").textContent=err.message;$("proof-note").className="notice error";setBtn(sb,false);}};
+      $("proof-send").onclick=async ev=>{const f=$("proof-file").files[0];if(!f)return toast("Choose your screenshot first.");const sb=ev.currentTarget;setBtn(sb,true);const fd=new FormData();fd.append("screenshot",f);try{const d=await api("/api/payment-proof/"+up.requestId,{method:"POST",body:fd});$("proof-note").textContent=d.message;$("proof-note").className="notice success";sb.classList.add("hidden");}catch(err){$("proof-note").textContent=err.message;$("proof-note").className="notice error";setBtn(sb,false);}}
     }catch(err){toast(err.message,"error");}finally{setBtn(b,false);}
   };
 }
@@ -649,7 +670,7 @@ $("delete-account").onclick = () => {
 };
 
 /* ---------------------------------------------------------------- Admin */
-const ADMIN_TABS = [["overview", "Overview"], ["tools", "Admin tools"], ["users", "Users"], ["payments", "Payments"], ["codes", "Codes"], ["broadcast", "Broadcast"], ["coupons", "Coupons"], ["rewards", "Rewards"], ["logs", "Logs & backup"]];
+const ADMIN_TABS = [["overview", "Overview"], ["tools", "Admin tools"], ["users", "Users"], ["payments", "Payments"], ["codes", "Codes"], ["broadcast", "Broadcast"], ["inbox", "Inbox"], ["coupons", "Coupons"], ["rewards", "Rewards"], ["logs", "Logs & backup"]];
 function bars(data, money_) {
   const w = 300, h = 120, n = data.length, max = Math.max(1, ...data.map((d) => Number(d.n))), bw = w / n;
   return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="img" aria-label="Bar chart">${data.map((d, i) => { const v = Number(d.n), bh = v ? Math.max(3, (v / max) * (h - 6)) : 1; return `<rect x="${(i * bw + 1).toFixed(1)}" y="${(h - bh).toFixed(1)}" width="${(bw - 2).toFixed(1)}" height="${bh.toFixed(1)}"><title>${esc(d.day)}: ${money_ ? money(v) : v}</title></rect>`; }).join("")}</svg><div class="axis"><span>${esc(data[0].day.slice(5))}</span><span>peak ${money_ ? money(max) : max}</span><span>${esc(data[n - 1].day.slice(5))}</span></div>`;
@@ -674,7 +695,7 @@ async function renderAdmin(tab) {
     if (tab === "overview") {
       const d = await api("/api/admin/stats"), t = d.totals, sum = (a) => a.reduce((x, y) => x + Number(y.n), 0);
       const tile = (l, v) => `<div class="tile"><span>${l}</span><b>${v}</b></div>`;
-      body.innerHTML = `<div class="tiles">${tile("Users", t.users)}${tile("Paying now", t.paying)}${tile("Active today", t.dau)}${tile("Active this week", t.wau)}${tile("Messages sent", Number(t.messages).toLocaleString())}${tile("Revenue", money(t.revenue))}${tile("Payments to review", t.pending_payments)}${tile("Codes to approve", t.pending_otps)}</div>
+      body.innerHTML = `<div class="tiles">${tile("Users", t.users)}${tile("Paying now", t.paying)}${tile("Active today", t.dau)}${tile("Active this week", t.wau)}${tile("Messages sent", Number(t.messages).toLocaleString())}${tile("Revenue", money(t.revenue))}${tile("Payments to review", t.pending_payments)}${tile("Codes to approve", t.pending_otps)}${tile("Unread support chats", t.unread_threads)}${tile("Helpful replies", t.feedback_up)}${tile("Unhelpful replies", t.feedback_down)}${tile("Referral signups", t.referral_signups)}</div>
       <div class="charts"><div class="card chart"><h3>New signups, last 30 days</h3><div class="total">${sum(d.signups)}</div>${bars(d.signups)}</div><div class="card chart"><h3>Active users per day</h3><div class="total">${t.wau} this week</div>${bars(d.active)}</div><div class="card chart money"><h3>Revenue, last 30 days</h3><div class="total">${money(sum(d.revenue))}</div>${bars(d.revenue, true)}</div></div>
       <div class="card" style="margin-top:14px"><h3>Users by plan</h3><div class="chips" style="margin-top:10px">${d.plans.map((p) => `<span class="pill">${esc(S.plans[p.plan]?.name || p.plan)}: ${p.n}</span>`).join("") || "<span class=muted>No users yet</span>"}</div></div>`;
     }
@@ -683,8 +704,8 @@ async function renderAdmin(tab) {
       body.innerHTML = `<div class="card">${d.users.length ? d.users.map((u) => `<div class="row"><div class="grow"><b>${esc(u.username)} ${u.is_suspended ? '<span class="status rejected">Suspended</span>' : ""}${u.trial ? '<span class="status pending">Trial</span>' : ""}</b><small>${esc(u.email)} · VYRA ID ${esc(u.public_id||"Pending")} · joined ${fmtDate(u.created_at)}${u.plan_expires_at ? " · plan until " + fmtDate(u.plan_expires_at) : ""}</small></div><select data-setplan="${u.id}" aria-label="Plan for ${esc(u.username)}">${Object.entries(S.plans).map(([k, p]) => `<option value="${k}" ${k === u.plan ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select><button class="btn sm" data-admin-msg-user="${u.id}" data-admin-msg-name="${esc(u.username)}">Message</button><button class="btn sm ${u.is_suspended ? "" : "danger"}" data-suspend="${u.id}" data-on="${u.is_suspended ? 0 : 1}">${u.is_suspended ? "Restore" : "Suspend"}</button></div>`).join("") : `<div class="empty">No users yet.</div>`}</div>`;
     }
     if (tab === "payments") {
-      const d = await api("/api/admin/payment-requests");
-      body.innerHTML = `<div class="card">${d.requests.length ? d.requests.map((r) => `<div class="row"><div class="grow"><b>${esc(r.username)} · ${esc(S.plans[r.plan]?.name || r.plan)} · ${money(r.amount_ngn)}</b><small>${r.provider === "paystack" ? "Card" : "Bank transfer"} · ${fmtDate(r.created_at)}</small></div><span class="status ${esc(r.status)}">${esc(r.status)}</span>${r.proof_id ? `<button class="btn sm" data-proof="${r.proof_id}">View proof</button>` : ""}${r.status === "pending" ? `<button class="btn sm primary" data-pay="approve" data-id="${r.id}">Approve</button><button class="btn sm danger" data-pay="reject" data-id="${r.id}">Reject</button>` : ""}</div>`).join("") : `<div class="empty">No payments yet.</div>`}</div>`;
+      const d = await api("/api/admin/payment-requests"); const ps = (await api("/api/admin/payment-settings")).payment || {};
+      body.innerHTML = `<div class="card"><h3>Bank details shown to customers</h3><div class="grid two"><label class="field">Bank<input class="input" id="ps-bank" maxlength="80" value="${esc(ps.bank_name || "")}"></label><label class="field">Account number<input class="input" id="ps-number" maxlength="40" value="${esc(ps.account_number || "")}"></label><label class="field">Account name<input class="input" id="ps-name" maxlength="120" value="${esc(ps.account_name || "")}"></label><label class="field">Note<input class="input" id="ps-note" maxlength="500" value="${esc(ps.extra_note || "")}"></label></div><button class="btn primary" id="ps-save">Save bank details</button></div><div class="card" style="margin-top:12px"><h3>Payment requests</h3>${d.requests.length ? d.requests.map((r) => `<div class="row"><div class="grow"><b>${esc(r.username)} · ${esc(S.plans[r.plan]?.name || r.plan)} · ${money(r.amount_ngn)}</b><small>${r.provider === "paystack" ? "Card" : "Bank transfer"} · ${fmtDate(r.created_at)}</small></div><span class="status ${esc(r.status)}">${esc(r.status)}</span>${r.proof_id ? `<button class="btn sm" data-proof="${r.proof_id}">View proof</button>` : ""}${r.status === "pending" ? `<button class="btn sm primary" data-pay="approve" data-id="${r.id}">Approve</button><button class="btn sm danger" data-pay="reject" data-id="${r.id}">Reject</button>` : ""}</div>`).join("") : `<div class="empty">No payments yet.</div>`}</div>`;
     }
     if (tab === "codes") {
       const d = await api("/api/admin/otp-requests");
@@ -692,10 +713,14 @@ async function renderAdmin(tab) {
     }
     if (tab === "coupons") {
       const d = await api("/api/admin/coupons");
-      body.innerHTML = `<div class="card"><h3>Create coupon</h3><div class="grid two"><label class="field">Code<input class="input" id="coupon-code" placeholder="WELCOME20" maxlength="32"></label><label class="field">Type<select class="input" id="coupon-type"><option value="percent">Percentage</option><option value="fixed">Fixed amount (NGN)</option></select></label><label class="field">Value<input class="input" id="coupon-value" type="number" min="0.01" step="0.01"></label><label class="field">Plan (optional)<select class="input" id="coupon-plan"><option value="">All plans</option>${Object.entries(S.plans).filter(([k])=>k!=="free").map(([k,p])=>`<option value="${k}">${esc(p.name)}</option>`).join("")}</select></label><label class="field">Max uses (optional)<input class="input" id="coupon-max" type="number" min="1"></label><label class="field">Expires (optional)<input class="input" id="coupon-expiry" type="date"></label></div><button class="btn primary" id="coupon-create">Create coupon</button></div><div class="card" style="margin-top:12px"><h3>Existing coupons</h3>${d.coupons.map(c=>`<div class="row"><div class="grow"><b>${esc(c.code)} · ${c.discount_type==="percent"?c.discount_value+"%":money(c.discount_value)}</b><small>${esc(c.applicable_plan||"All paid plans")} · ${c.uses}${c.max_uses?"/"+c.max_uses:""} uses · ${c.active?"Active":"Disabled"}</small></div></div>`).join("")||"<div class=empty>No coupons yet.</div>"}</div>`;
+      body.innerHTML = `<div class="card"><h3>Create coupon</h3><div class="grid two"><label class="field">Code<input class="input" id="coupon-code" placeholder="WELCOME20" maxlength="32"></label><label class="field">Type<select class="input" id="coupon-type"><option value="percent">Percentage</option><option value="fixed">Fixed amount (NGN)</option></select></label><label class="field">Value<input class="input" id="coupon-value" type="number" min="0.01" step="0.01"></label><label class="field">Plan (optional)<select class="input" id="coupon-plan"><option value="">All plans</option>${Object.entries(S.plans).filter(([k])=>k!=="free").map(([k,p])=>`<option value="${k}">${esc(p.name)}</option>`).join("")}</select></label><label class="field">Max uses (optional)<input class="input" id="coupon-max" type="number" min="1"></label><label class="field">Expires (optional)<input class="input" id="coupon-expiry" type="date"></label></div><button class="btn primary" id="coupon-create">Create coupon</button></div><div class="card" style="margin-top:12px"><h3>Existing coupons</h3>${d.coupons.map(c=>`<div class="row"><div class="grow"><b>${esc(c.code)} · ${c.discount_type==="percent"?c.discount_value+"%":money(c.discount_value)}</b><small>${esc(c.applicable_plan||"All paid plans")} · ${c.uses}${c.max_uses?"/"+c.max_uses:""} uses · ${c.active?"Active":"Disabled"}</small></div><button class="btn sm" data-coupon-toggle="${c.id}">${c.active?"Disable":"Enable"}</button></div>`).join("")||"<div class=empty>No coupons yet.</div>"}</div>`;
     }
     if (tab === "broadcast") body.innerHTML = `<div class="card"><h3>Message every user</h3><textarea class="input" id="bc-msg" rows="3" maxlength="1000" placeholder="Write a short update"></textarea><button class="btn primary" id="bc-send" style="margin-top:10px">Send to all users</button></div>`;
     if (tab === "rewards") body.innerHTML = `<div class="card"><h3>Weekly prize note</h3><p class="muted tiny" style="margin:4px 0 0">Shown above the weekly leaderboard.</p><input class="input" id="prize-text" maxlength="140" placeholder="Top 3 this week win bonus messages"><button class="btn" id="prize-save" style="margin-top:10px">Save note</button></div><div class="card" style="margin-top:14px"><h3>Award last week's winners</h3><p class="muted tiny" style="margin:4px 0 10px">Gives the top 3 chatters +100, +50 and +25 bonus messages. Works once per week.</p><button class="btn primary" id="award-go">Award last week's top 3</button></div>`;
+    if (tab === "inbox") {
+      const d = await api("/api/admin/inbox");
+      body.innerHTML = `<div class="card"><h3>Support inbox</h3>${d.threads.length ? d.threads.map((t) => `<div class="row"><div class="grow"><b>${esc(t.username)} ${t.unread ? `<span class="status pending">${t.unread} new</span>` : ""}</b><small>${esc(t.lastMessage)} · ${fmtDate(t.lastAt)}</small></div><button class="btn sm primary" data-inbox-open="${t.userId}">Open</button></div>`).join("") : `<div class="empty">No messages yet.</div>`}</div>`;
+    }
     if (tab === "logs") {
       const d = await api("/api/admin/audit");
       body.innerHTML = `<div class="card"><h3>Backup</h3><p class="muted tiny" style="margin:4px 0 10px">Downloads users and payments as a file. Keep it somewhere private.</p><a class="btn" href="/api/admin/export" download>${ico("download")}Download backup</a></div><div class="card" style="margin-top:14px"><h3>Failed sign-ins</h3>${d.failedLogins.length ? d.failedLogins.map((f) => `<div class="row"><div class="grow"><b>${esc(f.username || "(blank)")}</b><small>${esc(f.ip)} · ${new Date(f.created_at).toLocaleString("en-NG")}</small></div></div>`).join("") : `<div class="empty">None. Nice.</div>`}</div><div class="card" style="margin-top:14px"><h3>Admin actions</h3>${d.audit.length ? d.audit.map((a) => `<div class="row"><div class="grow"><b>${esc(a.action)}</b><small>${esc(a.actor || "")} · ${esc(a.detail || "")} · ${new Date(a.created_at).toLocaleString("en-NG")}</small></div></div>`).join("") : `<div class="empty">Nothing yet.</div>`}</div>`;
@@ -725,6 +750,33 @@ $("admin-page").addEventListener("change", async (e) => {
 document.addEventListener("click",async(e)=>{const b=e.target.closest("#admin-direct-send");if(!b)return;try{const msg=$("admin-direct-message").value.trim();if(!msg)return toast("Write a message first.");await post(`/api/admin/users/${b.dataset.userId}/message`,{message:msg});closeModals();toast("Private message sent.");}catch(err){toast(err.message,"error");}});
 $("copy-vyra-id")?.addEventListener("click",async()=>{const id=S.user?.publicId||""; if(!id)return toast("VYRA ID unavailable"); toast(await copyText(id)?"VYRA ID copied":"Unable to copy ID");});
 $("restart-tour")?.addEventListener("click",()=>{try{localStorage.removeItem("vyra-tour");}catch(_){}closeModals();runTour(0);});
+/* ---------------------------------------------------------------- support inbox, bank details, coupon switch */
+function threadHtml(messages, adminView) {
+  return messages.length ? messages.map((m) => { const mine = adminView ? m.sender === "admin" : m.sender === "user";
+    return `<div class="notif-item ${mine ? "read" : ""}"><b>${m.sender === "admin" ? "VYRA Admin" : (adminView ? "Customer" : "You")}</b><p style="margin:2px 0">${esc(m.message)}</p><small>${fmtTime(m.createdAt)}</small></div>`; }).join("") : "No messages yet.";
+}
+async function openSupport() {
+  closeModals();
+  $("generic-card").innerHTML = `<div class="modal-head"><h2>Contact support</h2><button class="icon-btn" data-close aria-label="Close">${ico("x")}</button></div><div id="support-thread" class="tiny" style="max-height:40vh;overflow:auto;margin-bottom:10px">Loading...</div><textarea class="input" id="support-text" rows="3" maxlength="2000" placeholder="Describe your question or problem"></textarea><button class="btn primary block" id="support-send" style="margin-top:10px">Send message</button>`;
+  openModal("generic-modal");
+  const load = async () => { try { const d = await api("/api/support/messages"); $("support-thread").innerHTML = threadHtml(d.messages, false); $("support-thread").scrollTop = 1e6; loadNotifs().catch(() => {}); } catch (e) { $("support-thread").textContent = e.message; } };
+  load();
+  $("support-send").onclick = async () => { const t = $("support-text").value.trim(); if (t.length < 2) return toast("Write your message first."); try { await post("/api/support/messages", { message: t }); $("support-text").value = ""; toast("Message sent. The admin will reply here."); load(); } catch (e) { toast(e.message, "error"); } };
+}
+$("open-support")?.addEventListener("click", openSupport);
+async function openInbox(userId) {
+  $("generic-card").innerHTML = `<div class="modal-head"><h2 id="inbox-title">Conversation</h2><button class="icon-btn" data-close aria-label="Close">${ico("x")}</button></div><div id="inbox-thread" class="tiny" style="max-height:40vh;overflow:auto;margin-bottom:10px">Loading...</div><textarea class="input" id="inbox-text" rows="3" maxlength="2000" placeholder="Write a reply"></textarea><button class="btn primary block" id="inbox-send" style="margin-top:10px">Send reply</button>`;
+  openModal("generic-modal");
+  const load = async () => { try { const d = await api("/api/admin/inbox/" + userId); $("inbox-title").textContent = "Conversation with " + d.username; $("inbox-thread").innerHTML = threadHtml(d.messages, true); $("inbox-thread").scrollTop = 1e6; } catch (e) { $("inbox-thread").textContent = e.message; } };
+  load();
+  $("inbox-send").onclick = async () => { const t = $("inbox-text").value.trim(); if (!t) return toast("Write a reply first."); try { await post(`/api/admin/inbox/${userId}/reply`, { message: t }); $("inbox-text").value = ""; toast("Reply sent."); load(); } catch (e) { toast(e.message, "error"); } };
+}
+document.addEventListener("click", async (e) => {
+  const open = e.target.closest("[data-inbox-open]"); if (open) { openInbox(open.dataset.inboxOpen); return; }
+  const tg = e.target.closest("[data-coupon-toggle]"); if (tg) { try { await post(`/api/admin/coupons/${tg.dataset.couponToggle}/toggle`); renderAdmin("coupons"); } catch (err) { toast(err.message, "error"); } return; }
+  if (e.target.closest("#ps-save")) { try { await post("/api/admin/payment-settings", { bank_name: $("ps-bank").value, account_number: $("ps-number").value, account_name: $("ps-name").value, extra_note: $("ps-note").value }); toast("Bank details saved."); } catch (err) { toast(err.message, "error"); } }
+});
+
 /* ---------------------------------------------------------------- follow-ups, voice, read aloud, tour */
 const FOLLOWUPS = ["Explain it simpler", "Give me an example", "Make it shorter"];
 function showFollowups() {
@@ -757,8 +809,10 @@ async function loadWorkspace() {
     const [projects, memories, skills, prefs] = await Promise.all([
       api("/api/projects"), api("/api/memory"), api("/api/skills"), api("/api/preferences")
     ]);
-    $("project-list").innerHTML = (projects.projects||[]).map(x=>`<div class="board-row"><b>${esc(x.name)}</b><div class="tiny muted">${esc(x.instructions||"No extra instructions")}</div><button class="btn sm" data-project-select="${x.id}">Select</button><button class="btn sm danger" data-project-delete="${x.id}">Delete</button></div>`).join("") || `<p class="tiny muted">No projects yet.</p>`;
-    $("memory-list").innerHTML = (memories.memories||[]).map(x=>`<div class="board-row">${esc(x.memory)} <button class="btn sm danger" data-memory-delete="${x.id}">Delete</button></div>`).join("") || `<p class="tiny muted">No saved memories.</p>`;
+    S.projectCache = projects.projects || [];
+    if (S.selectedProject && !S.projectCache.some((x) => x.id === S.selectedProject)) { S.selectedProject = null; store.set("vyra-project", ""); }
+    renderProjects(); $("project-file-tools").classList.toggle("hidden", !S.selectedProject); loadProjectFiles();
+    $("memory-list").innerHTML = (memories.memories||[]).map(x=>`<div class="board-row">${esc(x.memory)} <button class="btn sm" data-memory-edit="${x.id}" data-text="${esc(x.memory)}">Edit</button><button class="btn sm danger" data-memory-delete="${x.id}">Delete</button></div>`).join("") || `<p class="tiny muted">No saved memories.</p>`;
     $("skill-list").innerHTML = (skills.skills||[]).map(x=>`<div class="board-row"><b>${esc(x.name)}</b> <code>/${esc(x.slash_command)}</code><button class="btn sm danger" data-skill-delete="${x.id}">Delete</button></div>`).join("") || `<p class="tiny muted">No Skills saved.</p>`;
     let detectedCountry = prefs.country || "";
     const localeParts=(navigator.language||"en-US").split("-");
@@ -773,15 +827,45 @@ async function loadWorkspace() {
   } catch(e) { toast(e.message,"error"); }
 }
 $("project-create").onclick=async()=>{try{await post("/api/projects",{name:$("project-name").value,instructions:$("project-instructions").value});$("project-name").value="";$("project-instructions").value="";await loadWorkspace();toast("Project created.");}catch(e){toast(e.message,"error");}};
+S.selectedProject = Number(store.get("vyra-project")) || null;
+function renderProjects() {
+  const sel = S.selectedProject;
+  $("project-list").innerHTML = (S.projectCache || []).map((x) => `<div class="board-row"><b>${esc(x.name)}</b>${sel === x.id ? ' <span class="status approved">Selected</span>' : ""}<div class="tiny muted">${esc(x.instructions || "No extra instructions")}</div><button class="btn sm" data-project-select="${x.id}">Select</button><button class="btn sm" data-project-edit="${x.id}">Edit</button><button class="btn sm danger" data-project-delete="${x.id}">Delete</button></div>`).join("") || `<p class="tiny muted">No projects yet.</p>`;
+}
+async function loadProjectFiles() {
+  const box = $("project-file-list"); if (!box) return;
+  if (!S.selectedProject) { box.innerHTML = ""; return; }
+  try {
+    const d = await api(`/api/projects/${S.selectedProject}/files`);
+    box.innerHTML = d.files.map((f) => `<div class="board-row"><b>${esc(f.filename)}</b><div class="tiny muted">${esc((f.preview || "").slice(0, 120))}</div><button class="btn sm danger" data-pfile-delete="${f.id}">Remove</button></div>`).join("") || `<p class="tiny muted">No files in this project yet.</p>`;
+  } catch (e) { box.innerHTML = `<p class="tiny muted">${esc(e.message)}</p>`; }
+}
+$("project-create").onclick=async()=>{try{await post("/api/projects",{name:$("project-name").value,instructions:$("project-instructions").value});$("project-name").value="";$("project-instructions").value="";await loadWorkspace();toast("Project created.");}catch(e){toast(e.message,"error");}};
 $("project-list").onclick=async e=>{
-  const select=e.target.closest("[data-project-select]"), del=e.target.closest("[data-project-delete]");
-  if(select){S.projectId=Number(select.dataset.projectSelect);$("project-file-tools").classList.remove("hidden");toast("Project selected. New chats will use its context.");}
-  if(del){try{await api("/api/projects/"+del.dataset.projectDelete,{method:"DELETE"});if(S.projectId===Number(del.dataset.projectDelete))S.projectId=null;await loadWorkspace();}catch(err){toast(err.message,"error");}}
+  const select=e.target.closest("[data-project-select]"), del=e.target.closest("[data-project-delete]"), edit=e.target.closest("[data-project-edit]");
+  if(select){S.selectedProject=Number(select.dataset.projectSelect);store.set("vyra-project",String(S.selectedProject));renderProjects();$("project-file-tools").classList.remove("hidden");loadProjectFiles();toast("Project selected. Add files, then press Use this project in Chat.");}
+  if(edit){const x=(S.projectCache||[]).find(p=>p.id===Number(edit.dataset.projectEdit));if(!x)return;
+    $("generic-card").innerHTML=`<div class="modal-head"><h2>Edit project</h2><button class="icon-btn" data-close aria-label="Close">${ico("x")}</button></div><label class="field">Name<input class="input" id="pe-name" maxlength="100"></label><label class="field">Instructions<textarea class="input" id="pe-instr" rows="4" maxlength="4000"></textarea></label><button class="btn primary block" id="pe-save">Save</button>`;
+    $("pe-name").value=x.name;$("pe-instr").value=x.instructions||"";openModal("generic-modal");
+    $("pe-save").onclick=async()=>{try{await api("/api/projects/"+x.id,{method:"PATCH",body:JSON.stringify({name:$("pe-name").value,instructions:$("pe-instr").value})});closeModals();await loadWorkspace();toast("Project updated.");}catch(err){toast(err.message,"error");}};}
+  if(del){if(!confirm("Delete this project and its files? Your chats are kept."))return;try{await api("/api/projects/"+del.dataset.projectDelete,{method:"DELETE"});if(S.selectedProject===Number(del.dataset.projectDelete)){S.selectedProject=null;store.set("vyra-project","");}if(S.projectId===Number(del.dataset.projectDelete))S.projectId=null;await loadWorkspace();}catch(err){toast(err.message,"error");}}
 };
-$("project-file-add").onclick=async()=>{if(!S.projectId)return toast("Select a project first.");try{await post(`/api/projects/${S.projectId}/files`,{filename:$("project-file-name").value||"project-notes.txt",content:$("project-file-content").value});$("project-file-content").value="";toast("Project file added.");}catch(e){toast(e.message,"error");}};
-$("project-use-chat").onclick=()=>{if(!S.projectId)return toast("Select a project first.");showPage("chat");newChat();toast("Project context will be used in this chat.");};
+$("project-file-list").onclick=async e=>{const b=e.target.closest("[data-pfile-delete]");if(!b||!S.selectedProject)return;try{await api(`/api/projects/${S.selectedProject}/files/${b.dataset.pfileDelete}`,{method:"DELETE"});loadProjectFiles();}catch(err){toast(err.message,"error");}};
+$("project-file-upload").onchange=async e=>{const f=e.target.files[0];e.target.value="";if(!f)return;
+  try{
+    if(/\.pdf$/i.test(f.name)){const fd=new FormData();fd.append("file",f);toast("Reading your PDF...");const d=await api("/api/extract-text?for=project",{method:"POST",body:fd});$("project-file-name").value=d.filename;$("project-file-content").value=d.text;}
+    else if(/\.(txt|md|csv|json)$/i.test(f.name)&&f.size<=200000){const t=await f.text();$("project-file-name").value=f.name;$("project-file-content").value=t.slice(0,30000);}
+    else return toast("Choose a PDF, .txt, .md, .csv or .json file (up to 200 KB).","error");
+    toast("File loaded. Press Add project file to save it.");
+  }catch(err){toast(err.message,"error");}};
+$("project-file-add").onclick=async()=>{if(!S.selectedProject)return toast("Select a project first.");try{await post(`/api/projects/${S.selectedProject}/files`,{filename:$("project-file-name").value||"project-notes.txt",content:$("project-file-content").value});$("project-file-content").value="";$("project-file-name").value="";toast("Project file added.");loadProjectFiles();}catch(e){toast(e.message,"error");}};
+$("project-use-chat").onclick=()=>{if(!S.selectedProject)return toast("Select a project first.");S.projectId=S.selectedProject;newChat(true);toast("New chat started inside this project.");};
 $("memory-add").onclick=async()=>{try{await post("/api/memory",{memory:$("memory-input").value});$("memory-input").value="";await loadWorkspace();toast("Memory saved.");}catch(e){toast(e.message,"error");}};
-$("memory-list").onclick=async e=>{const b=e.target.closest("[data-memory-delete]");if(b){try{await api("/api/memory/"+b.dataset.memoryDelete,{method:"DELETE"});await loadWorkspace();}catch(err){toast(err.message,"error");}}};
+$("memory-list").onclick=async e=>{
+  const ed=e.target.closest("[data-memory-edit]");
+  if(ed){const id=ed.dataset.memoryEdit;$("generic-card").innerHTML=`<div class="modal-head"><h2>Edit memory</h2><button class="icon-btn" data-close aria-label="Close">${ico("x")}</button></div><textarea class="input" id="memory-edit-text" rows="4" maxlength="1000"></textarea><button class="btn primary block" id="memory-edit-save" style="margin-top:12px">Save</button>`;$("memory-edit-text").value=ed.dataset.text||"";openModal("generic-modal");
+    $("memory-edit-save").onclick=async()=>{try{await api("/api/memory/"+id,{method:"PATCH",body:JSON.stringify({memory:$("memory-edit-text").value})});closeModals();await loadWorkspace();toast("Memory updated.");}catch(err){toast(err.message,"error");}};return;}
+  const b=e.target.closest("[data-memory-delete]");if(b){try{await api("/api/memory/"+b.dataset.memoryDelete,{method:"DELETE"});await loadWorkspace();}catch(err){toast(err.message,"error");}}};
 $("skill-add").onclick=async()=>{try{const r=await post("/api/skills",{name:$("skill-name").value,command:$("skill-command").value,instruction:$("skill-instruction").value});$("skill-name").value="";$("skill-command").value="";$("skill-instruction").value="";await loadWorkspace();toast("Skill saved. Invoke /"+r.command.replace("/","")+" in chat.");}catch(e){toast(e.message,"error");}};
 $("skill-list").onclick=async e=>{const b=e.target.closest("[data-skill-delete]");if(b){try{await api("/api/skills/"+b.dataset.skillDelete,{method:"DELETE"});await loadWorkspace();}catch(err){toast(err.message,"error");}}};
 $("pref-save").onclick=async()=>{try{await post("/api/preferences",{country:$("pref-country").value,currency:$("pref-currency").value,language:$("pref-language").value});toast("Preferences saved.");}catch(e){toast(e.message,"error");}};
