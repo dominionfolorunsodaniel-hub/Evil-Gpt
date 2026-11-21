@@ -1,0 +1,8 @@
+VYRA AI - BATCH 2 (chat organisation + tidier composer)
+Files: app.py, static/script.js, static/style.css, templates/index.html
+DB (additive only): new table evil_folders; evil_conversations.folder_id. Created automatically on next start.
+
+1 Chat folders: "+ Folder" under the chat list; chat menu > Move to folder; tap a folder to fold/unfold; ... to rename/delete (deleting a folder keeps its chats).
+2 Branch from a message: plus icon under any answer copies the chat up to that answer into a new chat. Original untouched.
+3 Swipe on phone: swipe a chat right = archive/unarchive, left = delete (asks to confirm).
+4 Composer tidy-up: Fast/Balanced/Deep + an Options button on one row. Persona, language, creativity and Tune reply are inside Options (remembers open/closed; dot shows when something is changed from default).

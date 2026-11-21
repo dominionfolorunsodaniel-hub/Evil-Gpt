@@ -262,6 +262,22 @@ SCHEMA = [
     "CREATE INDEX IF NOT EXISTS evil_payreq_user_idx ON evil_payment_requests(user_id, status)",
     "CREATE INDEX IF NOT EXISTS evil_memories_user_idx ON evil_memories(user_id, updated_at DESC)",
     "CREATE INDEX IF NOT EXISTS evil_project_files_proj_idx ON evil_project_files(project_id, id DESC)",
+    # ---- Vyra batch 1: chat features (additive only) ----
+    "ALTER TABLE evil_messages ADD COLUMN IF NOT EXISTS pinned BOOLEAN NOT NULL DEFAULT FALSE",
+    "ALTER TABLE evil_messages ADD COLUMN IF NOT EXISTS mode VARCHAR(10)",
+    "CREATE TABLE IF NOT EXISTS evil_notes (id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES evil_users(id) ON DELETE CASCADE, conversation_id UUID REFERENCES evil_conversations(id) ON DELETE SET NULL, title VARCHAR(120) NOT NULL DEFAULT '', content TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
+    "CREATE INDEX IF NOT EXISTS evil_notes_user_idx ON evil_notes(user_id, id DESC)",
+    # ---- Vyra batch 2: chat folders (additive only) ----
+    "CREATE TABLE IF NOT EXISTS evil_folders (id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES evil_users(id) ON DELETE CASCADE, name VARCHAR(40) NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
+    "CREATE INDEX IF NOT EXISTS evil_folders_user_idx ON evil_folders(user_id, id)",
+    "ALTER TABLE evil_conversations ADD COLUMN IF NOT EXISTS folder_id BIGINT REFERENCES evil_folders(id) ON DELETE SET NULL",
+    # ---- Vyra batch 3: memory controls (additive only) ----
+    "ALTER TABLE evil_memories ADD COLUMN IF NOT EXISTS category VARCHAR(20) NOT NULL DEFAULT 'general'",
+    "ALTER TABLE evil_memories ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ",
+    "ALTER TABLE evil_conversations ADD COLUMN IF NOT EXISTS use_memory BOOLEAN NOT NULL DEFAULT TRUE",
+    "ALTER TABLE evil_projects ADD COLUMN IF NOT EXISTS persona TEXT NOT NULL DEFAULT ''",
+    "CREATE TABLE IF NOT EXISTS evil_styles (id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES evil_users(id) ON DELETE CASCADE, name VARCHAR(40) NOT NULL, instruction TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
+    "CREATE INDEX IF NOT EXISTS evil_styles_user_idx ON evil_styles(user_id, id)",
 ]
 _db_ready = False
 _db_lock = threading.Lock()
@@ -632,16 +648,16 @@ def save_preferences():
 @app.get("/api/projects")
 @login_required
 def list_projects():
-    rows = q_all("SELECT id,name,instructions,created_at,updated_at FROM evil_projects WHERE user_id=%s ORDER BY updated_at DESC", (request.user["id"],))
-    return jsonify({"projects": [{"id": r["id"], "name": r["name"], "instructions": r["instructions"], "createdAt": iso(r["created_at"]), "updatedAt": iso(r["updated_at"])} for r in rows]})
+    rows = q_all("SELECT id,name,instructions,persona,created_at,updated_at FROM evil_projects WHERE user_id=%s ORDER BY updated_at DESC", (request.user["id"],))
+    return jsonify({"projects": [{"id": r["id"], "name": r["name"], "instructions": r["instructions"], "persona": r["persona"], "createdAt": iso(r["created_at"]), "updatedAt": iso(r["updated_at"])} for r in rows]})
 
 @app.post("/api/projects")
 @login_required
 def create_project():
-    d = body(); name = str(d.get("name", "")).strip()[:100]; instructions = str(d.get("instructions", "")).strip()[:4000]
+    d = body(); name = str(d.get("name", "")).strip()[:100]; instructions = str(d.get("instructions", "")).strip()[:4000]; persona = str(d.get("persona", "")).strip()[:1000]
     if len(name) < 2: return err("Project name must contain at least 2 characters.")
-    row = q_one("INSERT INTO evil_projects(user_id,name,instructions) VALUES (%s,%s,%s) RETURNING id,name,instructions,created_at",
-                (request.user["id"], name, instructions))
+    row = q_one("INSERT INTO evil_projects(user_id,name,instructions,persona) VALUES (%s,%s,%s,%s) RETURNING id,name,instructions,created_at",
+                (request.user["id"], name, instructions, persona))
     return jsonify({"success": True, "project": {"id": row["id"], "name": row["name"], "instructions": row["instructions"], "createdAt": iso(row["created_at"])}}), 201
 
 @app.patch("/api/projects/<int:project_id>")
@@ -649,8 +665,8 @@ def create_project():
 def update_project(project_id):
     d = body()
     if "name" in d and len(str(d["name"]).strip()) < 2: return err("Project name must contain at least 2 characters.")
-    row = q_one("UPDATE evil_projects SET name=COALESCE(%s,name),instructions=COALESCE(%s,instructions),updated_at=NOW() WHERE id=%s AND user_id=%s RETURNING id,name,instructions",
-                (str(d["name"]).strip()[:100] if "name" in d else None, str(d["instructions"])[:4000] if "instructions" in d else None, project_id, request.user["id"]))
+    row = q_one("UPDATE evil_projects SET name=COALESCE(%s,name),instructions=COALESCE(%s,instructions),persona=COALESCE(%s,persona),updated_at=NOW() WHERE id=%s AND user_id=%s RETURNING id,name,instructions,persona",
+                (str(d["name"]).strip()[:100] if "name" in d else None, str(d["instructions"])[:4000] if "instructions" in d else None, str(d["persona"]).strip()[:1000] if "persona" in d else None, project_id, request.user["id"]))
     if not row: return err("Project not found.", 404)
     return jsonify({"success": True, "project": dict(row)})
 
@@ -683,20 +699,124 @@ def delete_project_file(project_id, file_id):
     n = q_run("DELETE FROM evil_project_files WHERE id=%s AND project_id=%s AND user_id=%s", (file_id, project_id, request.user["id"]))
     return jsonify({"success": bool(n)}), (200 if n else 404)
 
+def own_project(project_id):
+    return q_one("SELECT id,name,instructions,persona FROM evil_projects WHERE id=%s AND user_id=%s", (project_id, request.user["id"]))
+
+
+def make_snippet(text, q, width=70):
+    """A short piece of text around the first match of q."""
+    t = re.sub(r"\s+", " ", text or "").strip(); i = t.lower().find(q.lower())
+    if i < 0: return t[:2 * width]
+    s = max(0, i - width); e = min(len(t), i + len(q) + width)
+    return ("..." if s else "") + t[s:e] + ("..." if e < len(t) else "")
+
+
+@app.get("/api/projects/<int:project_id>/dashboard")
+@login_required
+def project_dashboard(project_id):
+    p = own_project(project_id); uid = request.user["id"]
+    if not p: return err("Project not found.", 404)
+    c = q_one("SELECT COUNT(*) AS chats, MAX(updated_at) AS last FROM evil_conversations WHERE user_id=%s AND project_id=%s", (uid, project_id))
+    m = q_one("SELECT COUNT(*) AS n FROM evil_messages m JOIN evil_conversations c ON c.id=m.conversation_id WHERE c.user_id=%s AND c.project_id=%s", (uid, project_id))
+    f = q_one("SELECT COUNT(*) AS n, COALESCE(SUM(LENGTH(content)),0) AS chars FROM evil_project_files WHERE user_id=%s AND project_id=%s", (uid, project_id))
+    recent = q_all("SELECT id,title,updated_at FROM evil_conversations WHERE user_id=%s AND project_id=%s ORDER BY updated_at DESC LIMIT 5", (uid, project_id))
+    return jsonify({"name": p["name"], "chats": c["chats"], "messages": m["n"], "files": f["n"], "fileChars": int(f["chars"]), "lastActivity": iso(c["last"]),
+                    "hasPersona": bool(p["persona"]), "recent": [{"id": str(r["id"]), "title": r["title"], "updatedAt": iso(r["updated_at"])} for r in recent]})
+
+
+@app.get("/api/projects/<int:project_id>/search")
+@login_required
+@limited("psearch", 30, 60, per="user")
+def project_search(project_id):
+    if not own_project(project_id): return err("Project not found.", 404)
+    q = re.sub(r"\s+", " ", request.args.get("q", "")).strip()[:80]
+    if len(q) < 2: return err("Type at least 2 characters.")
+    like = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"; uid = request.user["id"]
+    msgs = q_all("""SELECT m.conversation_id, c.title, m.role, m.content FROM evil_messages m JOIN evil_conversations c ON c.id=m.conversation_id
+                    WHERE c.user_id=%s AND c.project_id=%s AND m.content ILIKE %s ORDER BY m.id DESC LIMIT 15""", (uid, project_id, like))
+    files = q_all("SELECT id,filename,content FROM evil_project_files WHERE user_id=%s AND project_id=%s AND (content ILIKE %s OR filename ILIKE %s) ORDER BY id DESC LIMIT 10", (uid, project_id, like, like))
+    return jsonify({"results": [{"type": "file", "id": r["id"], "title": r["filename"], "snippet": make_snippet(r["content"], q)} for r in files] +
+                               [{"type": "chat", "id": str(r["conversation_id"]), "title": r["title"], "snippet": make_snippet(r["content"], q)} for r in msgs]})
+
+
+@app.get("/api/projects/<int:project_id>/export")
+@login_required
+@limited("pexport", 5, 60, per="user")
+def project_export(project_id):
+    p = own_project(project_id); uid = request.user["id"]
+    if not p: return err("Project not found.", 404)
+    files = q_all("SELECT filename,content FROM evil_project_files WHERE user_id=%s AND project_id=%s ORDER BY id", (uid, project_id))
+    chats = q_all("SELECT id,title,created_at FROM evil_conversations WHERE user_id=%s AND project_id=%s ORDER BY created_at LIMIT 100", (uid, project_id))
+    by_chat = {}
+    if chats:
+        for m in q_all("SELECT conversation_id,role,content FROM evil_messages WHERE conversation_id = ANY(%s::uuid[]) ORDER BY id LIMIT 5000", ([str(c["id"]) for c in chats],)):
+            by_chat.setdefault(str(m["conversation_id"]), []).append(m)
+    safe = lambda s: re.sub(r"[^A-Za-z0-9._-]+", "_", s).strip("_")[:50] or "item"
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("README.txt", f"Project: {p['name']}\nExported from {BRAND}.\nfiles/ = project files, chats/ = every chat in this project (max 100).\n")
+        zf.writestr("instructions.txt", (p["instructions"] or "") + (("\n\nPersona:\n" + p["persona"]) if p["persona"] else ""))
+        for i, f in enumerate(files, 1): zf.writestr(f"files/{i:02d}-{safe(f['filename'])}.txt", f["content"])
+        for i, c in enumerate(chats, 1):
+            body_md = f"# {c['title']}\n\n" + "\n\n".join(("**You:** " if m["role"] == "user" else f"**{BRAND}:** ") + m["content"] for m in by_chat.get(str(c["id"]), []))
+            zf.writestr(f"chats/{i:03d}-{safe(c['title'])}.md", body_md)
+    buf.seek(0)
+    return send_file(buf, mimetype="application/zip", as_attachment=True, download_name=f"{safe(p['name'])}-project.zip")
+
+
+@app.post("/api/projects/<int:project_id>/summarize")
+@login_required
+@limited("psummary", 5, 60, per="user")
+def project_summarize(project_id):
+    """One short AI summary of a project (instructions, files and the latest chat answers). Costs no chat message."""
+    p = own_project(project_id); uid = request.user["id"]
+    if not p: return err("Project not found.", 404)
+    if not GROQ_API_KEY: return err("The AI isn't configured yet.", 503)
+    files = q_all("SELECT filename,content FROM evil_project_files WHERE user_id=%s AND project_id=%s ORDER BY id DESC LIMIT 8", (uid, project_id))
+    chats = q_all("""SELECT c.title, (SELECT m.content FROM evil_messages m WHERE m.conversation_id=c.id AND m.role='assistant' ORDER BY m.id DESC LIMIT 1) AS last_answer
+                     FROM evil_conversations c WHERE c.user_id=%s AND c.project_id=%s ORDER BY c.updated_at DESC LIMIT 8""", (uid, project_id))
+    if not files and not chats and not p["instructions"]: return err("This project is empty. Add a file or start a chat in it first.")
+    ctx = f"Project: {p['name']}\nInstructions: {p['instructions'][:800]}\n"
+    ctx += "".join(f"\nFile {f['filename']}: {f['content'][:1200]}" for f in files)
+    ctx += "".join(f"\nChat \"{c['title']}\" latest answer: {(c['last_answer'] or '')[:500]}" for c in chats)
+    try:
+        r = make_client().chat.completions.create(model=GROQ_BALANCED_MODEL, temperature=0.3, max_tokens=700, messages=[
+            {"role": "system", "content": "Summarise this project for its owner: what it is about, what has been done, key facts from the files, and 3 sensible next steps. Use short headings and bullet points. Do not invent anything that is not in the material."},
+            {"role": "user", "content": ctx[:9000]}])
+        text = (r.choices[0].message.content or "").strip()
+    except Exception as exc:
+        log.error("project summary failed: %s", exc); return err(friendly_ai_error(exc), 502)
+    if not text: return err("The AI sent an empty summary. Try again.", 502)
+    return jsonify({"success": True, "summary": text})
+
+
 @app.get("/api/memory")
 @login_required
 def list_memories():
-    rows = q_all("SELECT id,memory,source,created_at FROM evil_memories WHERE user_id=%s ORDER BY updated_at DESC LIMIT 100", (request.user["id"],))
-    return jsonify({"memories": [{"id": r["id"], "memory": r["memory"], "source": r["source"], "createdAt": iso(r["created_at"])} for r in rows]})
+    rows = q_all("SELECT id,memory,source,category,expires_at,created_at FROM evil_memories WHERE user_id=%s AND (expires_at IS NULL OR expires_at > NOW()) ORDER BY updated_at DESC LIMIT 100", (request.user["id"],))
+    return jsonify({"memories": [{"id": r["id"], "memory": r["memory"], "source": r["source"], "category": r["category"], "expiresAt": iso(r["expires_at"]), "createdAt": iso(r["created_at"])} for r in rows]})
+
+
+MEMORY_CATEGORIES = ("general", "personal", "work", "preferences", "goals")
+MEMORY_EXPIRY_DAYS = (7, 30, 90)
+
+
+def parse_expiry(d):
+    """-> (provided, days). days is None for 'never expires'. Only 7, 30 or 90 days are accepted."""
+    if "expiresInDays" not in d: return False, None
+    try: n = int(d.get("expiresInDays") or 0)
+    except (TypeError, ValueError): return False, None
+    return True, (n if n in MEMORY_EXPIRY_DAYS else None)
 
 @app.post("/api/memory")
 @login_required
 def add_memory():
     d = body(); memory = str(d.get("memory", "")).strip()[:1000]
     if len(memory) < 3: return err("Enter a useful memory.")
-    count = q_one("SELECT COUNT(*) AS n FROM evil_memories WHERE user_id=%s", (request.user["id"],))["n"]
+    count = q_one("SELECT COUNT(*) AS n FROM evil_memories WHERE user_id=%s AND (expires_at IS NULL OR expires_at > NOW())", (request.user["id"],))["n"]
     if count >= 100: return err("Memory limit reached. Review or delete older memories first.", 429)
-    row = q_one("INSERT INTO evil_memories(user_id,memory,source) VALUES (%s,%s,'user') RETURNING id", (request.user["id"], memory))
+    cat = d.get("category") if d.get("category") in MEMORY_CATEGORIES else "general"; _, days = parse_expiry(d)
+    row = q_one("INSERT INTO evil_memories(user_id,memory,source,category,expires_at) VALUES (%s,%s,'user',%s,NOW() + make_interval(days => %s::int)) RETURNING id", (request.user["id"], memory, cat, days))
     return jsonify({"success": True, "id": row["id"]}), 201
 
 @app.patch("/api/memory/<int:memory_id>")
@@ -704,8 +824,12 @@ def add_memory():
 def update_memory(memory_id):
     memory = str(body().get("memory", "")).strip()[:1000]
     if len(memory) < 3: return err("Enter a useful memory.")
-    row = q_one("UPDATE evil_memories SET memory=%s, updated_at=NOW() WHERE id=%s AND user_id=%s RETURNING id", (memory, memory_id, request.user["id"]))
+    d = body(); uid = request.user["id"]
+    row = q_one("UPDATE evil_memories SET memory=%s, updated_at=NOW() WHERE id=%s AND user_id=%s RETURNING id", (memory, memory_id, uid))
     if not row: return err("Memory not found.", 404)
+    if d.get("category") in MEMORY_CATEGORIES: q_run("UPDATE evil_memories SET category=%s WHERE id=%s AND user_id=%s", (d["category"], memory_id, uid))
+    provided, days = parse_expiry(d)
+    if provided: q_run("UPDATE evil_memories SET expires_at=NOW() + make_interval(days => %s::int) WHERE id=%s AND user_id=%s", (days, memory_id, uid))
     return jsonify({"success": True})
 
 @app.delete("/api/memory/<int:memory_id>")
@@ -713,6 +837,39 @@ def update_memory(memory_id):
 def delete_memory(memory_id):
     n = q_run("DELETE FROM evil_memories WHERE id=%s AND user_id=%s", (memory_id, request.user["id"]))
     return jsonify({"success": bool(n)}), (200 if n else 404)
+
+@app.post("/api/conversations/<uuid:conversation_id>/memory")
+@login_required
+def conversation_memory_switch(conversation_id):
+    on = body().get("enabled") is not False
+    row = q_one("UPDATE evil_conversations SET use_memory=%s WHERE id=%s AND user_id=%s RETURNING id", (on, str(conversation_id), request.user["id"]))
+    if not row: return err("Chat not found.", 404)
+    return jsonify({"success": True, "enabled": on})
+
+
+@app.get("/api/styles")
+@login_required
+def list_styles():
+    rows = q_all("SELECT id,name,instruction FROM evil_styles WHERE user_id=%s ORDER BY id", (request.user["id"],))
+    return jsonify({"styles": [dict(r) for r in rows]})
+
+
+@app.post("/api/styles")
+@login_required
+@limited("styles", 20, 60, per="user")
+def create_style():
+    d = body(); name = re.sub(r"\s+", " ", str(d.get("name", ""))).strip()[:40]; instruction = str(d.get("instruction", "")).strip()[:500]
+    if len(name) < 2 or len(instruction) < 5: return err("Give the style a name and a short instruction (at least 5 characters).")
+    if q_one("SELECT COUNT(*) AS n FROM evil_styles WHERE user_id=%s", (request.user["id"],))["n"] >= 20: return err("You can save up to 20 reply styles.")
+    row = q_one("INSERT INTO evil_styles(user_id,name,instruction) VALUES (%s,%s,%s) RETURNING id", (request.user["id"], name, instruction))
+    return jsonify({"success": True, "id": row["id"]}), 201
+
+
+@app.delete("/api/styles/<int:style_id>")
+@login_required
+def delete_style(style_id):
+    q_run("DELETE FROM evil_styles WHERE id=%s AND user_id=%s", (style_id, request.user["id"])); return jsonify({"success": True})
+
 
 @app.get("/api/skills")
 @login_required
@@ -1243,23 +1400,76 @@ def delete_image(image_id):
     q_run("DELETE FROM evil_images WHERE id=%s AND user_id=%s", (image_id, request.user["id"])); return jsonify({"success": True})
 
 
+def extract_office_text(data, ext):
+    """Plain text from .docx / .xlsx using only the standard library (these files are zips of XML)."""
+    import xml.etree.ElementTree as ET
+    LIMIT = 15_000_000
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        names = set(zf.namelist())
+        def read(name):
+            if zf.getinfo(name).file_size > LIMIT: raise ValueError("file part too large")
+            raw = zf.read(name)
+            if b"<!DOCTYPE" in raw[:3000] or b"<!ENTITY" in raw[:6000]: raise ValueError("unsafe xml")
+            return ET.fromstring(raw)
+        if ext == "docx":
+            W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"; lines = []
+            for p in read("word/document.xml").iter(W + "p"):
+                parts = []
+                for n in p.iter():
+                    if n.tag == W + "t": parts.append(n.text or "")
+                    elif n.tag == W + "tab": parts.append("\t")
+                line = "".join(parts).strip()
+                if line: lines.append(line)
+            return "\n".join(lines)
+        X = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"; shared = []
+        if "xl/sharedStrings.xml" in names:
+            shared = ["".join(t.text or "" for t in si.iter(X + "t")) for si in read("xl/sharedStrings.xml").iter(X + "si")]
+        sheets = sorted((n for n in names if re.fullmatch(r"xl/worksheets/sheet\d+\.xml", n)), key=lambda n: int(re.findall(r"\d+", n)[0]))[:5]
+        out = []
+        for i, n in enumerate(sheets, 1):
+            rows = []
+            for row in read(n).iter(X + "row"):
+                cells = {}
+                for pos, c in enumerate(row.iter(X + "c")):
+                    m = re.match(r"([A-Z]+)", c.get("r") or ""); col = pos
+                    if m:
+                        col = 0
+                        for ch in m.group(1): col = col * 26 + (ord(ch) - 64)
+                        col -= 1
+                    v = c.find(X + "v"); t = c.get("t")
+                    if t == "s" and v is not None and (v.text or "").isdigit() and int(v.text) < len(shared): val = shared[int(v.text)]
+                    elif t == "inlineStr": val = "".join(x.text or "" for x in c.iter(X + "t"))
+                    else: val = (v.text or "") if v is not None else ""
+                    cells[col] = val
+                if cells and any(cells.values()): rows.append("\t".join(cells.get(k, "") for k in range(max(cells) + 1)).rstrip("\t"))
+                if len(rows) >= 2000: break
+            out.append(f"## Sheet {i}\n" + "\n".join(rows))
+        return "\n\n".join(out)
+
+
 @app.post("/api/extract-text")
 @login_required
 @limited("extract", 10, 60, per="user")
 def extract_text():
     f = request.files.get("file")
-    if not f: return err("Choose a PDF first.")
-    data = f.read()
-    if not data.startswith(b"%PDF"): return err("Only PDF files are supported right now.")
-    try:
-        import PyPDF2
-        reader = PyPDF2.PdfReader(io.BytesIO(data))
-        text = "\n".join((p.extract_text() or "") for p in reader.pages[:30]).strip()
-    except Exception:
-        log.exception("pdf extract failed"); return err("Couldn't read that PDF. It may be scanned or protected.")
-    if not text: return err("That PDF has no readable text (it may be a scan).")
+    if not f: return err("Choose a file first.")
+    data = f.read(); fname = (f.filename or "").lower()
+    if data.startswith(b"%PDF"):
+        try:
+            import PyPDF2
+            reader = PyPDF2.PdfReader(io.BytesIO(data))
+            text = "\n".join((p.extract_text() or "") for p in reader.pages[:30]).strip()
+        except Exception:
+            log.exception("pdf extract failed"); return err("Couldn't read that PDF. It may be scanned or protected.")
+    elif data[:2] == b"PK" and fname.endswith((".docx", ".xlsx")):
+        try: text = extract_office_text(data, fname.rsplit(".", 1)[1]).strip()
+        except Exception:
+            log.exception("office extract failed"); return err("Couldn't read that file. Make sure it is a normal, unprotected .docx or .xlsx.")
+    else:
+        return err("Only PDF, Word (.docx) and Excel (.xlsx) files are supported right now.")
+    if not text: return err("That file has no readable text (a PDF may be a scan).")
     cap = 30000 if request.args.get("for") == "project" else 6000  # project files may hold more text than a one-off chat attachment
-    return jsonify({"success": True, "text": text[:cap], "truncated": len(text) > cap, "filename": (f.filename or "file.pdf")[:120]})
+    return jsonify({"success": True, "text": text[:cap], "truncated": len(text) > cap, "filename": (f.filename or "file")[:120]})
 
 
 # ----------------------------------------------------------------------------- chats
@@ -1267,10 +1477,82 @@ def extract_text():
 @login_required
 def conversations():
     archived = request.args.get("archived") == "1"
-    rows = q_all("""SELECT id,title,pinned,tags,archived,project_id,(share_token IS NOT NULL) AS shared FROM evil_conversations
+    rows = q_all("""SELECT id,title,pinned,tags,archived,project_id,folder_id,(share_token IS NOT NULL) AS shared FROM evil_conversations
                     WHERE user_id=%s AND archived=%s ORDER BY pinned DESC, updated_at DESC LIMIT 80""", (request.user["id"], archived))
     return jsonify({"conversations": [{"id": str(r["id"]), "title": r["title"], "pinned": r["pinned"], "shared": r["shared"],
-                                        "tags": r["tags"] or "", "archived": r["archived"], "projectId": r["project_id"]} for r in rows]})
+                                        "tags": r["tags"] or "", "archived": r["archived"], "projectId": r["project_id"], "folderId": r["folder_id"]} for r in rows]})
+
+
+def folder_name():
+    return re.sub(r"\s+", " ", str(body().get("name", ""))).strip()[:40]
+
+
+@app.get("/api/folders")
+@login_required
+def list_folders():
+    rows = q_all("SELECT id,name FROM evil_folders WHERE user_id=%s ORDER BY id", (request.user["id"],))
+    return jsonify({"folders": [{"id": r["id"], "name": r["name"]} for r in rows]})
+
+
+@app.post("/api/folders")
+@login_required
+@limited("folders", 20, 60, per="user")
+def create_folder():
+    name = folder_name(); uid = request.user["id"]
+    if not name: return err("Give the folder a name.")
+    if q_one("SELECT COUNT(*) AS n FROM evil_folders WHERE user_id=%s", (uid,))["n"] >= 30: return err("You can have up to 30 folders.")
+    if q_one("SELECT id FROM evil_folders WHERE user_id=%s AND LOWER(name)=LOWER(%s)", (uid, name)): return err("You already have a folder with that name.")
+    row = q_one("INSERT INTO evil_folders(user_id,name) VALUES (%s,%s) RETURNING id", (uid, name))
+    return jsonify({"success": True, "id": row["id"], "name": name})
+
+
+@app.post("/api/folders/<int:folder_id>/rename")
+@login_required
+def rename_folder(folder_id):
+    name = folder_name(); uid = request.user["id"]
+    if not name: return err("Give the folder a name.")
+    if q_one("SELECT id FROM evil_folders WHERE user_id=%s AND LOWER(name)=LOWER(%s) AND id<>%s", (uid, name, folder_id)): return err("You already have a folder with that name.")
+    row = q_one("UPDATE evil_folders SET name=%s WHERE id=%s AND user_id=%s RETURNING id", (name, folder_id, uid))
+    if not row: return err("Folder not found.", 404)
+    return jsonify({"success": True, "name": name})
+
+
+@app.delete("/api/folders/<int:folder_id>")
+@login_required
+def delete_folder(folder_id):
+    """Deleting a folder never deletes chats: they simply go back to the main list (ON DELETE SET NULL)."""
+    q_run("DELETE FROM evil_folders WHERE id=%s AND user_id=%s", (folder_id, request.user["id"])); return jsonify({"success": True})
+
+
+@app.post("/api/conversations/<uuid:conversation_id>/folder")
+@login_required
+def move_to_folder(conversation_id):
+    fid = body().get("folderId"); uid = request.user["id"]
+    if fid is not None:
+        try: fid = int(fid)
+        except (TypeError, ValueError): return err("Invalid folder.")
+        if not q_one("SELECT id FROM evil_folders WHERE id=%s AND user_id=%s", (fid, uid)): return err("Folder not found.", 404)
+    row = q_one("UPDATE evil_conversations SET folder_id=%s WHERE id=%s AND user_id=%s RETURNING id", (fid, str(conversation_id), uid))
+    if not row: return err("Chat not found.", 404)
+    return jsonify({"success": True})
+
+
+@app.post("/api/conversations/<uuid:conversation_id>/branch")
+@login_required
+@limited("branch", 10, 60, per="user")
+def branch_conversation(conversation_id):
+    """Copy a chat up to and including one message into a new chat, so the user can explore a different direction."""
+    uid = request.user["id"]; c = q_one("SELECT title,project_id,folder_id FROM evil_conversations WHERE id=%s AND user_id=%s", (str(conversation_id), uid))
+    if not c: return err("Chat not found.", 404)
+    try: mid = int(body().get("messageId"))
+    except (TypeError, ValueError): return err("Pick a message to branch from.")
+    if not q_one("SELECT id FROM evil_messages WHERE id=%s AND conversation_id=%s AND user_id=%s", (mid, str(conversation_id), uid)): return err("Message not found.", 404)
+    new_id = str(uuid.uuid4()); title = ("Branch: " + c["title"])[:150]
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("INSERT INTO evil_conversations(id,user_id,title,project_id,folder_id) VALUES (%s,%s,%s,%s,%s)", (new_id, uid, title, c["project_id"], c["folder_id"]))
+        cur.execute("""INSERT INTO evil_messages(conversation_id,user_id,role,content,attachment_type,attachment_url,mode)
+                       SELECT %s,user_id,role,content,attachment_type,attachment_url,mode FROM evil_messages WHERE conversation_id=%s AND id<=%s ORDER BY id""", (new_id, str(conversation_id), mid))
+    return jsonify({"success": True, "id": new_id})
 
 
 @app.post("/api/conversations/<uuid:conversation_id>/tags")
@@ -1309,7 +1591,7 @@ def fmt_date_only(v):
 
 
 def own_conversation(conversation_id):
-    return q_one("SELECT id,title,share_token,project_id FROM evil_conversations WHERE id=%s AND user_id=%s", (str(conversation_id), request.user["id"]))
+    return q_one("SELECT id,title,share_token,project_id,use_memory FROM evil_conversations WHERE id=%s AND user_id=%s", (str(conversation_id), request.user["id"]))
 
 
 @app.get("/api/conversations/<uuid:conversation_id>")
@@ -1317,10 +1599,10 @@ def own_conversation(conversation_id):
 def get_conversation(conversation_id):
     c = own_conversation(conversation_id)
     if not c: return err("Chat not found.", 404)
-    msgs = q_all("SELECT id,role,content,attachment_type,attachment_url,feedback,created_at FROM evil_messages WHERE conversation_id=%s ORDER BY id", (str(conversation_id),))
+    msgs = q_all("SELECT id,role,content,attachment_type,attachment_url,feedback,pinned,mode,created_at FROM evil_messages WHERE conversation_id=%s ORDER BY id", (str(conversation_id),))
     out = [dict(m) for m in msgs]
     for m in out: m["created_at"] = iso(m["created_at"])
-    return jsonify({"title": c["title"], "shareToken": c["share_token"], "projectId": c["project_id"], "messages": out})
+    return jsonify({"title": c["title"], "shareToken": c["share_token"], "projectId": c["project_id"], "useMemory": c["use_memory"] is not False, "messages": out})
 
 
 @app.post("/api/conversations/<uuid:conversation_id>/delete")
@@ -1363,6 +1645,70 @@ def message_feedback(message_id):
     v = body().get("value")
     if v not in (1, -1, 0): return err("Invalid feedback.")
     q_run("UPDATE evil_messages SET feedback=%s WHERE id=%s AND user_id=%s AND role='assistant'", (v or None, message_id, request.user["id"])); return jsonify({"success": True})
+
+
+@app.post("/api/messages/<int:message_id>/pin")
+@login_required
+def pin_message(message_id):
+    row = q_one("UPDATE evil_messages SET pinned = NOT pinned WHERE id=%s AND user_id=%s RETURNING pinned", (message_id, request.user["id"]))
+    if not row: return err("Message not found.", 404)
+    return jsonify({"success": True, "pinned": row["pinned"]})
+
+
+def clean_followups(text):
+    """Turn the model's raw reply into up to 3 short follow-up questions."""
+    out = []
+    for line in (text or "").splitlines():
+        line = re.sub(r"^\s*(?:[-*\u2022]|\d+[.)])\s*", "", line).strip().strip("\"'")
+        if 3 <= len(line) <= 70 and line not in out: out.append(line)
+    return out[:3]
+
+
+@app.post("/api/messages/<int:message_id>/followups")
+@login_required
+@limited("followups", 20, 60, per="user")
+def message_followups(message_id):
+    """3 short follow-up suggestions for an answer. Uses the fast model, costs no chat message."""
+    m = q_one("SELECT conversation_id,content FROM evil_messages WHERE id=%s AND user_id=%s AND role='assistant'", (message_id, request.user["id"]))
+    if not m: return err("Message not found.", 404)
+    if not GROQ_API_KEY: return jsonify({"followups": []})
+    prev = q_one("SELECT content FROM evil_messages WHERE conversation_id=%s AND id < %s AND role='user' ORDER BY id DESC LIMIT 1", (m["conversation_id"], message_id))
+    try:
+        r = make_client().chat.completions.create(model=GROQ_FAST_MODEL, temperature=0.6, max_tokens=80, messages=[
+            {"role": "system", "content": "Suggest 3 short follow-up questions the user might ask next. One per line, each under 8 words, no numbering, no quotes. Reply with the 3 lines only, in the same language as the user."},
+            {"role": "user", "content": f"User asked: {(prev or {}).get('content', '')[:300]}\nAssistant answered: {m['content'][:700]}"}])
+        return jsonify({"followups": clean_followups(r.choices[0].message.content)})
+    except Exception:
+        log.info("followups skipped"); return jsonify({"followups": []})
+
+
+@app.get("/api/notes")
+@login_required
+def list_notes():
+    rows = q_all("SELECT id,title,content,created_at FROM evil_notes WHERE user_id=%s ORDER BY id DESC LIMIT 200", (request.user["id"],))
+    out = [dict(r) for r in rows]
+    for r in out: r["created_at"] = iso(r["created_at"])
+    return jsonify({"notes": out})
+
+
+@app.post("/api/notes")
+@login_required
+@limited("notes", 30, 60, per="user")
+def add_note():
+    d = body(); content = str(d.get("content", "")).strip()[:20000]
+    if not content: return err("Nothing to save.")
+    if q_one("SELECT COUNT(*) AS n FROM evil_notes WHERE user_id=%s", (request.user["id"],))["n"] >= 200: return err("You have 200 notes. Delete a few first.")
+    conv = d.get("conversationId")
+    if conv and not q_one("SELECT id FROM evil_conversations WHERE id=%s AND user_id=%s", (str(conv), request.user["id"])): conv = None
+    title = re.sub(r"\s+", " ", str(d.get("title") or "")).strip()[:120] or re.sub(r"[#*_`>\s]+", " ", content).strip()[:60] or "Note"
+    row = q_one("INSERT INTO evil_notes(user_id,conversation_id,title,content) VALUES (%s,%s,%s,%s) RETURNING id", (request.user["id"], str(conv) if conv else None, title, content))
+    return jsonify({"success": True, "id": row["id"]})
+
+
+@app.delete("/api/notes/<int:note_id>")
+@login_required
+def delete_note(note_id):
+    q_run("DELETE FROM evil_notes WHERE id=%s AND user_id=%s", (note_id, request.user["id"])); return jsonify({"success": True})
 
 
 @app.get("/api/search")
@@ -1438,6 +1784,7 @@ def ask_stream():
     length_pref = str(d.get("length")) if d.get("length") in LENGTH_PROMPTS else None
     tone_pref = str(d.get("tone")) if d.get("tone") in TONE_PROMPTS else None
     eli5 = bool(d.get("eli5"))
+    mem_req = d.get("useMemory") is not False; style_id = d.get("styleId")
     try: temp = max(0.0, min(1.0, float(d.get("temperature", 0.7))))
     except (TypeError, ValueError): temp = 0.7
     extra = str(d.get("fileText", ""))[:6000]
@@ -1465,13 +1812,15 @@ def ask_stream():
     try:
         with db() as conn, conn.cursor() as cur:
             if conv_id:
-                cur.execute("SELECT id,project_id FROM evil_conversations WHERE id=%s AND user_id=%s", (str(conv_id), u["id"]))
+                cur.execute("SELECT id,project_id,use_memory FROM evil_conversations WHERE id=%s AND user_id=%s", (str(conv_id), u["id"]))
                 existing_conv = cur.fetchone()
                 if not existing_conv: refund(); return err("Chat not found.", 404)
                 if not project_id: project_id = existing_conv.get("project_id")
+                mem_on = existing_conv.get("use_memory") is not False
             else:
                 conv_id = str(uuid.uuid4()); is_new = True
-                cur.execute("INSERT INTO evil_conversations(id,user_id,title,project_id) VALUES (%s,%s,%s,%s)", (conv_id, u["id"], (question[:40] + "...") if len(question) > 40 else question, project_id))
+                mem_on = mem_req
+                cur.execute("INSERT INTO evil_conversations(id,user_id,title,project_id,use_memory) VALUES (%s,%s,%s,%s,%s)", (conv_id, u["id"], (question[:40] + "...") if len(question) > 40 else question, project_id, mem_on))
             if trunc: cur.execute("SELECT role,content FROM evil_messages WHERE conversation_id=%s AND id < %s ORDER BY id DESC LIMIT 16", (conv_id, trunc))  # edit/regenerate: ignore that message and later ones
             else: cur.execute("SELECT role,content FROM evil_messages WHERE conversation_id=%s ORDER BY id DESC LIMIT 16", (conv_id,))
             history = list(reversed(cur.fetchall()))
@@ -1483,23 +1832,26 @@ def ask_stream():
     sys_prompt += f"\n{BRAND} was created by COLD. If asked who created, built or owns {BRAND}, say it was created by COLD."
     remember_note = ""
     m_rem = re.match(r"^\s*(?:please\s+)?remember(?:\s+that\b|\s*:)\s*(.{3,500})$", question, re.I | re.S)
-    if m_rem:  # "remember that ..." really saves to the user's memory (same table the Memory page shows)
+    if m_rem and not mem_on:
+        remember_note = "\nThe user's memory is switched off for this chat, so NOTHING was saved. Tell them to turn on 'Use my memory in this chat' in Options if they want it remembered."
+    elif m_rem:  # "remember that ..." really saves to the user's memory (same table the Memory page shows)
         try:
-            if q_one("SELECT COUNT(*) AS n FROM evil_memories WHERE user_id=%s", (u["id"],))["n"] < 100:
+            if q_one("SELECT COUNT(*) AS n FROM evil_memories WHERE user_id=%s AND (expires_at IS NULL OR expires_at > NOW())", (u["id"],))["n"] < 100:
                 q_run("INSERT INTO evil_memories(user_id,memory,source) VALUES (%s,%s,'chat')", (u["id"], m_rem.group(1).strip()[:1000]))
                 remember_note = "\nThe user asked you to remember something and it has just been saved to their memory. Confirm briefly in one sentence."
             else:
                 remember_note = "\nThe user's memory is full (100 items), so NOTHING was saved. Tell them to delete old memories in Projects & Memory."
         except Exception: log.exception("chat memory save failed")
-    memories = relevant_memories(u["id"], question)
+    memories = relevant_memories(u["id"], question) if mem_on else []
     sys_prompt += remember_note
     if memories:
         sys_prompt += "\nUser-approved memory (use only when relevant; do not assume it is always current): " + " | ".join(x["memory"] for x in memories)
     if project_id:
-        project = q_one("SELECT name,instructions FROM evil_projects WHERE id=%s AND user_id=%s", (project_id, u["id"]))
+        project = q_one("SELECT name,instructions,persona FROM evil_projects WHERE id=%s AND user_id=%s", (project_id, u["id"]))
         project_files = q_all("SELECT filename,content FROM evil_project_files WHERE project_id=%s AND user_id=%s ORDER BY id DESC LIMIT 5", (project_id, u["id"]))
         if project:
             sys_prompt += f"\nProject workspace: {project['name']}. Project instructions: {project['instructions']}"
+            if project.get("persona"): sys_prompt += f"\nFor this project, take on this persona: {project['persona']}"
             for pf in project_files:
                 sys_prompt += f"\nProject file {pf['filename']}: {pf['content'][:5000]}"
     # A saved Skill can be invoked by its slash command at the beginning of a message.
@@ -1517,6 +1869,10 @@ def ask_stream():
     if LANGUAGES.get(language): sys_prompt += " " + LANGUAGES[language] + " Keep code and technical terms in English."
     if length_pref: sys_prompt += " " + LENGTH_PROMPTS[length_pref]
     if tone_pref: sys_prompt += " " + TONE_PROMPTS[tone_pref]
+    if style_id:
+        try: st = q_one("SELECT instruction FROM evil_styles WHERE id=%s AND user_id=%s", (int(style_id), u["id"]))
+        except (TypeError, ValueError): st = None
+        if st: sys_prompt += " Reply style to follow: " + st["instruction"]
     if eli5: sys_prompt += " " + ELI5_PROMPT
     if u["about_me"]: sys_prompt += f" Here is some context about the person you're talking to, use it only when relevant: {u['about_me']}"
     user_content = f"{question}\n\n[Attached file text]\n{extra}" if extra else question
@@ -1531,7 +1887,7 @@ def ask_stream():
         if creator_hit:  # fixed answer: does not depend on the model following a prompt, in Fast and Deep alike, and costs no tokens
             refund()
             yield sse({"t": CREATOR_ANSWER})
-            ids = save_turn(conv_id, user_id, question, CREATOR_ANSWER, is_new, trunc)
+            ids = save_turn(conv_id, user_id, question, CREATOR_ANSWER, is_new, trunc, model_type)
             yield sse({"done": conv_id, "messageId": ids[1], "userMessageId": ids[0], "truncated": False}); return
         try:
             while True:
@@ -1563,14 +1919,14 @@ def ask_stream():
                         tried_fallback = True; model = GROQ_FAST_MODEL; yield sse({"notice": "Deep mode is busy, switched to Fast mode."}); continue
                     raise
         except GeneratorExit:  # the user pressed Stop or closed the tab: keep what was written
-            if collected: save_turn(conv_id, user_id, question, "".join(collected), False, trunc)
+            if collected: save_turn(conv_id, user_id, question, "".join(collected), False, trunc, model_type)
             else:
                 refund()
                 if is_new: drop_empty_conversation(conv_id, user_id)
             raise
         except Exception as exc:
             log.error("AI stream failed: %s", exc)
-            if collected: save_turn(conv_id, user_id, question, "".join(collected), False, trunc)
+            if collected: save_turn(conv_id, user_id, question, "".join(collected), False, trunc, model_type)
             else:
                 refund()
                 if is_new: drop_empty_conversation(conv_id, user_id)
@@ -1580,7 +1936,7 @@ def ask_stream():
             refund()
             if is_new: drop_empty_conversation(conv_id, user_id)
             yield sse({"error": "The AI sent an empty reply. Try again."}); return
-        ids = save_turn(conv_id, user_id, question, answer, is_new, trunc)
+        ids = save_turn(conv_id, user_id, question, answer, is_new, trunc, model_type)
         yield sse({"done": conv_id, "messageId": ids[1], "userMessageId": ids[0], "truncated": truncated})
 
     return Response(stream_with_context(generate()), mimetype="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
@@ -1588,7 +1944,7 @@ def ask_stream():
 
 def relevant_memories(user_id, question, limit=12):
     """Memories that share words with the question come first; the rest of the budget is filled with the newest ones."""
-    rows = q_all("SELECT memory FROM evil_memories WHERE user_id=%s ORDER BY updated_at DESC LIMIT 100", (user_id,))
+    rows = q_all("SELECT memory FROM evil_memories WHERE user_id=%s AND (expires_at IS NULL OR expires_at > NOW()) ORDER BY updated_at DESC LIMIT 100", (user_id,))
     if len(rows) <= limit: return rows
     words = set(w for w in re.findall(r"[a-z0-9]{4,}", question.lower()))
     scored = [(len(words & set(re.findall(r"[a-z0-9]{4,}", r["memory"].lower()))), i, r) for i, r in enumerate(rows)]
@@ -1610,12 +1966,12 @@ CREATOR_ANSWER = (f"I'm {BRAND}, created by COLD. For reports, questions or busi
                   "Telegram https://t.me/COLDFX26 or WhatsApp https://wa.me/2348100481004.")
 
 
-def save_turn(conv_id, user_id, question, answer, retitle, truncate_from=None):
+def save_turn(conv_id, user_id, question, answer, retitle, truncate_from=None, mode=None):
     try:
         with db() as conn, conn.cursor() as cur:
             if truncate_from: cur.execute("DELETE FROM evil_messages WHERE conversation_id=%s AND id >= %s", (conv_id, truncate_from))  # same transaction as the new messages
             cur.execute("INSERT INTO evil_messages(conversation_id,user_id,role,content) VALUES (%s,%s,'user',%s) RETURNING id", (conv_id, user_id, question)); uid = cur.fetchone()["id"]
-            cur.execute("INSERT INTO evil_messages(conversation_id,user_id,role,content) VALUES (%s,%s,'assistant',%s) RETURNING id", (conv_id, user_id, answer)); aid = cur.fetchone()["id"]
+            cur.execute("INSERT INTO evil_messages(conversation_id,user_id,role,content,mode) VALUES (%s,%s,'assistant',%s,%s) RETURNING id", (conv_id, user_id, answer, mode if mode in ("fast", "balanced", "deep") else None)); aid = cur.fetchone()["id"]
             cur.execute("UPDATE evil_conversations SET updated_at=NOW() WHERE id=%s", (conv_id,))
         if retitle: threading.Thread(target=auto_title, args=(conv_id, question, answer), daemon=True).start()
         return uid, aid

@@ -1,0 +1,10 @@
+VYRA AI - BATCH 3 (memory)
+Files: app.py, static/script.js, templates/index.html
+DB (additive only): evil_memories.category, evil_memories.expires_at, evil_conversations.use_memory, evil_projects.persona, new table evil_styles.
+
+1 "What Vyra knows about me": button in Projects & Memory > Saved Memory. Read-only summary of profile, persona, language, memories, styles, project personas.
+2 Memory categories: General/Personal/Work/Preferences/Goals when saving or editing; list is grouped.
+3 Per-chat memory switch: "Use my memory in this chat" in Options. Off = memories not used and "remember that..." is not saved in that chat.
+4 Memory expiry: forget after 7/30/90 days. Expired memories are hidden and not used (not deleted from the database).
+5 Reply styles: Options > Manage reply styles. Save named writing styles, pick one in Options.
+6 Per-project persona: Projects > Edit on a project > "Persona for this project".

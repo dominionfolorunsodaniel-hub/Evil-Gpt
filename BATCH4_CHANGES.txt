@@ -1,0 +1,10 @@
+VYRA AI - BATCH 4 (projects)
+Files: app.py, static/script.js, templates/index.html
+DB: no changes. No new packages (Word/Excel are read with the Python standard library).
+
+1 Templates: Projects > "Start from a template" (Business plan, Study plan, Content calendar) fills the name, instructions and a persona.
+2 Dashboard: select a project > Dashboard (chats, messages, files, last activity, recent chats).
+3 Project search: Search button; looks in every chat and file of that project.
+4 Export ZIP: instructions, persona, files and all chats (max 100) as .md files.
+5 Summarise: AI summary + next steps; Copy or Save as note. Uses no chat message.
+6 Word/Excel reading: .docx and .xlsx work in chat attach (paperclip) and in project files (PDF still works). Max 8 MB; Excel reads first 5 sheets, 2000 rows each.

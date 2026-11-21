@@ -1,0 +1,13 @@
+VYRA AI - BATCH 1 (chat features)
+
+DB (additive only): evil_messages.pinned, evil_messages.mode, new table evil_notes. Created automatically on next start.
+
+1 Suggested follow-ups: AI makes 3 per answer (fast model, no message used); falls back to the old fixed ones.
+2 Pin message: pin icon under answers; pinned bar on the message; pin icon in header lists pins and jumps to them.
+3 Quick prompt chips: scrolling row above the box when it is empty.
+4 Shorter / Longer: buttons on the latest answer; regenerates it with that length.
+5 Draft saving: unsent text is kept per chat (this phone's browser) and restored.
+6 Save as note: book icon under answers; Notes button (book) in header to copy/delete.
+7 Reply-mode badge: Fast/Balanced/Deep tag next to the name on new answers.
+8 Stop-and-continue: after Stop, a Continue button appears on the partial answer.
+Not changed: payments, auth, users, chats, design.
