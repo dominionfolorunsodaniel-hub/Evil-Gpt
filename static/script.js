@@ -176,7 +176,7 @@ $("reset-form").addEventListener("submit", async (e) => {
 async function enterApp() {
   $("auth-view").classList.add("hidden"); $("app-view").classList.remove("hidden");
   await refreshMe();
-  const tasks = [loadPersonas(), loadHistory(), loadNotifs(), loadDailyPrompt()];
+  const tasks = [loadPersonas(), loadHistory(), loadNotifs(), loadDailyPrompt(), loadStyles()];
   await Promise.all(tasks.map((t) => t.catch(() => {})));
   setGreeting(); const rememberedPage = store.get("vyra-page"); newChat(); maybeTour(); if (["chat","toolbox","images","plans","workspace"].includes(rememberedPage)) showPage(rememberedPage);
   const paid = new URLSearchParams(location.search).get("paid");
@@ -351,12 +351,14 @@ $("tune-btn").onclick = () => {
 function msgActions(m) {
   if (m.role === "user") return `<div class="msg-actions"><button type="button" data-act="edit" aria-label="Edit and resend" title="Edit and resend">${ico("edit", "sm")}</button><button type="button" data-act="copy" aria-label="Copy" title="Copy">${ico("copy", "sm")}</button></div>`;
   const last = S.msgs.filter((x) => x.role === "assistant").slice(-1)[0] === m;
-  return `<div class="msg-actions">${last && m.truncated ? `<button type="button" data-act="continue" class="chip" aria-label="Continue" title="The reply got cut off">${ico("arrow-up", "sm")}Continue</button>` : ""}<button type="button" data-act="copy" aria-label="Copy" title="Copy">${ico("copy", "sm")}</button><button type="button" data-act="download" aria-label="Download answer as text" title="Download answer">${ico("download", "sm")}</button><button type="button" data-act="zip" aria-label="Download answer as ZIP" title="Download answer as ZIP">${ico("archive", "sm")}</button><button type="button" data-act="speak" aria-label="Read aloud" title="Read aloud">${ico("volume", "sm")}</button>${last ? `<button type="button" data-act="regen" aria-label="Regenerate" title="Regenerate">${ico("refresh", "sm")}</button>` : ""}<button type="button" data-act="up" class="${m.feedback === 1 ? "on" : ""}" aria-label="Good answer" title="Good answer">${ico("thumb-up", "sm")}</button><button type="button" data-act="down" class="${m.feedback === -1 ? "on" : ""}" aria-label="Bad answer" title="Bad answer">${ico("thumb-down", "sm")}</button></div>`;
+  return `<div class="msg-actions">${last && m.truncated ? `<button type="button" data-act="continue" class="chip" aria-label="Continue" title="The reply got cut off">${ico("arrow-up", "sm")}Continue</button>` : ""}<button type="button" data-act="copy" aria-label="Copy" title="Copy">${ico("copy", "sm")}</button><button type="button" data-act="download" aria-label="Download answer as text" title="Download answer">${ico("download", "sm")}</button><button type="button" data-act="zip" aria-label="Download answer as ZIP" title="Download answer as ZIP">${ico("archive", "sm")}</button><button type="button" data-act="speak" aria-label="Read aloud" title="Read aloud">${ico("volume", "sm")}</button><button type="button" data-act="branch" aria-label="Branch chat from here" title="Branch chat from here">${ico("plus", "sm")}</button><button type="button" data-act="pin" class="${m.pinned ? "on" : ""}" aria-label="${m.pinned ? "Unpin message" : "Pin message"}" title="${m.pinned ? "Unpin" : "Pin"}">${ico("pin", "sm")}</button><button type="button" data-act="note" aria-label="Save as note" title="Save as note">${ico("book", "sm")}</button>${last ? `<button type="button" data-act="shorter" class="chip">Shorter</button><button type="button" data-act="longer" class="chip">Longer</button>` : ""}${last ? `<button type="button" data-act="regen" aria-label="Regenerate" title="Regenerate">${ico("refresh", "sm")}</button>` : ""}<button type="button" data-act="up" class="${m.feedback === 1 ? "on" : ""}" aria-label="Good answer" title="Good answer">${ico("thumb-up", "sm")}</button><button type="button" data-act="down" class="${m.feedback === -1 ? "on" : ""}" aria-label="Bad answer" title="Bad answer">${ico("thumb-down", "sm")}</button></div>`;
 }
+const MODE_LABEL = { fast: "Fast", balanced: "Balanced", deep: "Deep" };
 function msgEl(m) {
   const el = document.createElement("article"); el.className = "msg " + m.role; m.el = el;
   const nickname = S.user && S.user.aiNickname;
-  const who = m.role === "user" ? "You" : `<span class="mark"><svg class="ico"><use href="#i-v"/></svg></span>${esc(nickname || document.title)}`;
+  const who = m.role === "user" ? "You" : `<span class="mark"><svg class="ico"><use href="#i-v"/></svg></span>${esc(nickname || document.title)}${MODE_LABEL[m.mode] ? `<span class="mode-badge" title="Reply mode">${MODE_LABEL[m.mode]}</span>` : ""}`;
+  if (m.pinned) el.classList.add("pinned");
   if (m.createdAt) el.title = fmtTime(m.createdAt);
   el.innerHTML = `<div class="msg-who">${who}</div><div class="msg-body"></div>${m.pending ? "" : msgActions(m)}`;
   fillBody(m); return el;
@@ -369,22 +371,22 @@ function fillBody(m) {
 function renderMessages() {
   const box = $("chat-messages"); box.replaceChildren(); S.msgs.forEach((m) => box.appendChild(msgEl(m)));
   $("welcome").classList.toggle("hidden", S.msgs.length > 0);
-  $("copy-chat-btn").classList.toggle("hidden", S.msgs.length === 0);
+  $("copy-chat-btn").classList.toggle("hidden", S.msgs.length === 0); updatePinsBtn();
 }
 function refreshActions() { S.msgs.forEach((m) => { if (m.pending || !m.el) return; const old = m.el.querySelector(".msg-actions"); if (old) old.remove(); m.el.insertAdjacentHTML("beforeend", msgActions(m)); }); }
 function newChat(keepProject) {
   if (S.busy && S.abort) S.abort.abort();
   if (!keepProject) S.projectId = null; // a normal new chat never inherits a project
-  S.conv = null; S.msgs = []; S.editFromId = null; clearFile(); renderMessages(); $("message-input").value = ""; autosize(); markActive(); showPage("chat"); $("message-input").focus();
+  S.conv = null; S.msgs = []; S.editFromId = null; S.memoryOn = true; $("mem-switch").checked = true; clearFile(); renderMessages(); $("message-input").value = store.get(draftKey()) || ""; autosize(); markActive(); showPage("chat"); $("message-input").focus();
 }
 $("new-chat").onclick = newChat;
 async function openConversation(id) {
   try {
-    const d = await api("/api/conversations/" + id); S.conv = id; S.editFromId = null; S.projectId = d.projectId || null; // each chat keeps its own project
-    S.msgs = d.messages.map((m) => ({ id: m.id, role: m.role, content: m.content, feedback: m.feedback, createdAt: m.created_at })); renderMessages(); markActive(); showPage("chat"); toBottom();
+    const d = await api("/api/conversations/" + id); S.conv = id; S.editFromId = null; S.projectId = d.projectId || null; S.memoryOn = d.useMemory !== false; $("mem-switch").checked = S.memoryOn; updateOptsDot(); // each chat keeps its own project and memory switch
+    S.msgs = d.messages.map((m) => ({ id: m.id, role: m.role, content: m.content, feedback: m.feedback, pinned: m.pinned, mode: m.mode, createdAt: m.created_at })); renderMessages(); $("message-input").value = store.get(draftKey()) || ""; autosize(); markActive(); showPage("chat"); toBottom();
   } catch (e) { toast(e.message, "error"); }
 }
-function autosize() { const t = $("message-input"); t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 180) + "px"; }
+function autosize() { const t = $("message-input"); t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 180) + "px"; updateChips(); }
 $("message-input").addEventListener("input", autosize);
 $("message-input").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); $("chat-form").requestSubmit(); } });
 $("chat-form").addEventListener("submit", (e) => { e.preventDefault(); if (S.busy) { S.abort && S.abort.abort("stop"); return; } const t = $("message-input").value.trim(); if (t) send(t); });
@@ -402,6 +404,16 @@ $("chat-messages").addEventListener("click", async (e) => {
   if (act === "edit") { if (!m.id) return toast("Give it a second, this message is still saving."); S.editFromId = m.id; $("message-input").value = m.content; autosize(); $("message-input").focus(); toast("Editing. Send to replace this message and everything after it."); }
   if (act === "regen") { const u = S.msgs[idx - 1]; if (!u || !u.id) return toast("Give it a second, then try again."); send(u.content, { truncateFromId: u.id }); }
   if (act === "continue") send("Continue exactly where you left off. Don't repeat what you already said.");
+  if (act === "shorter" || act === "longer") { const u = S.msgs[idx - 1]; if (!u || !u.id) return toast("Give it a second, then try again."); send(u.content, { truncateFromId: u.id, length: act === "shorter" ? "concise" : "detailed" }); }
+  if (act === "pin") {
+    if (!m.id) return toast("Give it a second, this message is still saving.");
+    try { const d = await post(`/api/messages/${m.id}/pin`); m.pinned = d.pinned; m.el.classList.toggle("pinned", !!d.pinned); refreshActions(); updatePinsBtn(); toast(d.pinned ? "Pinned" : "Unpinned"); } catch (err) { toast(err.message, "error"); }
+  }
+  if (act === "branch") {
+    if (!m.id || !S.conv) return toast("Give it a second, this message is still saving.");
+    try { const d = await post(`/api/conversations/${S.conv}/branch`, { messageId: m.id }); await loadHistory(); await openConversation(d.id); toast("New branch created. Your original chat is unchanged."); } catch (err) { toast(err.message, "error"); }
+  }
+  if (act === "note") { try { await post("/api/notes", { content: m.content, conversationId: S.conv }); toast("Saved to Notes"); } catch (err) { toast(err.message, "error"); } }
   if (act === "up" || act === "down") {
     if (!m.id) return; const v = act === "up" ? 1 : -1; const next = m.feedback === v ? 0 : v;
     try { await post(`/api/messages/${m.id}/feedback`, { value: next }); m.feedback = next || null; refreshActions(); if (next) toast("Thanks for the feedback"); } catch (err) { toast(err.message, "error"); }
@@ -411,14 +423,15 @@ $("chat-messages").addEventListener("click", async (e) => {
 function setBusy(b) {
   S.busy = b; const sb = $("send-btn"); sb.classList.toggle("stop", b);
   $("send-icon").innerHTML = `<use href="#i-${b ? "stop" : "arrow-up"}"/>`; sb.setAttribute("aria-label", b ? "Stop generating" : "Send");
-  $("usage-ring").classList.toggle("hidden", b);
+  $("usage-ring").classList.toggle("hidden", b); updateChips();
 }
 async function send(text, opts = {}) {
   if (S.busy) return;
   const wasNew = !S.conv;
   const truncateFromId = opts.truncateFromId || S.editFromId || null; S.editFromId = null;
   if (truncateFromId) { const i = S.msgs.findIndex((m) => m.id === truncateFromId); if (i >= 0) S.msgs = S.msgs.slice(0, i); }
-  const userMsg = { role: "user", content: text }; const ai = { role: "assistant", content: "", pending: true };
+  try { localStorage.removeItem(draftKey()); } catch (e) {}
+  const userMsg = { role: "user", content: text }; const ai = { role: "assistant", content: "", pending: true, mode: S.mode }; let stopped = false;
   S.msgs.push(userMsg, ai); renderMessages(); toBottom();
   $("message-input").value = ""; autosize(); setBusy(true);
   const ctrl = new AbortController(); S.abort = ctrl; let idle = setTimeout(() => ctrl.abort("timeout"), 60000);
@@ -427,7 +440,7 @@ async function send(text, opts = {}) {
   const paint = () => { raf = 0; const stick = nearBottom(); body.innerHTML = md(ai.content); if (stick) toBottom(); };
   try {
     const res = await fetch("/ask/stream", { method: "POST", credentials: "same-origin", signal: ctrl.signal, headers: { "Content-Type": "application/json", "X-Requested-With": "vyra" },
-      body: JSON.stringify({ question: text, conversationId: S.conv, persona: $("persona-select").value, language: $("lang-select").value, modelType: S.mode, temperature: $("temp-slider").value, truncateFromId, fileText, length: S.length, tone: S.tone, eli5: S.eli5, projectId: S.projectId }) });
+      body: JSON.stringify({ question: text, conversationId: S.conv, persona: $("persona-select").value, language: $("lang-select").value, modelType: S.mode, temperature: $("temp-slider").value, truncateFromId, fileText, length: opts.length || S.length, tone: S.tone, eli5: S.eli5, projectId: S.projectId, useMemory: S.memoryOn, styleId: S.styleId || null }) });
     if (!res.ok) { const d = await res.json().catch(() => ({})); const err = new Error(d.error || "Something went wrong. Please try again."); err.data = d; throw err; }
     const reader = res.body.getReader(), dec = new TextDecoder(); let buf = "";
     while (true) {
@@ -445,7 +458,7 @@ async function send(text, opts = {}) {
       }
     }
   } catch (e) {
-    if (ctrl.signal.aborted) { if (ctrl.signal.reason === "timeout") failed = "The AI took too long to answer."; else if (!started) { S.msgs = S.msgs.slice(0, -2); if (wasNew) S.conv = null; } }
+    if (ctrl.signal.aborted) { if (ctrl.signal.reason === "timeout") failed = "The AI took too long to answer."; else if (!started) { S.msgs = S.msgs.slice(0, -2); if (wasNew) S.conv = null; } else stopped = true; }
     else { failed = e.message; if (e.data && e.data.limitReached) { toast(e.message); refreshMe(); } }
   }
   clearTimeout(idle); cancelAnimationFrame(raf); delete ai.pending; setBusy(false); S.abort = null;
@@ -455,21 +468,29 @@ async function send(text, opts = {}) {
     const last = S.msgs[S.msgs.length - 1]; if (last) last.el.insertAdjacentHTML("beforeend", `<div class="msg-error">${ico("x", "sm")}<span>${esc(failed)}</span><button type="button" class="btn sm" data-retry>Try again</button></div>`);
     S.lastFailed = text; S.msgs = S.msgs.slice(0, -1); // the failed question isn't saved on the server, so retry re-sends it
     if (last) last.el.dataset.failed = "1";
-  } else { if (failed) toast(failed, "error"); renderMessages(); if (!ai.id && S.conv) await syncIds(); }
+  } else { if (failed) toast(failed, "error"); if (stopped) ai.truncated = true; renderMessages(); if (!ai.id && S.conv) await syncIds(stopped); }
   await Promise.all([refreshMe().catch(() => {}), loadHistory().catch(() => {})]); showFollowups(); toBottom();
 }
 $("chat-messages").addEventListener("click", (e) => { if (e.target.closest("[data-retry]")) { const t = S.lastFailed; S.msgs = S.msgs.filter((m) => !(m.el && m.el.dataset.failed)); renderMessages(); if (t) send(t); } });
-async function syncIds() { // after Stop: learn the saved ids so edit/regenerate/feedback work
-  try { const d = await api("/api/conversations/" + S.conv); S.msgs = d.messages.map((m) => ({ id: m.id, role: m.role, content: m.content, feedback: m.feedback })); renderMessages(); } catch (e) {}
+async function syncIds(stopped) { // after Stop: learn the saved ids so edit/regenerate/feedback/pin work
+  for (let i = 0; i < 3; i++) {
+    try {
+      const d = await api("/api/conversations/" + S.conv);
+      if (stopped && i < 2 && !(d.messages.length && d.messages[d.messages.length - 1].role === "assistant")) { await new Promise((r) => setTimeout(r, 700)); continue; } // server is still saving the partial answer
+      S.msgs = d.messages.map((m) => ({ id: m.id, role: m.role, content: m.content, feedback: m.feedback, pinned: m.pinned, mode: m.mode, createdAt: m.created_at }));
+      const last = S.msgs[S.msgs.length - 1]; if (stopped && last && last.role === "assistant") last.truncated = true;
+      renderMessages(); return;
+    } catch (e) { return; }
+  }
 }
 
 /* PDF attach */
 $("attach-btn").onclick = () => $("file-input").click();
 async function processPDFFile(f){
   if(!f)return;
-  if(!/\.pdf$/i.test(f.name)||f.type&&f.type!=="application/pdf") return toast("Please choose a PDF file.","error");
-  if(f.size>8*1024*1024) return toast("That PDF is over 8 MB.","error");
-  const fd=new FormData();fd.append("file",f);toast("Reading your PDF...");
+  if(!/\.(pdf|docx|xlsx)$/i.test(f.name)) return toast("Please choose a PDF, Word (.docx) or Excel (.xlsx) file.","error");
+  if(f.size>8*1024*1024) return toast("That file is over 8 MB.","error");
+  const fd=new FormData();fd.append("file",f);toast("Reading your file...");
   try{const d=await api("/api/extract-text",{method:"POST",body:fd});S.fileText=d.text;S.fileName=d.filename;
     $("file-chip").innerHTML=`${ico("paperclip","sm")}<span>${esc(d.filename)}${d.truncated?" (first part)":""}</span><button type="button" aria-label="Remove file" id="file-x">${ico("x","sm")}</button>`;
     $("file-chip").classList.remove("hidden");$("file-x").onclick=clearFile;if(!$ ("message-input").value)$ ("message-input").value="Summarise this document for me.";autosize();
@@ -486,17 +507,29 @@ function clearFile() { S.fileText = ""; S.fileName = ""; $("file-chip").classLis
 
 /* ---------------------------------------------------------------- history sidebar */
 let searchTimer = 0;
-async function loadHistory() { const d = await api("/api/conversations" + (S.historyView === "archived" ? "?archived=1" : "")); S.chats = d.conversations; renderHistory(); }
+async function loadHistory() {
+  const [d, f] = await Promise.all([api("/api/conversations" + (S.historyView === "archived" ? "?archived=1" : "")), S.historyView === "archived" ? Promise.resolve(null) : api("/api/folders").catch(() => null)]);
+  S.chats = d.conversations; if (f) S.folders = f.folders; renderHistory();
+}
 function markActive() { document.querySelectorAll(".h-row").forEach((r) => r.classList.toggle("active", r.dataset.id === S.conv)); }
 function tagChips(c) { return c.tags ? c.tags.split(",").map((t) => t.trim()).filter(Boolean).map((t) => `<span class="h-tag">${esc(t)}</span>`).join("") : ""; }
 function renderHistory(results = null) {
   const box = $("history-list");
   if (results) { box.innerHTML = results.length ? results.map((r) => `<div class="h-row" data-id="${esc(r.id)}"><button class="h-title" data-open="${esc(r.id)}" title="${esc(r.snippet || r.title)}">${esc(r.title)}</button></div>`).join("") : `<div class="empty">No chats match that.</div>`; markActive(); return; }
-  if (!S.chats.length) { box.innerHTML = `<div class="empty tiny">${S.historyView === "archived" ? "No archived chats yet." : "Your chats will show up here."}</div>`; return; }
+  const folders = S.historyView === "active" ? (S.folders || []) : [];
+  if (!S.chats.length && !folders.length) { box.innerHTML = `<div class="empty tiny">${S.historyView === "archived" ? "No archived chats yet." : "Your chats will show up here."}</div>`; return; }
   const row = (c) => `<div class="h-row" data-id="${esc(c.id)}"><button class="h-title" data-open="${esc(c.id)}">${c.shared ? ico("link", "sm") : ""}${esc(c.title)}${tagChips(c)}</button><button class="h-more" data-more="${esc(c.id)}" aria-label="Chat options">${ico("more", "sm")}</button></div>`;
-  const pinned = S.chats.filter((c) => c.pinned), rest = S.chats.filter((c) => !c.pinned);
-  box.innerHTML = (pinned.length ? `<div class="history-group">Pinned</div>` + pinned.map(row).join("") : "") + (rest.length ? `<div class="history-group">${pinned.length ? "Recent" : "Chats"}</div>` + rest.map(row).join("") : ""); markActive();
+  const pinned = S.chats.filter((c) => c.pinned), free = S.chats.filter((c) => !c.pinned && !folders.some((f) => f.id === c.folderId));
+  const folds = foldedSet();
+  let html = pinned.length ? `<div class="history-group">Pinned</div>` + pinned.map(row).join("") : "";
+  folders.forEach((f) => {
+    const items = S.chats.filter((c) => !c.pinned && c.folderId === f.id), shut = folds.has(f.id);
+    html += `<div class="history-group folder-head"><button type="button" class="fold-toggle" data-fold="${f.id}" aria-expanded="${!shut}">${shut ? "&#9656;" : "&#9662;"} ${esc(f.name)} <span>${items.length}</span></button><button type="button" class="h-more" data-fmore="${f.id}" aria-label="Folder options">${ico("more", "sm")}</button></div>` + (shut ? "" : items.map(row).join(""));
+  });
+  html += free.length ? `<div class="history-group">${pinned.length || folders.length ? "Recent" : "Chats"}</div>` + free.map(row).join("") : "";
+  box.innerHTML = html; markActive();
 }
+function foldedSet() { try { return new Set(JSON.parse(store.get("vyra-folds") || "[]")); } catch (e) { return new Set(); } }
 $("hist-active").onclick = () => { S.historyView = "active"; $("hist-active").classList.add("on"); $("hist-archived").classList.remove("on"); loadHistory(); };
 $("hist-archived").onclick = () => { S.historyView = "archived"; $("hist-archived").classList.add("on"); $("hist-active").classList.remove("on"); loadHistory(); };
 $("search-chats").addEventListener("input", (e) => {
@@ -510,7 +543,7 @@ $("history-list").addEventListener("click", (e) => {
   const more = e.target.closest("[data-more]"); if (!more) return;
   const row = more.closest(".h-row"), had = row.querySelector(".menu"); closeMenus(); if (had) return;
   const c = S.chats.find((x) => x.id === more.dataset.more); row.classList.add("open");
-  row.insertAdjacentHTML("beforeend", `<div class="menu" role="menu"><button data-m="rename">${ico("edit", "sm")}Rename</button><button data-m="pin">${ico("pin", "sm")}${c.pinned ? "Unpin" : "Pin"}</button><button data-m="tags">${ico("tag", "sm")}Tags</button><button data-m="archive">${ico("archive", "sm")}${c.archived ? "Unarchive" : "Archive"}</button><button data-m="share">${ico("share", "sm")}${c.shared ? "Stop sharing" : "Share link"}</button><button data-m="export">${ico("download", "sm")}Export</button><button data-m="delete" class="danger">${ico("trash", "sm")}Delete</button></div>`);
+  row.insertAdjacentHTML("beforeend", `<div class="menu" role="menu"><button data-m="rename">${ico("edit", "sm")}Rename</button><button data-m="pin">${ico("pin", "sm")}${c.pinned ? "Unpin" : "Pin"}</button><button data-m="folder">${ico("book", "sm")}Move to folder</button><button data-m="tags">${ico("tag", "sm")}Tags</button><button data-m="archive">${ico("archive", "sm")}${c.archived ? "Unarchive" : "Archive"}</button><button data-m="share">${ico("share", "sm")}${c.shared ? "Stop sharing" : "Share link"}</button><button data-m="export">${ico("download", "sm")}Export</button><button data-m="delete" class="danger">${ico("trash", "sm")}Delete</button></div>`);
   row.querySelector(".menu").onclick = (ev) => { const b = ev.target.closest("[data-m]"); if (b) chatAction(b.dataset.m, c, row); };
 });
 async function chatAction(act, c, row) {
@@ -533,6 +566,7 @@ async function chatAction(act, c, row) {
     }
     if (act === "delete") confirmBox("Delete this chat?", "This removes the chat and its messages for good.", "Delete", async () => { await post(`/api/conversations/${c.id}/delete`); if (S.conv === c.id) newChat(); await loadHistory(); toast("Chat deleted"); });
     if (act === "archive") { await post(`/api/conversations/${c.id}/archive`); if (S.conv === c.id && S.historyView === "active") newChat(); await loadHistory(); toast(c.archived ? "Chat unarchived" : "Chat archived"); }
+    if (act === "folder") openFolderPicker(c);
     if (act === "tags") {
       $("generic-card").innerHTML = `<div class="modal-head"><h2>Tags</h2><button class="icon-btn" data-close aria-label="Close">${ico("x")}</button></div><p class="muted tiny" style="margin:0 0 8px">Comma-separated, e.g. "work, ideas"</p><input class="input" id="tags-input" maxlength="200" value="${esc(c.tags || "")}"><button class="btn primary block" id="tags-save" style="margin-top:12px">Save</button>`;
       openModal("generic-modal");
@@ -779,11 +813,15 @@ document.addEventListener("click", async (e) => {
 
 /* ---------------------------------------------------------------- follow-ups, voice, read aloud, tour */
 const FOLLOWUPS = ["Explain it simpler", "Give me an example", "Make it shorter"];
-function showFollowups() {
+async function showFollowups() {
   document.querySelectorAll(".followups").forEach((x) => x.remove());
   const last = S.msgs[S.msgs.length - 1];
   if (!last || last.role !== "assistant" || !last.el || last.el.querySelector(".msg-error") || !last.content) return;
-  last.el.insertAdjacentHTML("beforeend", `<div class="followups">${FOLLOWUPS.map((f) => `<button type="button" class="chip" data-followup="${esc(f)}">${esc(f)}</button>`).join("")}</div>`);
+  let list = FOLLOWUPS;
+  if (last.id) { try { const d = await post(`/api/messages/${last.id}/followups`); if (d.followups && d.followups.length) list = d.followups; } catch (e) {} }
+  if (S.busy || S.msgs[S.msgs.length - 1] !== last || !last.el.isConnected) return; // the chat moved on while we waited
+  document.querySelectorAll(".followups").forEach((x) => x.remove());
+  last.el.insertAdjacentHTML("beforeend", `<div class="followups">${list.map((f) => `<button type="button" class="chip" data-followup="${esc(f)}">${esc(f)}</button>`).join("")}</div>`);
 }
 document.addEventListener("click", (e) => { const f = e.target.closest("[data-followup]"); if (f && !S.busy) send(f.dataset.followup); });
 function speak(text) {
@@ -812,7 +850,7 @@ async function loadWorkspace() {
     S.projectCache = projects.projects || [];
     if (S.selectedProject && !S.projectCache.some((x) => x.id === S.selectedProject)) { S.selectedProject = null; store.set("vyra-project", ""); }
     renderProjects(); $("project-file-tools").classList.toggle("hidden", !S.selectedProject); loadProjectFiles();
-    $("memory-list").innerHTML = (memories.memories||[]).map(x=>`<div class="board-row">${esc(x.memory)} <button class="btn sm" data-memory-edit="${x.id}" data-text="${esc(x.memory)}">Edit</button><button class="btn sm danger" data-memory-delete="${x.id}">Delete</button></div>`).join("") || `<p class="tiny muted">No saved memories.</p>`;
+    $("memory-list").innerHTML = renderMemories(memories.memories || []);
     $("skill-list").innerHTML = (skills.skills||[]).map(x=>`<div class="board-row"><b>${esc(x.name)}</b> <code>/${esc(x.slash_command)}</code><button class="btn sm danger" data-skill-delete="${x.id}">Delete</button></div>`).join("") || `<p class="tiny muted">No Skills saved.</p>`;
     let detectedCountry = prefs.country || "";
     const localeParts=(navigator.language||"en-US").split("-");
@@ -826,7 +864,7 @@ async function loadWorkspace() {
     $("pref-language").value=prefs.language || localLanguage;
   } catch(e) { toast(e.message,"error"); }
 }
-$("project-create").onclick=async()=>{try{await post("/api/projects",{name:$("project-name").value,instructions:$("project-instructions").value});$("project-name").value="";$("project-instructions").value="";await loadWorkspace();toast("Project created.");}catch(e){toast(e.message,"error");}};
+$("project-create").onclick=async()=>{try{await post("/api/projects",{name:$("project-name").value,instructions:$("project-instructions").value,persona:S.tplPersona||""});S.tplPersona="";$("project-template").value="";$("project-name").value="";$("project-instructions").value="";await loadWorkspace();toast("Project created.");}catch(e){toast(e.message,"error");}};
 S.selectedProject = Number(store.get("vyra-project")) || null;
 function renderProjects() {
   const sel = S.selectedProject;
@@ -840,31 +878,31 @@ async function loadProjectFiles() {
     box.innerHTML = d.files.map((f) => `<div class="board-row"><b>${esc(f.filename)}</b><div class="tiny muted">${esc((f.preview || "").slice(0, 120))}</div><button class="btn sm danger" data-pfile-delete="${f.id}">Remove</button></div>`).join("") || `<p class="tiny muted">No files in this project yet.</p>`;
   } catch (e) { box.innerHTML = `<p class="tiny muted">${esc(e.message)}</p>`; }
 }
-$("project-create").onclick=async()=>{try{await post("/api/projects",{name:$("project-name").value,instructions:$("project-instructions").value});$("project-name").value="";$("project-instructions").value="";await loadWorkspace();toast("Project created.");}catch(e){toast(e.message,"error");}};
+$("project-create").onclick=async()=>{try{await post("/api/projects",{name:$("project-name").value,instructions:$("project-instructions").value,persona:S.tplPersona||""});S.tplPersona="";$("project-template").value="";$("project-name").value="";$("project-instructions").value="";await loadWorkspace();toast("Project created.");}catch(e){toast(e.message,"error");}};
 $("project-list").onclick=async e=>{
   const select=e.target.closest("[data-project-select]"), del=e.target.closest("[data-project-delete]"), edit=e.target.closest("[data-project-edit]");
   if(select){S.selectedProject=Number(select.dataset.projectSelect);store.set("vyra-project",String(S.selectedProject));renderProjects();$("project-file-tools").classList.remove("hidden");loadProjectFiles();toast("Project selected. Add files, then press Use this project in Chat.");}
   if(edit){const x=(S.projectCache||[]).find(p=>p.id===Number(edit.dataset.projectEdit));if(!x)return;
-    $("generic-card").innerHTML=`<div class="modal-head"><h2>Edit project</h2><button class="icon-btn" data-close aria-label="Close">${ico("x")}</button></div><label class="field">Name<input class="input" id="pe-name" maxlength="100"></label><label class="field">Instructions<textarea class="input" id="pe-instr" rows="4" maxlength="4000"></textarea></label><button class="btn primary block" id="pe-save">Save</button>`;
-    $("pe-name").value=x.name;$("pe-instr").value=x.instructions||"";openModal("generic-modal");
-    $("pe-save").onclick=async()=>{try{await api("/api/projects/"+x.id,{method:"PATCH",body:JSON.stringify({name:$("pe-name").value,instructions:$("pe-instr").value})});closeModals();await loadWorkspace();toast("Project updated.");}catch(err){toast(err.message,"error");}};}
+    $("generic-card").innerHTML=`<div class="modal-head"><h2>Edit project</h2><button class="icon-btn" data-close aria-label="Close">${ico("x")}</button></div><label class="field">Name<input class="input" id="pe-name" maxlength="100"></label><label class="field">Instructions<textarea class="input" id="pe-instr" rows="4" maxlength="4000"></textarea></label><label class="field">Persona for this project (optional)<textarea class="input" id="pe-persona" rows="3" maxlength="1000" placeholder="e.g. You are a patient maths tutor for secondary school students"></textarea></label><button class="btn primary block" id="pe-save">Save</button>`;
+    $("pe-name").value=x.name;$("pe-instr").value=x.instructions||"";$("pe-persona").value=x.persona||"";openModal("generic-modal");
+    $("pe-save").onclick=async()=>{try{await api("/api/projects/"+x.id,{method:"PATCH",body:JSON.stringify({name:$("pe-name").value,instructions:$("pe-instr").value,persona:$("pe-persona").value})});closeModals();await loadWorkspace();toast("Project updated.");}catch(err){toast(err.message,"error");}};}
   if(del){if(!confirm("Delete this project and its files? Your chats are kept."))return;try{await api("/api/projects/"+del.dataset.projectDelete,{method:"DELETE"});if(S.selectedProject===Number(del.dataset.projectDelete)){S.selectedProject=null;store.set("vyra-project","");}if(S.projectId===Number(del.dataset.projectDelete))S.projectId=null;await loadWorkspace();}catch(err){toast(err.message,"error");}}
 };
 $("project-file-list").onclick=async e=>{const b=e.target.closest("[data-pfile-delete]");if(!b||!S.selectedProject)return;try{await api(`/api/projects/${S.selectedProject}/files/${b.dataset.pfileDelete}`,{method:"DELETE"});loadProjectFiles();}catch(err){toast(err.message,"error");}};
 $("project-file-upload").onchange=async e=>{const f=e.target.files[0];e.target.value="";if(!f)return;
   try{
-    if(/\.pdf$/i.test(f.name)){const fd=new FormData();fd.append("file",f);toast("Reading your PDF...");const d=await api("/api/extract-text?for=project",{method:"POST",body:fd});$("project-file-name").value=d.filename;$("project-file-content").value=d.text;}
+    if(/\.(pdf|docx|xlsx)$/i.test(f.name)){if(f.size>8*1024*1024)return toast("That file is over 8 MB.","error");const fd=new FormData();fd.append("file",f);toast("Reading your file...");const d=await api("/api/extract-text?for=project",{method:"POST",body:fd});$("project-file-name").value=d.filename;$("project-file-content").value=d.text;}
     else if(/\.(txt|md|csv|json)$/i.test(f.name)&&f.size<=200000){const t=await f.text();$("project-file-name").value=f.name;$("project-file-content").value=t.slice(0,30000);}
-    else return toast("Choose a PDF, .txt, .md, .csv or .json file (up to 200 KB).","error");
+    else return toast("Choose a PDF, Word, Excel, .txt, .md, .csv or .json file.","error");
     toast("File loaded. Press Add project file to save it.");
   }catch(err){toast(err.message,"error");}};
 $("project-file-add").onclick=async()=>{if(!S.selectedProject)return toast("Select a project first.");try{await post(`/api/projects/${S.selectedProject}/files`,{filename:$("project-file-name").value||"project-notes.txt",content:$("project-file-content").value});$("project-file-content").value="";$("project-file-name").value="";toast("Project file added.");loadProjectFiles();}catch(e){toast(e.message,"error");}};
 $("project-use-chat").onclick=()=>{if(!S.selectedProject)return toast("Select a project first.");S.projectId=S.selectedProject;newChat(true);toast("New chat started inside this project.");};
-$("memory-add").onclick=async()=>{try{await post("/api/memory",{memory:$("memory-input").value});$("memory-input").value="";await loadWorkspace();toast("Memory saved.");}catch(e){toast(e.message,"error");}};
+$("memory-add").onclick=async()=>{try{await post("/api/memory",{memory:$("memory-input").value,category:$("memory-cat").value,expiresInDays:$("memory-exp").value||0});$("memory-input").value="";await loadWorkspace();toast("Memory saved.");}catch(e){toast(e.message,"error");}};
 $("memory-list").onclick=async e=>{
   const ed=e.target.closest("[data-memory-edit]");
-  if(ed){const id=ed.dataset.memoryEdit;$("generic-card").innerHTML=`<div class="modal-head"><h2>Edit memory</h2><button class="icon-btn" data-close aria-label="Close">${ico("x")}</button></div><textarea class="input" id="memory-edit-text" rows="4" maxlength="1000"></textarea><button class="btn primary block" id="memory-edit-save" style="margin-top:12px">Save</button>`;$("memory-edit-text").value=ed.dataset.text||"";openModal("generic-modal");
-    $("memory-edit-save").onclick=async()=>{try{await api("/api/memory/"+id,{method:"PATCH",body:JSON.stringify({memory:$("memory-edit-text").value})});closeModals();await loadWorkspace();toast("Memory updated.");}catch(err){toast(err.message,"error");}};return;}
+  if(ed){const id=ed.dataset.memoryEdit;$("generic-card").innerHTML=`<div class="modal-head"><h2>Edit memory</h2><button class="icon-btn" data-close aria-label="Close">${ico("x")}</button></div><textarea class="input" id="memory-edit-text" rows="4" maxlength="1000"></textarea><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><select id="memory-edit-cat" class="select">${MEM_CATS.map(([k,l])=>`<option value="${k}">${l}</option>`).join("")}</select><select id="memory-edit-exp" class="select"><option value="">Keep expiry as is</option><option value="0">Never forget</option><option value="7">Forget in 7 days</option><option value="30">Forget in 30 days</option><option value="90">Forget in 90 days</option></select></div><button class="btn primary block" id="memory-edit-save" style="margin-top:12px">Save</button>`;$("memory-edit-text").value=ed.dataset.text||"";$("memory-edit-cat").value=ed.dataset.cat||"general";openModal("generic-modal");
+    $("memory-edit-save").onclick=async()=>{try{await api("/api/memory/"+id,{method:"PATCH",body:JSON.stringify({memory:$("memory-edit-text").value,category:$("memory-edit-cat").value,...($("memory-edit-exp").value!==""?{expiresInDays:Number($("memory-edit-exp").value)}:{})})});closeModals();await loadWorkspace();toast("Memory updated.");}catch(err){toast(err.message,"error");}};return;}
   const b=e.target.closest("[data-memory-delete]");if(b){try{await api("/api/memory/"+b.dataset.memoryDelete,{method:"DELETE"});await loadWorkspace();}catch(err){toast(err.message,"error");}}};
 $("skill-add").onclick=async()=>{try{const r=await post("/api/skills",{name:$("skill-name").value,command:$("skill-command").value,instruction:$("skill-instruction").value});$("skill-name").value="";$("skill-command").value="";$("skill-instruction").value="";await loadWorkspace();toast("Skill saved. Invoke /"+r.command.replace("/","")+" in chat.");}catch(e){toast(e.message,"error");}};
 $("skill-list").onclick=async e=>{const b=e.target.closest("[data-skill-delete]");if(b){try{await api("/api/skills/"+b.dataset.skillDelete,{method:"DELETE"});await loadWorkspace();}catch(err){toast(err.message,"error");}}};
@@ -899,6 +937,225 @@ function maybeTour() { if(store.get("vyra-tour")) return; runTour(0); }
 
 
 /* ---------------------------------------------------------------- start */
+
+/* ---- Batch 1: drafts, quick chips, pinned messages, notes ---- */
+const draftKey = () => "vyra-draft:" + (S.conv || "new");
+$("message-input").addEventListener("input", () => {
+  if (S.editFromId) return; const v = $("message-input").value;
+  try { if (v.trim()) localStorage.setItem(draftKey(), v); else localStorage.removeItem(draftKey()); } catch (e) {}
+});
+const QUICK = [["Summarize", "Summarize this in 5 bullet points:\n\n"], ["Fix grammar", "Fix the grammar and spelling, keep my meaning:\n\n"], ["Translate", "Translate this to English:\n\n"], ["Explain code", "Explain this code step by step:\n\n"], ["Write email", "Write a polite email about: "], ["Brainstorm", "Give me 10 ideas for: "]];
+$("quick-chips").innerHTML = QUICK.map(([l], i) => `<button type="button" class="chip" data-quick="${i}">${esc(l)}</button>`).join("");
+$("quick-chips").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-quick]"); if (!b) return;
+  const t = $("message-input"); t.value = QUICK[+b.dataset.quick][1]; autosize(); t.focus(); t.setSelectionRange(t.value.length, t.value.length);
+  try { localStorage.setItem(draftKey(), t.value); } catch (e2) {}
+});
+function updateChips() { const c = $("quick-chips"); if (c) c.classList.toggle("hidden", !!$("message-input").value || S.busy); }
+function updatePinsBtn() { $("pins-btn").classList.toggle("hidden", !S.msgs.some((m) => m.pinned)); }
+$("pins-btn").onclick = () => {
+  const pins = S.msgs.map((m, i) => ({ m, i })).filter((x) => x.m.pinned);
+  $("generic-card").innerHTML = `<div class="modal-head"><h2>Pinned messages</h2><button class="icon-btn" data-close aria-label="Close">${ico("x")}</button></div>
+    <div class="note-list">${pins.map((x) => `<button type="button" class="note-row" data-pin-i="${x.i}"><b>${x.m.role === "user" ? "You" : esc(document.title)}</b><span>${esc((x.m.content || "").replace(/\s+/g, " ").slice(0, 160))}</span></button>`).join("") || '<p class="muted">Nothing pinned in this chat.</p>'}</div>`;
+  openModal("generic-modal");
+  $("generic-card").querySelectorAll("[data-pin-i]").forEach((b) => (b.onclick = () => {
+    const m = S.msgs[+b.dataset.pinI]; closeModals();
+    if (m && m.el) { m.el.scrollIntoView({ block: "center", behavior: "smooth" }); m.el.classList.add("flash"); setTimeout(() => m.el.classList.remove("flash"), 1600); }
+  }));
+};
+$("notes-btn").onclick = async () => {
+  $("generic-card").innerHTML = `<div class="modal-head"><h2>Saved notes</h2><button class="icon-btn" data-close aria-label="Close">${ico("x")}</button></div><div class="note-list"><p class="muted">Loading...</p></div>`;
+  openModal("generic-modal");
+  try {
+    const d = await api("/api/notes");
+    $("generic-card").querySelector(".note-list").innerHTML = d.notes.map((n) => `<div class="note-row" data-note="${n.id}"><b>${esc(n.title)}</b><span>${esc(n.content.replace(/\s+/g, " ").slice(0, 200))}</span><div class="note-acts"><button type="button" class="btn sm" data-ncopy>Copy</button><button type="button" class="btn sm" data-ndel>Delete</button></div></div>`).join("") || '<p class="muted">No notes yet. Tap the book icon under any answer to save it here.</p>';
+    $("generic-card").querySelectorAll(".note-row[data-note]").forEach((row) => {
+      const n = d.notes.find((x) => String(x.id) === row.dataset.note);
+      row.querySelector("[data-ncopy]").onclick = async () => toast((await copyText(n.content)) ? "Copied" : "Couldn't copy");
+      row.querySelector("[data-ndel]").onclick = async () => { try { await api("/api/notes/" + n.id, { method: "DELETE" }); row.remove(); toast("Deleted"); } catch (e) { toast(e.message, "error"); } };
+    });
+  } catch (e) { $("generic-card").querySelector(".note-list").innerHTML = `<p class="muted">${esc(e.message)}</p>`; }
+};
+updateChips();
+
+
+/* ---- Batch 2: folders, swipe actions, tidy composer options ---- */
+function nameModal(title, label, value, onSave, onDelete) {
+  $("generic-card").innerHTML = `<div class="modal-head"><h2>${esc(title)}</h2><button class="icon-btn" data-close aria-label="Close">${ico("x")}</button></div>
+    <input class="input" id="name-input" maxlength="40" value="${esc(value)}" placeholder="Folder name" aria-label="Folder name">
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">${onDelete ? `<button class="btn" id="name-del">Delete folder</button>` : ""}<button class="btn primary" id="name-save">${esc(label)}</button></div>`;
+  openModal("generic-modal"); $("name-input").focus();
+  const go = async () => { try { await onSave($("name-input").value); closeModals(); } catch (e) { toast(e.message, "error"); } };
+  $("name-save").onclick = go; $("name-input").onkeydown = (e) => { if (e.key === "Enter") go(); };
+  if (onDelete) $("name-del").onclick = () => confirmBox("Delete this folder?", "The chats inside are kept and move back to your main list.", "Delete folder", async () => { try { await onDelete(); } catch (e) { toast(e.message, "error"); } });
+}
+$("new-folder").onclick = () => nameModal("New folder", "Create", "", async (name) => { await post("/api/folders", { name }); await loadHistory(); toast("Folder created"); });
+function openFolderPicker(c) {
+  const fs = S.folders || [];
+  $("generic-card").innerHTML = `<div class="modal-head"><h2>Move to folder</h2><button class="icon-btn" data-close aria-label="Close">${ico("x")}</button></div>
+    <div class="note-list">${fs.map((f) => `<button type="button" class="note-row ${c.folderId === f.id ? "on" : ""}" data-fid="${f.id}"><b>${esc(f.name)}</b></button>`).join("")}
+    ${c.folderId ? `<button type="button" class="note-row" data-fid=""><b>Remove from folder</b></button>` : ""}
+    ${fs.length ? "" : '<p class="muted">No folders yet. Tap "+ Folder" above your chat list to make one.</p>'}</div>`;
+  openModal("generic-modal");
+  $("generic-card").querySelectorAll("[data-fid]").forEach((b) => (b.onclick = async () => {
+    try { await post(`/api/conversations/${c.id}/folder`, { folderId: b.dataset.fid ? +b.dataset.fid : null }); closeModals(); await loadHistory(); toast(b.dataset.fid ? "Moved" : "Removed from folder"); } catch (e) { toast(e.message, "error"); }
+  }));
+}
+$("history-list").addEventListener("click", (e) => {
+  const t = e.target.closest("[data-fold]");
+  if (t) { const id = +t.dataset.fold, set = foldedSet(); if (set.has(id)) set.delete(id); else set.add(id); store.set("vyra-folds", JSON.stringify([...set])); renderHistory(); return; }
+  const m = e.target.closest("[data-fmore]");
+  if (m) { const f = (S.folders || []).find((x) => x.id === +m.dataset.fmore); if (!f) return;
+    nameModal("Folder", "Save", f.name, async (name) => { await post(`/api/folders/${f.id}/rename`, { name }); await loadHistory(); },
+      async () => { await api("/api/folders/" + f.id, { method: "DELETE" }); await loadHistory(); toast("Folder deleted"); }); }
+});
+
+/* swipe a chat row: right = archive, left = delete (touch screens only) */
+(function swipeRows() {
+  const list = $("history-list"); let row = null, x0 = 0, y0 = 0, dx = 0, mode = "";
+  const reset = () => { if (row) { row.style.removeProperty("--sx"); delete row.dataset.swipe; row.classList.remove("swiping"); } row = null; dx = 0; mode = ""; };
+  list.addEventListener("touchstart", (e) => {
+    const r = e.target.closest(".h-row[data-id]"); if (!r || e.target.closest(".menu, input") || e.touches.length !== 1) return;
+    row = r; x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; dx = 0; mode = "";
+  }, { passive: true });
+  list.addEventListener("touchmove", (e) => {
+    if (!row) return; const t = e.touches[0], mx = t.clientX - x0, my = t.clientY - y0;
+    if (!mode) { if (Math.abs(my) > 12 && Math.abs(my) > Math.abs(mx)) { row = null; return; } if (Math.abs(mx) > 12) mode = "x"; else return; }
+    dx = Math.max(-140, Math.min(140, mx)); row.classList.add("swiping"); row.style.setProperty("--sx", dx + "px");
+    row.dataset.swipe = dx > 0 ? "archive" : "delete"; row.dataset.hint = dx > 0 ? (S.historyView === "archived" ? "Unarchive" : "Archive") : "Delete";
+  }, { passive: true });
+  list.addEventListener("touchend", () => {
+    if (!row) return; const r = row, act = mode === "x" && Math.abs(dx) >= 90 ? (dx > 0 ? "archive" : "delete") : null;
+    if (mode === "x") { r.dataset.swiped = "1"; setTimeout(() => delete r.dataset.swiped, 400); } // stop the tap that ends a swipe from opening the chat
+    reset(); const c = S.chats.find((x) => x.id === r.dataset.id); if (act && c) chatAction(act, c, r);
+  });
+  list.addEventListener("touchcancel", reset);
+  list.addEventListener("click", (e) => { const r = e.target.closest(".h-row"); if (r && r.dataset.swiped) { e.stopPropagation(); e.preventDefault(); } }, true);
+})();
+
+/* composer: options panel */
+function setOpts(open) { $("opts-panel").classList.toggle("hidden", !open); $("opts-btn").setAttribute("aria-expanded", open); $("opts-btn").classList.toggle("on", open); store.set("vyra-opts", open ? "1" : "0"); }
+$("opts-btn").onclick = () => setOpts($("opts-panel").classList.contains("hidden"));
+function updateOptsDot() {
+  const changed = $("persona-select").value !== "assistant" || $("lang-select").value !== "English" || +$("temp-slider").value !== 0.7 || (S.length && S.length !== "normal") || (S.tone && S.tone !== "friendly") || S.eli5 || S.memoryOn === false || !!S.styleId;
+  $("opts-dot").classList.toggle("hidden", !changed);
+}
+document.addEventListener("click", () => setTimeout(updateOptsDot, 0));
+["persona-select", "lang-select", "temp-slider"].forEach((id) => $(id).addEventListener("input", updateOptsDot));
+setOpts(store.get("vyra-opts") === "1"); updateOptsDot();
+
+
+/* ---- Batch 3: memory categories/expiry, "What Vyra knows", per-chat memory switch, reply styles ---- */
+S.memoryOn = true; S.styles = []; S.styleId = store.get("vyra-style") || "";
+const MEM_CATS = [["general", "General"], ["personal", "Personal"], ["work", "Work"], ["preferences", "Preferences"], ["goals", "Goals"]];
+const daysLeft = (iso) => Math.max(1, Math.ceil((new Date(iso) - Date.now()) / 86400000));
+function renderMemories(list) {
+  if (!list.length) return `<p class="tiny muted">No saved memories.</p>`;
+  return MEM_CATS.map(([k, label]) => {
+    const items = list.filter((x) => (x.category || "general") === k); if (!items.length) return "";
+    return `<div class="history-group">${label} (${items.length})</div>` + items.map((x) => `<div class="board-row">${esc(x.memory)}${x.expiresAt ? ` <span class="tiny muted">(forgets in ${daysLeft(x.expiresAt)}d)</span>` : ""} <button class="btn sm" data-memory-edit="${x.id}" data-text="${esc(x.memory)}" data-cat="${esc(x.category || "general")}">Edit</button><button class="btn sm danger" data-memory-delete="${x.id}">Delete</button></div>`).join("");
+  }).join("");
+}
+$("mem-switch").onchange = async (e) => {
+  S.memoryOn = e.target.checked; updateOptsDot();
+  if (S.conv) { try { await post(`/api/conversations/${S.conv}/memory`, { enabled: S.memoryOn }); } catch (err) { toast(err.message, "error"); } }
+  toast(S.memoryOn ? "Memory is on for this chat" : "Memory is off for this chat");
+};
+async function loadStyles() {
+  const d = await api("/api/styles"); S.styles = d.styles || [];
+  if (S.styleId && !S.styles.some((x) => String(x.id) === String(S.styleId))) { S.styleId = ""; store.set("vyra-style", ""); }
+  $("style-select").innerHTML = `<option value="">Default</option>` + S.styles.map((x) => `<option value="${x.id}" ${String(x.id) === String(S.styleId) ? "selected" : ""}>${esc(x.name)}</option>`).join(""); updateOptsDot();
+}
+$("style-select").onchange = (e) => { S.styleId = e.target.value; store.set("vyra-style", S.styleId); updateOptsDot(); };
+$("styles-btn").onclick = () => {
+  const draw = () => {
+    $("generic-card").innerHTML = `<div class="modal-head"><h2>Reply styles</h2><button class="icon-btn" data-close aria-label="Close">${ico("x")}</button></div>
+      <p class="muted tiny" style="margin:0 0 8px">A style tells ${esc(document.title)} how to write, e.g. "Short bullet points, no fluff". Pick one in Options.</p>
+      <div class="note-list">${S.styles.map((x) => `<div class="note-row"><b>${esc(x.name)}</b><span>${esc(x.instruction)}</span><div class="note-acts"><button type="button" class="btn sm" data-sdel="${x.id}">Delete</button></div></div>`).join("") || '<p class="muted">No styles yet.</p>'}</div>
+      <input class="input" id="style-name" maxlength="40" placeholder="Style name" style="margin-top:10px"><textarea class="input" id="style-text" rows="3" maxlength="500" placeholder="How should replies be written?" style="margin-top:8px"></textarea>
+      <button class="btn primary block" id="style-save" style="margin-top:10px">Save style</button>`;
+    $("generic-card").querySelectorAll("[data-sdel]").forEach((b) => (b.onclick = async () => { try { await api("/api/styles/" + b.dataset.sdel, { method: "DELETE" }); await loadStyles(); draw(); } catch (e) { toast(e.message, "error"); } }));
+    $("style-save").onclick = async () => { try { await post("/api/styles", { name: $("style-name").value, instruction: $("style-text").value }); await loadStyles(); draw(); toast("Style saved"); } catch (e) { toast(e.message, "error"); } };
+  };
+  draw(); openModal("generic-modal");
+};
+$("knows-btn").onclick = async () => {
+  $("generic-card").innerHTML = `<div class="modal-head"><h2>What ${esc(document.title)} knows about you</h2><button class="icon-btn" data-close aria-label="Close">${ico("x")}</button></div><p class="muted">Loading...</p>`; openModal("generic-modal");
+  try {
+    const [mem, pr, prefs] = await Promise.all([api("/api/memory"), api("/api/projects"), api("/api/preferences")]);
+    const u = S.user || {}, row = (k, v) => v ? `<div class="board-row"><b>${k}</b><div class="tiny muted">${esc(v)}</div></div>` : "";
+    const mems = renderMemories(mem.memories || []).replace(/<button[^>]*>(Edit|Delete)<\/button>/g, "");
+    const pj = (pr.projects || []).filter((p) => p.persona);
+    $("generic-card").innerHTML = `<div class="modal-head"><h2>What ${esc(document.title)} knows about you</h2><button class="icon-btn" data-close aria-label="Close">${ico("x")}</button></div>
+      <div class="note-list">${row("About you (your profile)", u.aboutMe) + row("What you call the AI", u.aiNickname) + row("Your custom persona", u.customPersona) + row("Country and language", [prefs.country, prefs.language].filter(Boolean).join(" · ")) + row("Reply styles saved", S.styles.map((x) => x.name).join(", ")) + pj.map((p) => row("Persona in project: " + p.name, p.persona)).join("")}
+      <div><b>Saved memories</b>${mems}</div></div>
+      <p class="muted tiny" style="margin-top:10px">Only what you chose to share or save is listed. Change or delete anything under Projects &amp; Memory. Turn memory off for one chat in Options.</p>
+      <button class="btn primary block" data-close style="margin-top:10px">Close</button>`;
+  } catch (e) { $("generic-card").querySelector(".muted").textContent = e.message; }
+};
+
+/* ---- Batch 4: project templates, dashboard, search, summary, export ---- */
+const PROJECT_TEMPLATES = {
+  business: { name: "Business plan", persona: "You are an experienced business consultant who writes clear, practical plans for small businesses.",
+    instructions: "Help me write a complete business plan: executive summary, problem, solution, market and competitors, customers, marketing and sales plan, operations, team, financials (start-up costs, pricing, break-even and a 12-month forecast) and risks. Ask me for missing facts one section at a time. Use Naira (₦) unless I say otherwise. Keep every section clear and practical." },
+  study: { name: "Study plan", persona: "You are a patient, encouraging study coach.",
+    instructions: "Ask for my subject, exam date and the hours I can study each day, then build a week-by-week plan with daily topics, revision days, practice questions and a weekly self-test. Keep sessions realistic and adjust the plan when I tell you what I finished or struggled with." },
+  content: { name: "Content calendar", persona: "You are a creative social media strategist who writes in the brand's own voice.",
+    instructions: "Ask for my niche, audience and platforms, then create a 30-day content calendar with date, platform, topic, format, hook, caption and call to action. Mix educational, entertaining and selling posts. Write captions in my brand voice when I give examples." }
+};
+$("project-template").onchange = (e) => {
+  const t = PROJECT_TEMPLATES[e.target.value]; S.tplPersona = t ? t.persona : "";
+  if (t) { $("project-name").value = t.name; $("project-instructions").value = t.instructions; }
+};
+const projName = () => ((S.projectCache || []).find((p) => p.id === S.selectedProject) || {}).name || "project";
+$("proj-dash").onclick = async () => {
+  if (!S.selectedProject) return toast("Select a project first.");
+  try {
+    const d = await api(`/api/projects/${S.selectedProject}/dashboard`);
+    $("generic-card").innerHTML = `<div class="modal-head"><h2>${esc(d.name)}</h2><button class="icon-btn" data-close aria-label="Close">${ico("x")}</button></div>
+      <div class="kv"><div><span>Chats</span><b>${d.chats}</b></div><div><span>Messages</span><b>${d.messages}</b></div><div><span>Files</span><b>${d.files}</b></div><div><span>File text</span><b>${d.fileChars.toLocaleString()} chars</b></div><div><span>Project persona</span><b>${d.hasPersona ? "Set" : "None"}</b></div><div><span>Last activity</span><b>${d.lastActivity ? fmtDate(d.lastActivity) : "None yet"}</b></div></div>
+      <p class="muted tiny" style="margin:12px 0 6px">Recent chats</p><div class="note-list">${d.recent.map((c) => `<button type="button" class="note-row" data-chat="${esc(c.id)}"><b>${esc(c.title)}</b></button>`).join("") || '<p class="muted">No chats in this project yet.</p>'}</div>`;
+    openModal("generic-modal");
+    $("generic-card").querySelectorAll("[data-chat]").forEach((b) => (b.onclick = () => { closeModals(); openConversation(b.dataset.chat); }));
+  } catch (e) { toast(e.message, "error"); }
+};
+$("proj-search").onclick = () => {
+  if (!S.selectedProject) return toast("Select a project first.");
+  $("generic-card").innerHTML = `<div class="modal-head"><h2>Search this project</h2><button class="icon-btn" data-close aria-label="Close">${ico("x")}</button></div>
+    <div style="display:flex;gap:8px"><input class="input" id="ps-q" maxlength="80" placeholder="Search chats and files" aria-label="Search"><button class="btn primary" id="ps-go">Search</button></div><div class="note-list" id="ps-out" style="margin-top:10px"></div>`;
+  openModal("generic-modal"); $("ps-q").focus();
+  const go = async () => {
+    const q = $("ps-q").value.trim(); if (q.length < 2) return;
+    $("ps-out").innerHTML = '<p class="muted">Searching...</p>';
+    try {
+      const d = await api(`/api/projects/${S.selectedProject}/search?q=` + encodeURIComponent(q));
+      $("ps-out").innerHTML = d.results.map((r, i) => `<button type="button" class="note-row" data-i="${i}"><b>${r.type === "file" ? "File: " : "Chat: "}${esc(r.title)}</b><span>${esc(r.snippet)}</span></button>`).join("") || '<p class="muted">Nothing found.</p>';
+      $("ps-out").querySelectorAll("[data-i]").forEach((b) => (b.onclick = () => { const r = d.results[+b.dataset.i]; if (r.type === "chat") { closeModals(); openConversation(r.id); } else toast("That is in the project file: " + r.title); }));
+    } catch (e) { $("ps-out").innerHTML = `<p class="muted">${esc(e.message)}</p>`; }
+  };
+  $("ps-go").onclick = go; $("ps-q").onkeydown = (e) => { if (e.key === "Enter") go(); };
+};
+$("proj-sum").onclick = async () => {
+  if (!S.selectedProject) return toast("Select a project first.");
+  $("generic-card").innerHTML = `<div class="modal-head"><h2>Project summary</h2><button class="icon-btn" data-close aria-label="Close">${ico("x")}</button></div><p class="muted">Reading your project...</p>`; openModal("generic-modal");
+  try {
+    const d = await post(`/api/projects/${S.selectedProject}/summarize`);
+    $("generic-card").innerHTML = `<div class="modal-head"><h2>Project summary</h2><button class="icon-btn" data-close aria-label="Close">${ico("x")}</button></div><div class="note-list">${md(d.summary)}</div>
+      <div style="display:flex;gap:8px;margin-top:12px"><button class="btn" id="sum-copy">Copy</button><button class="btn primary" id="sum-note">Save as note</button></div>`;
+    $("sum-copy").onclick = async () => toast((await copyText(d.summary)) ? "Copied" : "Couldn't copy");
+    $("sum-note").onclick = async () => { try { await post("/api/notes", { title: "Summary: " + projName(), content: d.summary }); toast("Saved to Notes"); } catch (e) { toast(e.message, "error"); } };
+  } catch (e) { $("generic-card").querySelector(".muted").textContent = e.message; }
+};
+$("proj-zip").onclick = async () => {
+  if (!S.selectedProject) return toast("Select a project first.");
+  try {
+    toast("Preparing your ZIP...");
+    const r = await fetch(`/api/projects/${S.selectedProject}/export`, { credentials: "same-origin", headers: { "X-Requested-With": "vyra" } });
+    if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || "Export failed"); }
+    const url = URL.createObjectURL(await r.blob()), a = document.createElement("a"); a.href = url; a.download = (projName().replace(/[^\w\- ]+/g, "").trim().slice(0, 40) || "project") + "-project.zip"; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (e) { toast(e.message, "error"); }
+};
+$("project-file-tools").classList.toggle("hidden", !S.selectedProject);
 (async function boot() {
   const ref = document.body.dataset.ref || new URLSearchParams(location.search).get("ref") || "";
   if (ref) { $("reg-ref").value = ref.toUpperCase(); showForm("register"); }
