@@ -836,11 +836,12 @@ def register():
         existing = q_one("""SELECT id FROM evil_users WHERE email=%s AND is_verified=FALSE AND is_admin=FALSE
                             AND NOT EXISTS (SELECT 1 FROM evil_conversations c WHERE c.user_id=evil_users.id)""", (email,))
         if not existing: return err("That username or email is already taken.", 409)
-        try:
-            q_run("UPDATE evil_users SET username=%s, password_hash=%s WHERE id=%s AND is_verified=FALSE", (username, pw_hash, existing["id"]))
-        except psycopg2.errors.UniqueViolation:
-            return err("That username or email is already taken.", 409)
-        log.info("register: resumed unverified account id=%s", existing["id"])
+        # Security: never overwrite the password or username of an existing unverified account. Anyone could otherwise
+        # re-register someone else's email with their own password. We only re-send the code to the real inbox owner.
+        log.info("register: resending code for unverified account id=%s", existing["id"])
+        how = issue_code(email, "verify", reuse=True)
+        msg = "We emailed you a 6-digit code. Enter it below." if how == "emailed" else "Account created! Your code will arrive once the admin approves your account."
+        return jsonify({"success": True, "message": msg, "mode": how})
     except Exception:
         log.exception("register failed"); return err("Registration failed. Please try again.", 500)
     how = issue_code(email, "verify")
@@ -1459,20 +1460,20 @@ def ask_stream():
             while True:
                 try:
                     if model_type == "deep":
-                        draft_resp = make_client().chat.completions.create(model=model, messages=messages, temperature=temp, stream=False)
+                        draft_resp = make_client().chat.completions.create(model=model, messages=messages, temperature=temp, stream=False, max_tokens=2000)
                         draft = (draft_resp.choices[0].message.content or "").strip()
                         if not draft: raise RuntimeError("The model returned an empty draft.")
                         review_messages = [
                             {"role": "system", "content": "You are a rigorous answer reviewer. Check the draft for factual errors, missed constraints, arithmetic or logic mistakes, unsupported certainty, and unclear wording. Rewrite it into the best final answer. Preserve useful detail. Do not mention this review process."},
                             {"role": "user", "content": "Original request:\n" + question + "\n\nDraft answer:\n" + draft}
                         ]
-                        reviewed = make_client().chat.completions.create(model=model, messages=review_messages, temperature=0.2, stream=False)
+                        reviewed = make_client().chat.completions.create(model=model, messages=review_messages, temperature=0.2, stream=False, max_tokens=2000)
                         final_text = (reviewed.choices[0].message.content or draft).strip()
                         collected.append(final_text); started = True
                         for offset in range(0, len(final_text), 180):
                             yield sse({"t": final_text[offset:offset+180]})
                         break
-                    stream = make_client().chat.completions.create(model=model, messages=messages, temperature=temp, stream=True)
+                    stream = make_client().chat.completions.create(model=model, messages=messages, temperature=temp, stream=True, max_tokens=1500)
                     for chunk in stream:
                         if not chunk.choices: continue
                         delta = chunk.choices[0].delta.content or ""
@@ -1566,7 +1567,12 @@ def upload_payment_proof(request_id):
 
 def activate_plan(user_id, plan, duration_days=30):
     days = max(1, min(int(duration_days), 366))
-    q_run("UPDATE evil_users SET plan=%s, plan_expires_at=NOW() + (%s || ' days')::interval, trial_ends_at=NULL WHERE id=%s", (plan, str(days), user_id))
+    # Renewing the SAME plan while it is still active adds the new days on top of the remaining time instead of resetting it.
+    q_run("""UPDATE evil_users SET
+                 plan_expires_at = CASE WHEN plan=%s AND plan_expires_at IS NOT NULL AND plan_expires_at > NOW()
+                                        THEN plan_expires_at + (%s || ' days')::interval
+                                        ELSE NOW() + (%s || ' days')::interval END,
+                 plan=%s, trial_ends_at=NULL WHERE id=%s""", (plan, str(days), str(days), plan, user_id))
     q_run("INSERT INTO evil_notifications(user_id,message) VALUES (%s,%s)", (user_id, f"Your {PLANS[plan]['name']} plan is active for {days} days. Thank you!"))
 
 

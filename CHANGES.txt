@@ -1,0 +1,10 @@
+VYRA AI - FIXED FILES (copy each file to the same path in your repo; do not touch the database or env vars)
+
+1. static/script.js - Image gallery fixed (uses display_url). Page start now retries while the server wakes up and shows a message instead of a silent sign-in form; all api() calls time out after 45s.
+2. app.py - (a) Registering an existing unverified email no longer overwrites its password (account-hijack fix). (b) Renewing the same active plan now adds days on top of the remaining time. (c) max_tokens added to chat calls (cost control).
+3. templates/landing.html + static/landing.js - inline script moved out so the CSP no longer blocks it.
+4. templates/offline.html - "Try again" is now a link (the inline onclick was blocked).
+5. .github/workflows/keepalive.yml - pings /healthz every 10 min. Then add GitHub repo variable SITE_URL (Settings > Secrets and variables > Actions > Variables), e.g. https://evil-gpt-j2rx.onrender.com
+6. .env.example - list of environment variable names (no values).
+
+Checked: app.py compiles, JS syntax OK. NOT tested live (no database/keys here): test register, login, chat, gallery, a renewal.
