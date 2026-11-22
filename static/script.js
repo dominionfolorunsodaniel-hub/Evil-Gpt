@@ -1392,23 +1392,8 @@ $("admin-page").addEventListener("click", async (e) => {
   } catch (err) { toast(err.message, "error"); }
 });
 $("admin-page").addEventListener("change", (e) => { if (e.target.id === "bg-aud") $("bg-names").classList.toggle("hidden", e.target.value !== "usernames"); });
-// ---- Batch 8: phone bottom navigation, install prompt after the 3rd visit
+// ---- Batch 8: install prompt after the 3rd visit (the bottom bar was removed in batch 12: sections live only in the side menu)
 (function mobileExtras() {
-  const mq = matchMedia("(max-width: 860px)");
-  const nav = document.createElement("nav"); nav.id = "bottom-nav"; nav.setAttribute("aria-label", "Main");
-  document.querySelectorAll(".nav-item[data-page]").forEach((b) => {
-    if (b.dataset.page === "admin") return;
-    const x = document.createElement("button"); x.type = "button"; x.className = "bn-item"; x.dataset.page = b.dataset.page; x.innerHTML = b.innerHTML;
-    x.onclick = () => showPage(b.dataset.page); nav.appendChild(x);
-  });
-  $("app-view").appendChild(nav);
-  const sync = () => { const p = S.page || "chat"; nav.querySelectorAll(".bn-item").forEach((x) => x.classList.toggle("active", x.dataset.page === p)); document.body.classList.toggle("has-bn", mq.matches); };
-  document.addEventListener("click", (e) => { if (e.target.closest(".nav-item,.bn-item")) setTimeout(sync, 0); });
-  setTimeout(sync, 400); setInterval(sync, 1500);
-  if (mq.addEventListener) mq.addEventListener("change", sync);
-  const inp = $("message-input");
-  inp.addEventListener("focus", () => document.body.classList.add("kb-open")); inp.addEventListener("blur", () => document.body.classList.remove("kb-open"));
-
   // Install prompt: count one visit per browser session, offer after the 3rd, never nag.
   try { if (!sessionStorage.getItem("vyra-visit-counted")) { sessionStorage.setItem("vyra-visit-counted", "1"); store.set("vyra-visits", String((parseInt(store.get("vyra-visits") || "0", 10) || 0) + 1)); } } catch (e) {}
   const standalone = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
