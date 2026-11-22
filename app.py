@@ -291,6 +291,7 @@ SCHEMA = [
     "ALTER TABLE evil_users ADD COLUMN IF NOT EXISTS auto_purge_at TIMESTAMPTZ",
     "CREATE TABLE IF NOT EXISTS evil_devices (id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES evil_users(id) ON DELETE CASCADE, fp VARCHAR(40) NOT NULL, label VARCHAR(80) NOT NULL, ip VARCHAR(64), first_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(), last_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE (user_id, fp))",
     "CREATE TABLE IF NOT EXISTS evil_reports (id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES evil_users(id) ON DELETE CASCADE, message_id BIGINT, reason VARCHAR(20) NOT NULL, details TEXT NOT NULL DEFAULT '', question TEXT NOT NULL DEFAULT '', answer TEXT NOT NULL DEFAULT '', status VARCHAR(12) NOT NULL DEFAULT 'open', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
+    "ALTER TABLE evil_reports ADD COLUMN IF NOT EXISTS status VARCHAR(12) NOT NULL DEFAULT 'open'",
     "CREATE INDEX IF NOT EXISTS evil_reports_status_idx ON evil_reports(status, id DESC)",
     # ---- Vyra batch 7: relaunch trial offer + admin tools (additive only) ----
     "ALTER TABLE evil_users ADD COLUMN IF NOT EXISTS relaunch_claimed BOOLEAN NOT NULL DEFAULT FALSE",
