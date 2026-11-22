@@ -1,0 +1,6 @@
+Batch 11 - Vyra can create downloadable files
+- When asked, Vyra writes files; chat shows a file card with Download; 2+ files also get "Download all (.zip)"
+- Types: any text type (txt, md, csv, json, html, css, js, py, svg, xml...), real .docx, .xlsx, .pdf, and zip bundles
+- Built in the browser (new static/files.js). Nothing runs on the server, no database change.
+- System prompt tells the AI it can make files (app.py)
+Files: app.py, templates/index.html, static/script.js, static/style.css, static/sw.js, static/files.js

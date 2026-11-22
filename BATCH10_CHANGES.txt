@@ -1,0 +1,6 @@
+Batch 10 - friendlier AI, Settings page, refresh fix
+- AI voice: warm/witty, jokes back, no flat refusals on harmless/playful messages (harmful requests still declined)
+- New Settings page (sidebar + bottom nav): chat preferences (persona, language, creativity, memory, reply style, tune), quick prompts, theme, Refresh app, Account settings
+- Composer now only has: model switch, attach, mic, message box, send
+- Pull-down refresh re-enabled (was blocked by overscroll-behavior), plus a Refresh app button
+Files: app.py, templates/index.html, static/script.js, static/style.css, static/sw.js
