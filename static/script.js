@@ -74,12 +74,19 @@ function inline(s) {
       .replace(/(^|[^*])\*([^*\s][^*\n]*?)\*(?!\*)/g, "$1<em>$2</em>");
   }).join("");
 }
+function fileCardHtml(b) {
+  const F = window.vyraFiles, nl = b.code.indexOf("\n"), head = nl < 0 ? b.code : b.code.slice(0, nl), content = nl < 0 ? "" : b.code.slice(nl + 1);
+  if (!F) return `<pre><code>${esc(b.code)}</code></pre>`;
+  const name = F.safeName(head), size = content.length > 1024 ? Math.round(content.length / 1024) + " KB" : content.length + " B";
+  return `<div class="file-card" data-fname="${esc(name)}" data-closed="${b.closed ? 1 : 0}"><span class="fc-ico">${ico("download")}</span><div class="fc-meta"><strong class="fc-name">${esc(name)}</strong><small>${esc(F.kind(name))} &middot; ${size}</small></div>${b.closed ? `<button type="button" class="btn sm primary" data-dl-file>Download</button>` : `<small class="muted">Writing...</small>`}<pre class="file-src hidden"><code>${esc(content)}</code></pre></div>`;
+}
 function codeHtml(b) {
+  if (b.lang === "vyrafile") return fileCardHtml(b);
   return `<div class="code-block"><div class="code-head"><span>${esc(b.lang || "code")}</span><button type="button" class="btn sm ghost" data-copy-code>${ico("copy", "sm")}Copy</button></div><pre><code>${esc(b.code)}</code></pre></div>`;
 }
 function md(src) {
   const blocks = [];
-  src = String(src).replace(/```([\w+#-]*)[ \t]*\n?([\s\S]*?)(```|$)/g, (m, lang, code) => { blocks.push({ lang, code: code.replace(/\n$/, "") }); return `\u0000B${blocks.length - 1}\u0000`; });
+  src = String(src).replace(/```([\w+#-]*)[ \t]*\n?([\s\S]*?)(```|$)/g, (m, lang, code, end) => { blocks.push({ lang, code: code.replace(/\n$/, ""), closed: end === "```" }); return `\u0000B${blocks.length - 1}\u0000`; });
   const out = []; let list = null, para = [];
   const flush = () => { if (para.length) { out.push("<p>" + inline(para.join("<br>")) + "</p>"); para = []; } };
   const close = () => { if (list) { out.push(`</${list}>`); list = null; } };
@@ -106,6 +113,8 @@ function md(src) {
     close(); para.push(line);
   }
   flush(); close();
+  const nFiles = blocks.filter((b) => b.lang === "vyrafile" && b.closed).length;
+  if (nFiles > 1) out.push(`<div class="file-all"><button type="button" class="btn sm" data-dl-all>${ico("download", "sm")}Download all ${nFiles} files (.zip)</button></div>`);
   return out.join("").replace(/\u0000B(\d+)\u0000/g, (m, i) => codeHtml(blocks[i]));
 }
 
@@ -178,7 +187,7 @@ async function enterApp() {
   await refreshMe(); paintHistoryEarly();
   const tasks = [loadPersonas(), loadHistory(), loadNotifs(), loadDailyPrompt(), loadStyles()];
   await Promise.all(tasks.map((t) => t.catch(() => {})));
-  offerPendingGift(); setGreeting(); const rememberedPage = store.get("vyra-page"); newChat(); maybeTour(); if (["chat","toolbox","images","plans","workspace"].includes(rememberedPage)) showPage(rememberedPage);
+  offerPendingGift(); setGreeting(); const rememberedPage = store.get("vyra-page"); newChat(); maybeTour(); if (["chat","toolbox","images","plans","workspace","settings"].includes(rememberedPage)) showPage(rememberedPage);
   const paid = new URLSearchParams(location.search).get("paid");
   if (paid) {
     history.replaceState(null, "", "/?login=1"); showPage("plans");
@@ -235,14 +244,14 @@ async function loadDailyPrompt() {
 }
 
 /* ---------------------------------------------------------------- navigation */
-const TITLES = { chat: "", toolbox: "AI Toolbox", workspace: "Projects & Memory", images: "Image Studio", plans: "Plans", admin: "Admin" };
+const TITLES = { chat: "", toolbox: "AI Toolbox", workspace: "Projects & Memory", images: "Image Studio", plans: "Plans", settings: "Settings", admin: "Admin" };
 function updateHeading(name) {
   const proj = name === "chat" && S.projectId ? (S.projectCache || []).find((x) => x.id === S.projectId) : null;
   $("page-heading").textContent = proj ? "Project: " + proj.name : (TITLES[name] || document.querySelector(".brand").textContent.trim());
 }
 function showPage(name) {
   S.page = name; store.set("vyra-page", name);
-  ["chat", "toolbox", "workspace", "images", "plans", "admin"].forEach((p) => $(p + "-page").classList.toggle("hidden", p !== name));
+  ["chat", "toolbox", "workspace", "images", "plans", "settings", "admin"].forEach((p) => $(p + "-page").classList.toggle("hidden", p !== name));
   document.querySelectorAll(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.page === name));
   updateHeading(name);
   closeSidebar(); $("notif-panel").classList.add("hidden");
@@ -1009,10 +1018,10 @@ const QUICK = [["Summarize", "Summarize this in 5 bullet points:\n\n"], ["Fix gr
 $("quick-chips").innerHTML = QUICK.map(([l], i) => `<button type="button" class="chip" data-quick="${i}">${esc(l)}</button>`).join("");
 $("quick-chips").addEventListener("click", (e) => {
   const b = e.target.closest("[data-quick]"); if (!b) return;
-  const t = $("message-input"); t.value = QUICK[+b.dataset.quick][1]; autosize(); t.focus(); t.setSelectionRange(t.value.length, t.value.length);
+  showPage("chat"); const t = $("message-input"); t.value = QUICK[+b.dataset.quick][1]; autosize(); t.focus(); t.setSelectionRange(t.value.length, t.value.length);
   try { localStorage.setItem(draftKey(), t.value); } catch (e2) {}
 });
-function updateChips() { const c = $("quick-chips"); if (c) c.classList.toggle("hidden", !!$("message-input").value || S.busy); }
+function updateChips() { /* quick prompts now live in Settings */ }
 function updatePinsBtn() { $("pins-btn").classList.toggle("hidden", !S.msgs.some((m) => m.pinned)); }
 $("pins-btn").onclick = () => {
   const pins = S.msgs.map((m, i) => ({ m, i })).filter((x) => x.m.pinned);
@@ -1103,7 +1112,7 @@ function updateOptsDot() {
 }
 document.addEventListener("click", () => setTimeout(updateOptsDot, 0));
 ["persona-select", "lang-select", "temp-slider"].forEach((id) => $(id).addEventListener("input", updateOptsDot));
-setOpts(store.get("vyra-opts") === "1"); updateOptsDot();
+setOpts(true); updateOptsDot(); // the options panel now lives permanently on the Settings page
 
 
 /* ---- Batch 3: memory categories/expiry, "What Vyra knows", per-chat memory switch, reply styles ---- */
@@ -1468,6 +1477,22 @@ $("admin-page").addEventListener("change", (e) => { if (e.target.id === "bg-aud"
   const sync = () => $("edit-card").classList.toggle("hidden", !(S.images && S.images.edit));
   document.addEventListener("click", (e) => { if (e.target.closest('[data-page="images"]')) setTimeout(sync, 300); });
   setInterval(sync, 2000);
+})();
+
+// ---- Batch 10: Settings page (theme, refresh)
+(function settingsPage() {
+  const sel = $("theme-select"), syncTheme = () => { sel.value = (window.vyraTheme && window.vyraTheme.mode()) || "auto"; };
+  sel.onchange = () => { window.vyraTheme.set(sel.value); applyThemeIcon(); };
+  document.addEventListener("vyra-theme", syncTheme); syncTheme();
+  $("open-account-settings").onclick = () => $("open-settings").click();
+  $("refresh-app").onclick = async () => {
+    const b = $("refresh-app"); b.disabled = true; b.textContent = "Refreshing...";
+    try {
+      if (window.caches) { const ks = await caches.keys(); await Promise.all(ks.map((k) => caches.delete(k))); }
+      if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) { const rs = await navigator.serviceWorker.getRegistrations(); await Promise.all(rs.map((r) => r.unregister())); }
+    } catch (e) {}
+    location.reload();
+  };
 })();
 
 (async function boot() {
