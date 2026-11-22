@@ -1,0 +1,5 @@
+Batch 12 - flat clean chat, no bottom bar
+- Removed the bottom navigation bar: all sections only in the side menu
+- Chat restyled flat: your messages in a soft bubble on the right, replies plain text with no header, quiet icons, plain chips
+- Composer flat: thin outline, no glow/double outline, plain Fast/Balanced/Deep tabs
+Files: static/script.js, static/style.css, static/sw.js
