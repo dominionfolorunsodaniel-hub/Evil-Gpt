@@ -105,11 +105,14 @@
   </aside>
 
   <main class="main">
+    <div id="promo-banner" class="promo hidden"><span id="promo-text"></span><button id="promo-x" class="icon-btn" aria-label="Dismiss"><svg class="ico sm"><use href="#i-x"/></svg></button></div>
+    <div id="relaunch-banner" class="promo hidden"><span id="relaunch-text"></span><button class="btn sm primary" id="relaunch-claim">Claim</button><button class="btn sm" id="relaunch-later">Later</button></div>
+    <div id="expiry-banner" class="promo warn hidden"><span id="expiry-text"></span><button class="btn sm primary" data-go="plans">Renew</button></div>
     <header class="topbar">
       <button id="mobile-menu" class="icon-btn mobile-menu" aria-label="Open menu"><svg class="ico"><use href="#i-menu"/></svg></button>
       <h1 id="page-heading">{{ brand }}</h1>
       <div class="top-actions">
-        <button id="theme-btn" class="icon-btn" aria-label="Switch theme"><svg class="ico"><use href="#i-sun"/></svg></button>
+        <button id="trial-chip" type="button" class="chip hidden" data-go="plans" aria-label="Trial time left"></button><button id="theme-btn" class="icon-btn" aria-label="Switch theme"><svg class="ico"><use href="#i-sun"/></svg></button>
         <button id="pins-btn" class="icon-btn hidden" aria-label="Pinned messages" title="Pinned messages"><svg class="ico"><use href="#i-pin"/></svg></button>
         <button id="notes-btn" class="icon-btn" aria-label="Saved notes" title="Saved notes"><svg class="ico"><use href="#i-book"/></svg></button>
         <button id="copy-chat-btn" class="icon-btn hidden" aria-label="Copy whole conversation" title="Copy whole conversation"><svg class="ico"><use href="#i-copy"/></svg></button>
@@ -274,7 +277,7 @@
     <!-- PLANS -->
     <section id="plans-page" class="page hidden">
       <div class="page-wrap">
-        <div class="page-head"><h2>Plans</h2><p>Choose Free or a paid plan. New accounts receive a one-time 3-day Trial with premium feature access.</p></div>
+        <div class="page-head"><h2>Plans</h2><p>Choose Free or a paid plan. New accounts receive a one-time <span id="trial-days">7</span>-day free Trial with premium feature access.</p></div>
         <div class="card" style="margin-bottom:14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
           <label for="billing-period" class="muted">Billing period</label>
           <select id="billing-period" class="input" style="max-width:220px"><option value="weekly">Weekly · 7 days</option><option value="monthly" selected>Monthly · 30 days</option><option value="annual">Annual · 365 days (2 months free)</option></select>
@@ -282,11 +285,19 @@
         </div>
         <div class="card usage-card"><span class="muted">Messages used this month</span><strong id="usage-number">...</strong><div class="meter" id="usage-meter"><span></span></div><span class="tiny muted" id="usage-sub"></span></div>
         <div id="plans-grid" class="plans-grid"></div>
+        <div class="card" style="margin-top:14px"><button type="button" class="btn" id="compare-btn">Compare plans</button><div id="compare-wrap" class="hidden compare-wrap"></div></div>
+        <div class="split">
+          <div class="card"><h3>Have a gift code?</h3><p class="muted tiny" style="margin:4px 0 8px">Paste the code from a gift link to add the plan to your account.</p>
+            <div style="display:flex;gap:8px"><input class="input" id="gift-code" maxlength="40" placeholder="Gift code" aria-label="Gift code"><button class="btn primary" id="gift-redeem">Redeem</button></div></div>
+          <div class="card"><h3>Student discount</h3><p class="muted tiny" id="stu-status" style="margin:4px 0 8px">Students can ask for a discount coupon. We review each request.</p>
+            <div id="stu-form"><input class="input" id="stu-school" maxlength="100" placeholder="School or university" aria-label="School"><textarea class="input" id="stu-note" rows="2" maxlength="500" placeholder="Anything that helps us verify (matric number, course, level)" style="margin-top:8px"></textarea><button class="btn primary" id="stu-send" style="margin-top:8px">Request discount</button></div></div>
+        </div>
+        <div class="card" style="margin-top:14px"><h3>Billing history</h3><div id="billing-list" class="board"></div></div>
         <div class="split">
           <div class="card"><h3>Invite friends</h3><p class="muted" style="margin:6px 0 0">When a friend joins with your link, you both get a free day of full access. Up to 10 friends.</p>
             <div class="ref-link"><input class="input" id="ref-url" readonly aria-label="Your invite link"><button class="btn" id="copy-ref"><svg class="ico sm"><use href="#i-copy"/></svg>Copy</button></div>
             <p class="tiny muted" id="ref-count" style="margin:10px 0 0"></p></div>
-          <div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><h3><svg class="ico" style="vertical-align:-3px;color:var(--mango)"><use href="#i-trophy"/></svg> Leaderboard</h3><div class="sub-tabs"><button id="lb-weekly" class="on">This week</button><button id="lb-streak">Streaks</button></div></div>
+          <div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><h3><svg class="ico" style="vertical-align:-3px;color:var(--mango)"><use href="#i-trophy"/></svg> Leaderboard</h3><div class="sub-tabs"><button id="lb-weekly" class="on">This week</button><button id="lb-streak">Streaks</button><button id="lb-referrals">Referrals</button></div></div>
             <div id="leaderboard-list" class="board"></div></div>
         </div>
       </div>
@@ -319,6 +330,8 @@
     <div class="setting"><h3>Badges</h3><div id="badges-list" class="badges"></div></div>
     <div class="setting"><h3>Install the app</h3><p class="muted tiny" style="margin:0 0 8px">Add {{ brand }} to your home screen for a full-screen app.</p><button class="btn sm" id="install-btn">Install {{ brand }}</button></div>
     <div class="setting"><h3>Contact support</h3><p class="muted tiny" style="margin:0 0 8px">Send a message to the {{ brand }} admin and read the reply here.</p><button class="btn sm primary" id="open-support">Message support</button></div>
+    <div class="setting"><h3>Privacy dashboard</h3><p class="tiny muted" style="margin:0 0 8px">See what is stored, set chats to auto-delete, and manage your data.</p><button class="btn sm" id="privacy-btn" type="button">Open privacy dashboard</button></div>
+    <div class="setting hidden" id="admin-2fa-block"><h3>Two-step login (admin)</h3><p class="tiny muted" id="a2fa-status" style="margin:0 0 8px"></p><button class="btn sm" id="a2fa-btn" type="button">Set up</button></div>
     <div class="setting"><h3>Sign-ins and devices</h3><div id="sessions-list" class="tiny muted" style="margin:0 0 8px"></div><button class="btn sm" id="logout-others">Log out of all other devices</button></div>
     <div class="setting"><h3>Your data</h3><div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn sm" href="/api/user/export" download><svg class="ico sm"><use href="#i-download"/></svg>Download my data</a><a class="btn sm" href="/api/conversations/export-all" download><svg class="ico sm"><use href="#i-download"/></svg>Export all chats</a><button class="btn sm danger" id="delete-account">Delete my account</button></div></div>
     <div class="setting"><button class="btn block" id="logout"><svg class="ico"><use href="#i-logout"/></svg>Sign out</button></div>
