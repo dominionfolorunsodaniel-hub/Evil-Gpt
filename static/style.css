@@ -459,3 +459,16 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible{
 .opts-panel .opt-wide{grid-column:1/-1}
 .opts-panel .creativity{display:flex;justify-content:space-between}.opts-panel .creativity input{flex:1;width:auto}
 @media(max-width:480px){.tools .seg button{padding:6px 9px}.tools .seg .ico{display:none}}
+
+/* Batch 5 */
+.promo{display:flex;align-items:center;justify-content:center;gap:10px;padding:8px 14px;background:var(--brand-wash);border-bottom:1px solid var(--line);font-size:14px;text-align:center}
+.promo.warn{background:#ffb3471a;border-color:#ffb34755}
+.compare-wrap{overflow-x:auto;margin-top:12px}
+.compare{border-collapse:collapse;width:100%;min-width:560px;font-size:14px}
+.compare th,.compare td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
+.compare .cur{background:var(--brand-wash)}
+#trial-chip{white-space:nowrap;font-size:12px}
+
+/* Batch 7 */
+.claim-card{border:1px solid var(--brand);border-radius:12px;background:var(--brand-wash)}
+.claim-card p{margin:4px 0 8px}
