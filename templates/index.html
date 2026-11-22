@@ -264,8 +264,17 @@
         <div class="card img-box" style="max-width:640px">
           <textarea id="image-prompt" class="input" rows="3" maxlength="600" placeholder="A yellow danfo bus driving through a neon Lagos night, cinematic" aria-label="Image description" style="margin:0"></textarea>
           <div class="chips" id="style-chips"></div>
+          <div class="chips" id="size-chips" aria-label="Shape"><button type="button" class="chip on" data-size="square">Square</button><button type="button" class="chip" data-size="portrait">Portrait</button><button type="button" class="chip" data-size="landscape">Landscape</button></div>
           <button id="generate-img-btn" class="btn primary"><svg class="ico"><use href="#i-zap"/></svg>Generate image</button>
           <span id="image-limit-label" class="tiny muted"><span class="skeleton w60"></span></span>
+        </div>
+        <div class="card img-box hidden" id="edit-card" style="max-width:640px;margin-top:14px">
+          <h3 style="margin:0">Edit a picture</h3>
+          <p class="muted tiny" style="margin:0">Upload a photo and say what it should become. It restyles and transforms the picture; it keeps the overall layout.</p>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><label class="btn sm" for="edit-file"><svg class="ico sm"><use href="#i-paperclip"/></svg>Choose picture</label><input type="file" id="edit-file" accept="image/png,image/jpeg,image/webp" class="hidden"><img id="edit-preview" class="edit-preview hidden" alt="Picture to edit"></div>
+          <textarea id="edit-prompt" class="input" rows="2" maxlength="500" placeholder="Turn this into a watercolor painting at sunset" aria-label="What to change" style="margin:0"></textarea>
+          <select id="edit-strength" class="input" aria-label="How much to change" style="max-width:260px"><option value="subtle">Change a little</option><option value="medium" selected>Change a medium amount</option><option value="strong">Change a lot</option></select>
+          <button id="edit-go" class="btn primary"><svg class="ico"><use href="#i-edit"/></svg>Edit picture</button>
         </div>
         <div id="img-result" class="img-result hidden"><span class="skeleton"></span><img id="img-result-img" alt="Generated image">
           <div class="overlay"><a id="img-download" class="btn sm" download="vyra-image.jpg" target="_blank" rel="noopener"><svg class="ico sm"><use href="#i-download"/></svg>Download</a></div></div>
