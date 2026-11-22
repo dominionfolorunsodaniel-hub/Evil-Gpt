@@ -223,6 +223,7 @@ SCHEMA = [
     "CREATE UNIQUE INDEX IF NOT EXISTS evil_payreq_ref_idx ON evil_payment_requests(reference) WHERE reference IS NOT NULL",
     "ALTER TABLE evil_payment_requests ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ",
     "CREATE TABLE IF NOT EXISTS evil_images (id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES evil_users(id) ON DELETE CASCADE, prompt TEXT NOT NULL, url TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
+    "CREATE TABLE IF NOT EXISTS evil_image_blobs (image_id BIGINT PRIMARY KEY REFERENCES evil_images(id) ON DELETE CASCADE, mime VARCHAR(30) NOT NULL, data BYTEA NOT NULL)",
     "CREATE TABLE IF NOT EXISTS evil_login_attempts (id BIGSERIAL PRIMARY KEY, username VARCHAR(80), ip VARCHAR(64), success BOOLEAN NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
     "CREATE INDEX IF NOT EXISTS evil_login_attempts_idx ON evil_login_attempts(username, ip, created_at)",
     "CREATE TABLE IF NOT EXISTS evil_rate_limits (key VARCHAR(160) NOT NULL, bucket BIGINT NOT NULL, hits INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(key, bucket))",
@@ -1337,7 +1338,7 @@ def me():
                  "country": u.get("country_code"), "currency": u.get("preferred_currency") or "NGN",
                  "language": u.get("preferred_language") or "English", "trialEndsAt": iso(u["trial_ends_at"])},
         "usage": usage_status(u),
-        "images": {"used": u["images_today"], "limit": 99999 if u["is_admin"] else PLANS[plan_key]["daily_images"]},
+        "images": {"used": u["images_today"], "limit": 99999 if u["is_admin"] else PLANS[plan_key]["daily_images"], "edit": cf_enabled()},
         "badges": badges_for(u),
         "plans": PLANS, "billing": {"days": BILLING_DAYS, "multipliers": BILLING_MULTIPLIERS, "trialDays": TRIAL_DAYS}, "paystack": bool(PAYSTACK_SECRET_KEY), "brand": BRAND})
 
@@ -1558,24 +1559,143 @@ def create_reward_request():
 
 
 # ----------------------------------------------------------------------------- Image Studio
+# Cloudflare Workers AI (free daily allowance). Needs CF_ACCOUNT_ID and CF_API_TOKEN in the environment. Without them the old free generator is used and editing stays hidden.
+CF_ACCOUNT_ID = os.environ.get("CF_ACCOUNT_ID", "").strip()
+CF_API_TOKEN = os.environ.get("CF_API_TOKEN", "").strip()
+try: CF_DAILY_CAP = max(1, int(os.environ.get("CF_DAILY_IMAGE_CAP", "80")))
+except ValueError: CF_DAILY_CAP = 80
+CF_GEN_MODEL = "@cf/black-forest-labs/flux-1-schnell"
+CF_WIDE_MODEL = "@cf/bytedance/stable-diffusion-xl-lightning"
+CF_EDIT_MODEL = "@cf/runwayml/stable-diffusion-v1-5-img2img"
+IMG_SIZES = {"square": (1024, 1024), "portrait": (768, 1024), "landscape": (1024, 768)}
+EDIT_STRENGTH = {"subtle": 0.35, "medium": 0.55, "strong": 0.75}
+try:
+    from PIL import Image, ImageOps
+except Exception:  # Pillow missing: editing is switched off instead of failing
+    Image = ImageOps = None
+
+
+def cf_ready():  # keys present: picture generation can use Cloudflare
+    return bool(CF_API_TOKEN and re.fullmatch(r"[0-9a-fA-F]{32}", CF_ACCOUNT_ID))
+
+
+def cf_enabled():  # editing also needs Pillow to prepare the uploaded picture
+    return cf_ready() and Image is not None
+
+
+def cf_used_today():
+    row = q_one(f"SELECT COUNT(*) AS n FROM evil_images WHERE url LIKE 'cf:%' AND (created_at AT TIME ZONE 'Africa/Lagos')::date = {TODAY}")
+    return row["n"] if row else 0
+
+
+def cf_run(model, payload):
+    """Calls one Workers AI model and returns (bytes, mime). Raises on any problem; never logs the token."""
+    import base64
+    r = requests.post(f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/ai/run/{model}",
+                      headers={"Authorization": f"Bearer {CF_API_TOKEN}"}, json=payload, timeout=(5, 40))
+    if r.status_code != 200: raise RuntimeError(f"Cloudflare answered {r.status_code}: {r.text[:160]}")
+    if r.headers.get("Content-Type", "").lower().startswith("image/"): data = r.content
+    else:
+        b64 = ((r.json() or {}).get("result") or {}).get("image")
+        if not b64: raise RuntimeError("Cloudflare returned no image")
+        data = base64.b64decode(b64)
+    mime = sniff_image(data)
+    if not mime or len(data) > 8 * 1024 * 1024: raise RuntimeError("Cloudflare returned an unusable image")
+    return data, mime
+
+
+def save_cf_image(uid, prompt, data, mime, tag):
+    img = q_one("INSERT INTO evil_images(user_id,prompt,url) VALUES (%s,%s,%s) RETURNING id", (uid, prompt, "cf:" + tag))
+    try:
+        q_run("INSERT INTO evil_image_blobs(image_id,mime,data) VALUES (%s,%s,%s)", (img["id"], mime, psycopg2.Binary(data)))
+    except Exception:
+        q_run("DELETE FROM evil_images WHERE id=%s", (img["id"],)); raise
+    # Only the 60 newest images are ever listed, so older stored files are dropped to keep the database small.
+    try: q_run("DELETE FROM evil_image_blobs WHERE image_id IN (SELECT id FROM evil_images WHERE user_id=%s ORDER BY id DESC OFFSET 60)", (uid,))
+    except Exception: log.exception("image prune failed")
+    return img["id"]
+
+
+def take_image_credit(u, limit):
+    # Atomic: only counts if still under today's limit, so parallel clicks can't overshoot.
+    return q_one(f"""UPDATE evil_users SET images_generated_today = CASE WHEN last_image_date = {TODAY} THEN images_generated_today+1 ELSE 1 END,
+                    last_image_date = {TODAY}
+                    WHERE id=%s AND (CASE WHEN last_image_date = {TODAY} THEN images_generated_today ELSE 0 END) < %s RETURNING images_generated_today""", (u["id"], limit))
+
+
+def refund_image_credit(uid):
+    try: q_run(f"UPDATE evil_users SET images_generated_today=GREATEST(0,images_generated_today-1) WHERE id=%s AND last_image_date={TODAY}", (uid,))
+    except Exception: log.exception("image refund failed")
+
+
+def image_limit_for(u):
+    plan_key, _ = effective_plan(u)
+    return 99999 if u["is_admin"] else PLANS[plan_key]["daily_images"]
+
+
 @app.post("/api/generate-image")
 @login_required
 @limited("image", 12, 60, per="user")
 def generate_image():
-    prompt = str(body().get("prompt", "")).strip()
+    data_in = body()
+    prompt = str(data_in.get("prompt", "")).strip()
+    size = data_in.get("size") if data_in.get("size") in IMG_SIZES else "square"
     if not prompt: return err("Describe the image you want first.")
     if len(prompt) > 600: return err("Keep the description under 600 characters.")
-    u = request.user; plan_key, _ = effective_plan(u)
-    limit = 99999 if u["is_admin"] else PLANS[plan_key]["daily_images"]
-    # Atomic: only counts if still under today's limit, so parallel clicks can't overshoot.
-    row = q_one(f"""UPDATE evil_users SET images_generated_today = CASE WHEN last_image_date = {TODAY} THEN images_generated_today+1 ELSE 1 END,
-                    last_image_date = {TODAY}
-                    WHERE id=%s AND (CASE WHEN last_image_date = {TODAY} THEN images_generated_today ELSE 0 END) < %s RETURNING images_generated_today""", (u["id"], limit))
+    u = request.user; limit = image_limit_for(u)
+    row = take_image_credit(u, limit)
     if not row: return err(f"You've used all {limit} images for today. They reset at midnight, or upgrade for more.", 429)
+    w, h = IMG_SIZES[size]
+    if cf_ready():
+        try:
+            if cf_used_today() < CF_DAILY_CAP:
+                if size == "square": out, mime = cf_run(CF_GEN_MODEL, {"prompt": prompt, "steps": 6, "seed": secrets.randbelow(10 ** 6)})
+                else: out, mime = cf_run(CF_WIDE_MODEL, {"prompt": prompt, "width": w, "height": h, "num_steps": 4})
+                new_id = save_cf_image(u["id"], prompt, out, mime, "gen")
+                return jsonify({"success": True, "image_url": f"/api/images/{new_id}/render", "id": new_id, "used": row["images_generated_today"], "limit": limit})
+        except Exception:
+            log.warning("Cloudflare image generation failed, using the backup generator", exc_info=True)
     seed = secrets.randbelow(10 ** 8)
-    url = f"https://image.pollinations.ai/prompt/{quote(prompt)}?width=1024&height=1024&nologo=true&seed={seed}"
+    url = f"https://image.pollinations.ai/prompt/{quote(prompt)}?width={w}&height={h}&nologo=true&seed={seed}"
     img = q_one("INSERT INTO evil_images(user_id,prompt,url) VALUES (%s,%s,%s) RETURNING id", (u["id"], prompt, url))
     return jsonify({"success": True, "image_url": f"/api/images/{img['id']}/render", "id": img["id"], "used": row["images_generated_today"], "limit": limit})
+
+
+@app.post("/api/edit-image")
+@login_required
+@limited("image_edit", 8, 60, per="user")
+def edit_image():
+    """Restyles/transforms an uploaded picture from a text instruction (image-to-image)."""
+    if not cf_enabled(): return err("Photo editing is not switched on yet.", 503)
+    prompt = str(request.form.get("prompt", "")).strip()
+    if len(prompt) < 3: return err("Say what the picture should become.")
+    if len(prompt) > 500: return err("Keep the instruction under 500 characters.")
+    strength = EDIT_STRENGTH.get(request.form.get("strength", "medium"), 0.55)
+    f = request.files.get("image")
+    if not f: return err("Choose a picture to edit first.")
+    raw = f.read(6 * 1024 * 1024 + 1)
+    if len(raw) > 6 * 1024 * 1024: return err("That picture is too large. Use one under 6 MB.")
+    if sniff_image(raw) not in ("image/png", "image/jpeg", "image/webp"): return err("Use a PNG, JPG or WEBP picture.")
+    try:
+        im = Image.open(io.BytesIO(raw))
+        if im.width * im.height > 25_000_000: return err("That picture is too large.")
+        im = ImageOps.exif_transpose(im).convert("RGB")
+        im.thumbnail((512, 512))
+        im = im.resize((max(64, im.width // 8 * 8), max(64, im.height // 8 * 8)))
+        buf = io.BytesIO(); im.save(buf, "JPEG", quality=90); import base64; b64 = base64.b64encode(buf.getvalue()).decode()
+    except Exception:
+        return err("I couldn't read that picture. Try another one.")
+    if cf_used_today() >= CF_DAILY_CAP: return err("Photo editing is at its daily limit. Please try again tomorrow.", 503)
+    u = request.user; limit = image_limit_for(u)
+    row = take_image_credit(u, limit)
+    if not row: return err(f"You've used all {limit} images for today. They reset at midnight, or upgrade for more.", 429)
+    try:
+        out, mime = cf_run(CF_EDIT_MODEL, {"prompt": prompt, "negative_prompt": "blurry, distorted, low quality", "image_b64": b64, "strength": strength, "num_steps": 20, "guidance": 7.5})
+        new_id = save_cf_image(u["id"], "Edit: " + prompt[:590], out, mime, "edit")
+    except Exception:
+        log.warning("Cloudflare image edit failed", exc_info=True)
+        refund_image_credit(u["id"]); return err("The editor is busy right now. Your image credit was not used. Try again in a moment.", 502)
+    return jsonify({"success": True, "image_url": f"/api/images/{new_id}/render", "id": new_id, "used": row["images_generated_today"], "limit": limit})
 
 
 @app.get("/api/images")
@@ -1591,6 +1711,10 @@ def list_images():
 def render_image_proxy(image_id):
     row = q_one("SELECT url,(created_at > NOW() - INTERVAL '2 minutes') AS fresh FROM evil_images WHERE id=%s AND user_id=%s", (image_id, request.user["id"]))
     if not row: return err("Image not found.", 404)
+    if row["url"].startswith("cf:"):
+        blob = q_one("SELECT mime,data FROM evil_image_blobs WHERE image_id=%s", (image_id,))
+        if not blob: return err("This image is no longer stored.", 404)
+        return Response(bytes(blob["data"]), mimetype=blob["mime"], headers={"Cache-Control": "private, max-age=3600", "X-Content-Type-Options": "nosniff"})
     uid_ = request.user["id"]
 
     def failed(msg):
@@ -2973,6 +3097,7 @@ def admin_health():
     def img():
         r = requests.head("https://image.pollinations.ai", timeout=5, allow_redirects=True); return r.status_code < 500, f"Image service answered ({r.status_code})"
     check("Image service", img)
+    check("Image editing (Cloudflare)", lambda: (cf_enabled(), (f"On. Used today: {cf_used_today()} of {CF_DAILY_CAP}" + ("" if Image is not None else ". Pillow missing: editing off")) if cf_ready() else "Not set up: basic generator only, no editing"))
     check("Admin two-step login", lambda: (bool(q_one("SELECT totp_enabled FROM evil_users WHERE id=%s", (request.user["id"],))["totp_enabled"]), "On" if q_one("SELECT totp_enabled FROM evil_users WHERE id=%s", (request.user["id"],))["totp_enabled"] else "Off: turn it on in Settings"))
     return jsonify({"checks": out, "siteUrl": SITE_URL or "(not set)"})
 

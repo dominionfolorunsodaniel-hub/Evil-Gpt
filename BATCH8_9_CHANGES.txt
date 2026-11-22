@@ -1,0 +1,2 @@
+Batches 8+9 combined. Files: app.py, templates/index.html, static/script.js, static/style.css, static/theme.js, static/sw.js, requirements.txt
+Render env: CF_ACCOUNT_ID, CF_API_TOKEN
