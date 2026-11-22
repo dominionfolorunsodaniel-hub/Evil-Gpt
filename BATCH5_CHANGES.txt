@@ -1,0 +1,12 @@
+VYRA AI - BATCH 5 (billing)
+Files: app.py, static/script.js, static/style.css, static/receipt.js (NEW), templates/index.html
+DB (additive only): evil_users.expiry_warned_for, new tables evil_gift_links, evil_student_requests.
+
+1 Receipts + history: Plans page > Billing history. "Receipt" opens a printable page (save as PDF) for each approved payment. Gifts are listed too.
+2 Expiry warning: banner + one notification when a paid plan has 3 days or less left.
+3 Compare plans: button on Plans page, table of prices, messages, images; your plan highlighted.
+4 Gift link: Admin > Growth > Gift links creates a one-time link (30 days). Opening it and signing in offers to redeem; Plans page also has a code box.
+5 Student coupon: students send a request on Plans page; Admin > Growth approves (30% off, single use, 30 days) and the code goes to their notifications.
+6 Promo banner: Admin > Growth. Shows at top for all users, dismissible, auto-ends.
+7 Trial countdown: live "Trial: 2d 5h left" chip in the top bar.
+8 Referral leaderboard: new "Referrals" tab in the Plans-page leaderboard.

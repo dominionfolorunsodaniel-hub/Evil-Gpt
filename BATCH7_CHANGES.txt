@@ -1,0 +1,18 @@
+VYRA AI - BATCH 7 (admin tools + 7-day trial + relaunch offer)
+Files: app.py, static/script.js, static/style.css, templates/index.html
+DB (additive only): evil_users.relaunch_claimed/relaunch_notified, evil_canned table, evil_settings row 'relaunch_trial_at' (the relaunch moment = first start after this deploy).
+Env (optional): AI_COST_FAST / AI_COST_BALANCED / AI_COST_DEEP / AI_COST_IMAGE (US$ per reply, for the cost estimate), TRIAL_DAYS_V2 (default 7).
+NOTE: the old TRIAL_DAYS variable on Render is now ignored on purpose, so a leftover "3" cannot override the 7 days.
+
+TRIAL
+- New accounts get a 7-day free trial (full access). Plans page text now says so.
+- Relaunch offer: every account created BEFORE this deploy can claim one fresh 7-day trial (not shortened if they have more left). They get a notification, a banner with Claim / Later, and a Claim card pinned at the top of their notifications until they claim. Admins are excluded.
+
+ADMIN
+1 Today tab: signups, active users, messages, images, revenue vs yesterday (Lagos time), plus things needing attention.
+2 AI cost counter: estimate for today and this month (reply counts x per-reply rate).
+3 Health tab: database, AI, email, Paystack, image service, admin two-step; test-email box.
+4 Bulk gift plans (Users tab): all free users / everyone / list of usernames, with preview and confirm; skips anyone on a higher plan; max 500.
+5 User search + filters (Users tab): name/email/ID, plan, status (paying, trial, suspended, not verified, inactive 30+ days).
+6 Canned replies in the support inbox (3 starters added once; save your own, delete).
+7 Audit log by date (Logs & backup tab).

@@ -1,0 +1,11 @@
+VYRA AI - BATCH 6 (security + privacy)
+Files: app.py, static/script.js, templates/index.html
+DB (additive only): evil_users.totp_secret/totp_enabled/totp_last_step/auto_delete_days/auto_purge_at; new tables evil_devices, evil_reports.
+Env (optional): ADMIN_2FA_DISABLE=1 (emergency switch if you lose your authenticator), EXTRA_BLOCKED_EMAIL_DOMAINS=a.com,b.com
+
+1 Admin two-step login: authenticator app (Google/Microsoft Authenticator), not email, because the admin account has no real email. Turn on in Settings (admin only). Replay-proof, 5 minute window, lockout on repeated wrong codes.
+2 New-device alerts: first sign-in from a new browser/phone on an existing account sends an in-app notification, and an email if mail is set up.
+3 Privacy dashboard: Settings > Privacy dashboard. Counts of stored data, device list, download my data (now also memories, notes, styles, projects), delete all chats.
+4 Auto-delete old chats: Never / 30 / 90 / 180 / 365 days. Runs at most once a day when the user opens the app. Pinned and archived chats are kept.
+5 Disposable email block at signup (about 90 known services + your own list). Not exhaustive.
+6 Report answer: shield icon under answers. Admin > Reports lists them with the question and answer; Resolve closes them.

@@ -61,7 +61,7 @@ SITE_URL = (os.environ.get("SITE_URL") or "").rstrip("/")
 PAYSTACK_SECRET_KEY = os.environ.get("PAYSTACK_SECRET_KEY")
 WHATSAPP_SUPPORT_NUMBER = re.sub(r"\D", "", os.environ.get("WHATSAPP_SUPPORT_NUMBER", ""))
 CUSTOM_PERSONA_FREE = os.environ.get("CUSTOM_PERSONA_FREE") == "1"  # set to 1 to let Free users use custom personas
-TRIAL_DAYS = int(os.environ.get("TRIAL_DAYS", "7"))
+TRIAL_DAYS = int(os.environ.get("TRIAL_DAYS_V2", "7"))  # new name on purpose: an old TRIAL_DAYS=3 set on Render is ignored
 PLAN_DAYS = int(os.environ.get("PLAN_DAYS", "30"))
 MAX_MESSAGE_CHARS = 8000
 
@@ -278,6 +278,25 @@ SCHEMA = [
     "ALTER TABLE evil_projects ADD COLUMN IF NOT EXISTS persona TEXT NOT NULL DEFAULT ''",
     "CREATE TABLE IF NOT EXISTS evil_styles (id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES evil_users(id) ON DELETE CASCADE, name VARCHAR(40) NOT NULL, instruction TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
     "CREATE INDEX IF NOT EXISTS evil_styles_user_idx ON evil_styles(user_id, id)",
+    # ---- Vyra batch 5: billing extras (additive only) ----
+    "ALTER TABLE evil_users ADD COLUMN IF NOT EXISTS expiry_warned_for TIMESTAMPTZ",
+    "CREATE TABLE IF NOT EXISTS evil_gift_links (id BIGSERIAL PRIMARY KEY, code VARCHAR(40) UNIQUE NOT NULL, plan VARCHAR(32) NOT NULL, duration_days INTEGER NOT NULL, created_by BIGINT REFERENCES evil_users(id) ON DELETE SET NULL, redeemed_by BIGINT REFERENCES evil_users(id) ON DELETE SET NULL, redeemed_at TIMESTAMPTZ, expires_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
+    "CREATE TABLE IF NOT EXISTS evil_student_requests (id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES evil_users(id) ON DELETE CASCADE, school VARCHAR(100) NOT NULL, note TEXT NOT NULL DEFAULT '', status VARCHAR(12) NOT NULL DEFAULT 'pending', coupon_code VARCHAR(32), created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
+    "CREATE INDEX IF NOT EXISTS evil_student_requests_user_idx ON evil_student_requests(user_id, id DESC)",
+    # ---- Vyra batch 6: security + privacy (additive only) ----
+    "ALTER TABLE evil_users ADD COLUMN IF NOT EXISTS totp_secret VARCHAR(64)",
+    "ALTER TABLE evil_users ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN NOT NULL DEFAULT FALSE",
+    "ALTER TABLE evil_users ADD COLUMN IF NOT EXISTS totp_last_step BIGINT NOT NULL DEFAULT 0",
+    "ALTER TABLE evil_users ADD COLUMN IF NOT EXISTS auto_delete_days INTEGER",
+    "ALTER TABLE evil_users ADD COLUMN IF NOT EXISTS auto_purge_at TIMESTAMPTZ",
+    "CREATE TABLE IF NOT EXISTS evil_devices (id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES evil_users(id) ON DELETE CASCADE, fp VARCHAR(40) NOT NULL, label VARCHAR(80) NOT NULL, ip VARCHAR(64), first_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(), last_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE (user_id, fp))",
+    "CREATE TABLE IF NOT EXISTS evil_reports (id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES evil_users(id) ON DELETE CASCADE, message_id BIGINT, reason VARCHAR(20) NOT NULL, details TEXT NOT NULL DEFAULT '', question TEXT NOT NULL DEFAULT '', answer TEXT NOT NULL DEFAULT '', status VARCHAR(12) NOT NULL DEFAULT 'open', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
+    "CREATE INDEX IF NOT EXISTS evil_reports_status_idx ON evil_reports(status, id DESC)",
+    # ---- Vyra batch 7: relaunch trial offer + admin tools (additive only) ----
+    "ALTER TABLE evil_users ADD COLUMN IF NOT EXISTS relaunch_claimed BOOLEAN NOT NULL DEFAULT FALSE",
+    "ALTER TABLE evil_users ADD COLUMN IF NOT EXISTS relaunch_notified BOOLEAN NOT NULL DEFAULT FALSE",
+    "INSERT INTO evil_settings(key,value) VALUES ('relaunch_trial_at', EXTRACT(EPOCH FROM NOW())::bigint::text) ON CONFLICT (key) DO NOTHING",
+    "CREATE TABLE IF NOT EXISTS evil_canned (id BIGSERIAL PRIMARY KEY, title VARCHAR(40) NOT NULL, text TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
 ]
 _db_ready = False
 _db_lock = threading.Lock()
@@ -412,7 +431,7 @@ def current_user():
 
 
 def effective_plan(u):
-    """Resolve legacy subscriptions; a one-time 3-day trial unlocks the Enterprise feature set."""
+    """Resolve legacy subscriptions; a one-time free trial unlocks the Enterprise feature set."""
     if u["is_admin"]: return "enterprise", False
     raw = u["plan"] or "free"
     plan = raw if raw in PLANS else LEGACY_PLAN_MAP.get(raw, "free")
@@ -544,6 +563,24 @@ def issue_code(email, purpose, reuse=False):
         return "emailed"
     log.warning("OTP not emailed (purpose=%s): waiting for admin approval", purpose)
     return "admin"
+
+
+DISPOSABLE_DOMAINS = {
+    "mailinator.com", "guerrillamail.com", "guerrillamail.net", "guerrillamail.org", "guerrillamail.biz", "guerrillamail.de", "guerrillamailblock.com", "grr.la", "sharklasers.com", "spam4.me",
+    "10minutemail.com", "10minutemail.net", "20minutemail.com", "tempmail.com", "temp-mail.org", "temp-mail.io", "tempmailo.com", "tempail.com", "tempr.email", "tempinbox.com", "yopmail.com", "yopmail.net",
+    "trashmail.com", "trashmail.net", "trashmail.de", "getnada.com", "nada.email", "dispostable.com", "maildrop.cc", "throwawaymail.com", "fakeinbox.com", "mintemail.com", "mohmal.com", "emailondeck.com",
+    "moakt.com", "spamgourmet.com", "burnermail.io", "discard.email", "mailnesia.com", "mytemp.email", "inboxkitten.com", "harakirimail.com", "mail.tm", "1secmail.com", "1secmail.org", "1secmail.net",
+    "dropmail.me", "minuteinbox.com", "emailfake.com", "fakemail.net", "mailcatch.com", "mailsac.com", "mohmal.in", "tmail.ws", "tmpmail.org", "tmpmail.net", "throwam.com", "trbvm.com", "getairmail.com",
+    "anonbox.net", "byom.de", "dayrep.com", "einrot.com", "fleckens.hu", "gustr.com", "jourrapide.com", "rhyta.com", "superrito.com", "teleworm.us", "armyspy.com", "cuvox.de", "emailtemporanea.net",
+    "spambox.us", "spamex.com", "mailforspam.com", "mvrht.net", "wegwerfmail.de", "wegwerfmail.net", "tempmailaddress.com", "luxusmail.org", "linshiyouxiang.net", "emltmp.com", "mail-temp.com", "yomail.info",
+}
+DISPOSABLE_DOMAINS |= {d.strip().lower() for d in os.environ.get("EXTRA_BLOCKED_EMAIL_DOMAINS", "").split(",") if d.strip()}
+
+
+def is_disposable_email(email):
+    """True for throw-away mailbox services (the domain or any parent domain is on the list). The list is not exhaustive."""
+    parts = email.rsplit("@", 1)[-1].lower().strip(".").split(".")
+    return any(".".join(parts[i:]) in DISPOSABLE_DOMAINS for i in range(len(parts) - 1))
 
 
 def valid_email(e):
@@ -1019,6 +1056,7 @@ def register():
     ref = re.sub(r"[^A-Za-z0-9]", "", str(d.get("ref", "")))[:12].upper()
     if not re.fullmatch(r"[A-Za-z0-9_]{3,40}", username): return err("Username must be 3-40 letters, numbers or underscores.")
     if not valid_email(email): return err("Enter a valid email address.")
+    if is_disposable_email(email): return err("Please use a permanent email address. Temporary email services aren't allowed.")
     if len(password) < 10: return err("Password must be at least 10 characters.")
     if len(password) > 200: return err("Password is too long.")
     # Usernames are compared case-insensitively so nobody can register "Admin" next to "admin".
@@ -1027,7 +1065,7 @@ def register():
     referrer = q_one("SELECT id FROM evil_users WHERE referral_code=%s", (ref,)) if ref else None
     pw_hash = generate_password_hash(password)
     try:
-        # New users start on Free with a one-time 3-day premium Trial. (The old code made them Infinity forever.)
+        # New users start on Free with a one-time premium Trial (TRIAL_DAYS). (The old code made them Infinity forever.)
         row = q_one("""INSERT INTO evil_users(username,email,password_hash,plan,trial_ends_at,is_verified,referral_code,referred_by)
                        VALUES (%s,%s,%s,'free', NOW() + (%s || ' days')::interval, FALSE, %s, %s) RETURNING id""",
                     (username, email, pw_hash, str(TRIAL_DAYS), new_referral_code(), referrer["id"] if referrer else None))
@@ -1138,17 +1176,119 @@ def login():
     user_fails = q_one("SELECT COUNT(*) AS n FROM evil_login_attempts WHERE success=FALSE AND LOWER(username)=LOWER(%s) AND created_at > NOW() - INTERVAL '15 minutes'", (username,))["n"]
     if user_fails >= 20 and not q_one("SELECT 1 FROM evil_login_attempts WHERE success=TRUE AND LOWER(username)=LOWER(%s) AND ip=%s LIMIT 1", (username, ip)):
         return err("Too many failed attempts. Try again in 15 minutes.", 429)
-    user = q_one("SELECT id,username,password_hash,is_verified,is_suspended FROM evil_users WHERE LOWER(username)=LOWER(%s) ORDER BY (username=%s) DESC LIMIT 1", (username, username))
+    user = q_one("SELECT id,username,password_hash,is_verified,is_suspended,is_admin,totp_enabled FROM evil_users WHERE LOWER(username)=LOWER(%s) ORDER BY (username=%s) DESC LIMIT 1", (username, username))
     if not user or not user["password_hash"] or not check_password_hash(user["password_hash"], password):
         q_run("INSERT INTO evil_login_attempts(username,ip,success) VALUES (%s,%s,FALSE)", (username, ip))
         return err("Wrong username or password.", 401)
     if user["is_suspended"]: return err("This account is suspended. Contact support.", 403)
     if not user["is_verified"]: return err("Verify your email first.", 403, needsVerification=True)
+    if user["is_admin"] and user["totp_enabled"] and os.environ.get("ADMIN_2FA_DISABLE") != "1":
+        session.clear(); session["p2fa"] = user["id"]; session["p2fa_at"] = int(time.time())  # password OK, waiting for the authenticator code
+        return jsonify({"success": True, "needs2fa": True})
+    return finish_login(user["id"], user["username"], ip)
+
+
+def finish_login(user_id, username, ip):
     q_run("INSERT INTO evil_login_attempts(username,ip,success) VALUES (%s,%s,TRUE)", (username, ip))
-    q_run("UPDATE evil_users SET last_seen_at=NOW() WHERE id=%s", (user["id"],))
-    u = get_user(user["id"])
-    session.clear(); session.permanent = True; session["user_id"] = user["id"]; session["sv"] = u["session_version"] or 0
+    q_run("UPDATE evil_users SET last_seen_at=NOW() WHERE id=%s", (user_id,))
+    u = get_user(user_id)
+    session.clear(); session.permanent = True; session["user_id"] = user_id; session["sv"] = u["session_version"] or 0
+    register_device(u)
     return jsonify({"success": True, "user": {"username": u["username"], "plan": u["plan"], "isAdmin": u["is_admin"]}})
+
+
+def totp_code(secret_b32, step):
+    import base64, struct
+    key = base64.b32decode(secret_b32 + "=" * (-len(secret_b32) % 8), casefold=True)
+    h = hmac.new(key, struct.pack(">Q", step), hashlib.sha1).digest(); o = h[-1] & 15
+    return f"{(struct.unpack('>I', h[o:o + 4])[0] & 0x7FFFFFFF) % 1000000:06d}"
+
+
+def totp_check(secret, code, last_step=0):
+    """Authenticator-app code check (RFC 6238, 30s steps, one step of drift). Returns the matched step or None. A step can't be reused."""
+    code = re.sub(r"\D", "", str(code or "")); now = int(time.time() // 30)
+    if len(code) != 6: return None
+    for st in (now, now - 1, now + 1):
+        if st > last_step and hmac.compare_digest(totp_code(secret, st), code): return st
+    return None
+
+
+@app.post("/login/2fa")
+@limited("login2fa", 15, 900)
+def login_2fa():
+    uid = session.get("p2fa")
+    if not uid or time.time() - session.get("p2fa_at", 0) > 300: session.clear(); return err("Your sign-in timed out. Enter your password again.", 401)
+    row = q_one("SELECT username,totp_secret,totp_last_step FROM evil_users WHERE id=%s AND is_admin=TRUE AND totp_enabled=TRUE", (uid,)); ip = client_ip()
+    if not row: session.clear(); return err("Sign in again.", 401)
+    if q_one("SELECT COUNT(*) AS n FROM evil_login_attempts WHERE success=FALSE AND LOWER(username)=LOWER(%s) AND created_at > NOW() - INTERVAL '15 minutes'", (row["username"],))["n"] >= 8:
+        return err("Too many failed attempts. Try again in 15 minutes.", 429)
+    st = totp_check(row["totp_secret"], body().get("code"), row["totp_last_step"] or 0)
+    if not st:
+        q_run("INSERT INTO evil_login_attempts(username,ip,success) VALUES (%s,%s,FALSE)", (row["username"], ip)); return err("Wrong or expired code.", 401)
+    q_run("UPDATE evil_users SET totp_last_step=%s WHERE id=%s", (st, uid))
+    return finish_login(uid, row["username"], ip)
+
+
+def device_label(ua):
+    ua = ua or ""
+    os_ = next((n for p, n in (("Windows", "Windows"), ("Android", "Android"), ("iPhone", "iPhone"), ("iPad", "iPad"), ("Mac OS X", "Mac"), ("Linux", "Linux")) if p in ua), "an unknown device")
+    br = next((n for p, n in (("Edg/", "Edge"), ("OPR/", "Opera"), ("SamsungBrowser", "Samsung Internet"), ("Firefox/", "Firefox"), ("CriOS", "Chrome"), ("Chrome/", "Chrome"), ("Safari/", "Safari")) if p in ua), "A browser")
+    return f"{br} on {os_}"
+
+
+def register_device(u):
+    """Remember this browser; when it is new for an existing account, notify in-app and by email (if mail is set up)."""
+    try:
+        ua = request.headers.get("User-Agent", "")[:300]; fp = hashlib.sha256(ua.encode()).hexdigest()[:32]; label = device_label(ua)
+        had = q_one("SELECT 1 FROM evil_devices WHERE user_id=%s LIMIT 1", (u["id"],))
+        row = q_one("INSERT INTO evil_devices(user_id,fp,label,ip) VALUES (%s,%s,%s,%s) ON CONFLICT (user_id,fp) DO UPDATE SET last_seen=NOW(), ip=EXCLUDED.ip RETURNING (xmax = 0) AS is_new", (u["id"], fp, label, client_ip()))
+        q_run("DELETE FROM evil_devices WHERE user_id=%s AND id NOT IN (SELECT id FROM evil_devices WHERE user_id=%s ORDER BY last_seen DESC LIMIT 20)", (u["id"], u["id"]))
+        if row and row["is_new"] and had:
+            tip = "If this wasn't you, change your password and use 'Log out of all other devices' in Settings."
+            q_run("INSERT INTO evil_notifications(user_id,message) VALUES (%s,%s)", (u["id"], f"New sign-in from {label}. {tip}"))
+            if mail_enabled() and u["email"] and not u["email"].endswith(".invalid"):
+                threading.Thread(target=send_mail, args=(u["email"], f"New sign-in to your {BRAND} account", f"We noticed a sign-in from {label}.\n\n{tip}"), daemon=True).start()
+    except Exception: log.exception("device registration failed")
+
+
+@app.get("/api/admin/2fa")
+@admin_required
+def admin_2fa_status():
+    return jsonify({"enabled": bool(q_one("SELECT totp_enabled FROM evil_users WHERE id=%s", (request.user["id"],))["totp_enabled"])})
+
+
+@app.post("/api/admin/2fa/setup")
+@admin_required
+def admin_2fa_setup():
+    import base64
+    if q_one("SELECT totp_enabled FROM evil_users WHERE id=%s", (request.user["id"],))["totp_enabled"]: return err("Two-step login is already on.")
+    secret = base64.b32encode(secrets.token_bytes(20)).decode().rstrip("=")
+    q_run("UPDATE evil_users SET totp_secret=%s WHERE id=%s", (secret, request.user["id"]))
+    return jsonify({"secret": secret, "uri": f"otpauth://totp/{quote(BRAND)}:{quote(request.user['username'])}?secret={secret}&issuer={quote(BRAND)}"})
+
+
+@app.post("/api/admin/2fa/enable")
+@admin_required
+@limited("2fa_enable", 10, 900, per="user")
+def admin_2fa_enable():
+    row = q_one("SELECT totp_secret,totp_enabled FROM evil_users WHERE id=%s", (request.user["id"],))
+    if row["totp_enabled"] or not row["totp_secret"]: return err("Start the setup again.")
+    st = totp_check(row["totp_secret"], body().get("code"))
+    if not st: return err("That code is wrong. Check the time on your phone and try the next code.")
+    q_run("UPDATE evil_users SET totp_enabled=TRUE, totp_last_step=%s WHERE id=%s", (st, request.user["id"]))
+    audit(request.user["username"], "admin_2fa_enabled"); return jsonify({"success": True})
+
+
+@app.post("/api/admin/2fa/disable")
+@admin_required
+@limited("2fa_disable", 10, 900, per="user")
+def admin_2fa_disable():
+    d = body(); row = q_one("SELECT password_hash,totp_secret,totp_enabled,totp_last_step FROM evil_users WHERE id=%s", (request.user["id"],))
+    if not row["totp_enabled"]: return err("Two-step login is already off.")
+    if not check_password_hash(row["password_hash"], str(d.get("password", ""))): return err("Wrong password.", 401)
+    if not totp_check(row["totp_secret"], d.get("code"), row["totp_last_step"] or 0): return err("Wrong or expired code.", 401)
+    q_run("UPDATE evil_users SET totp_enabled=FALSE, totp_secret=NULL, totp_last_step=0 WHERE id=%s", (request.user["id"],))
+    audit(request.user["username"], "admin_2fa_disabled"); return jsonify({"success": True})
 
 
 @app.post("/logout")
@@ -1184,7 +1324,10 @@ def me():
     can_persona = CUSTOM_PERSONA_FREE or u["is_admin"] or trial or plan_key != "free"
     refs_row = q_one("SELECT COUNT(*) AS n FROM evil_users WHERE referred_by::text=%s AND referral_rewarded=TRUE", (str(u["id"]),))
     refs = (refs_row or {}).get("n", 0)
+    maybe_warn_expiry(u, plan_key, trial); maybe_auto_purge(u["id"])
+    offer = relaunch_offer(u)
     return jsonify({
+        "promo": get_promo(), "relaunchOffer": offer,
         "user": {"username": u["username"], "email": u["email"], "publicId": u.get("public_id"), "plan": ("infinity" if u["is_admin"] else plan_key), "paidPlan": u["plan"], "isAdmin": u["is_admin"],
                  "streak": u["streak_count"] or 0, "checkedInToday": bool(u["checked_in_today"]), "trial": trial,
                  "planExpiresAt": iso(u["plan_expires_at"]), "customPersona": u["custom_persona"] or "", "canUsePersona": can_persona,
@@ -1195,7 +1338,7 @@ def me():
         "usage": usage_status(u),
         "images": {"used": u["images_today"], "limit": 99999 if u["is_admin"] else PLANS[plan_key]["daily_images"]},
         "badges": badges_for(u),
-        "plans": PLANS, "billing": {"days": BILLING_DAYS, "multipliers": BILLING_MULTIPLIERS}, "paystack": bool(PAYSTACK_SECRET_KEY), "brand": BRAND})
+        "plans": PLANS, "billing": {"days": BILLING_DAYS, "multipliers": BILLING_MULTIPLIERS, "trialDays": TRIAL_DAYS}, "paystack": bool(PAYSTACK_SECRET_KEY), "brand": BRAND})
 
 
 @app.post("/api/user/update-persona")
@@ -1241,6 +1384,73 @@ def logout_other_devices():
     return jsonify({"success": True})
 
 
+def maybe_auto_purge(user_id):
+    """Auto-delete setting: at most once a day, delete the user's chats not touched for N days. Pinned and archived chats are always kept."""
+    try:
+        row = q_one("UPDATE evil_users SET auto_purge_at=NOW() WHERE id=%s AND auto_delete_days IS NOT NULL AND (auto_purge_at IS NULL OR auto_purge_at < NOW() - INTERVAL '1 day') RETURNING auto_delete_days", (user_id,))
+        if row: q_run("DELETE FROM evil_conversations WHERE user_id=%s AND pinned=FALSE AND archived=FALSE AND updated_at < NOW() - make_interval(days => %s::int)", (user_id, row["auto_delete_days"]))
+    except Exception: log.exception("auto purge failed")
+
+
+@app.get("/api/privacy/summary")
+@login_required
+def privacy_summary():
+    uid = request.user["id"]; one = lambda sql: q_one(sql, (uid,))["n"]
+    devices = q_all("SELECT label,last_seen FROM evil_devices WHERE user_id=%s ORDER BY last_seen DESC LIMIT 20", (uid,))
+    return jsonify({"counts": {"chats": one("SELECT COUNT(*) AS n FROM evil_conversations WHERE user_id=%s"), "messages": one("SELECT COUNT(*) AS n FROM evil_messages WHERE user_id=%s"),
+                               "memories": one("SELECT COUNT(*) AS n FROM evil_memories WHERE user_id=%s AND (expires_at IS NULL OR expires_at > NOW())"), "notes": one("SELECT COUNT(*) AS n FROM evil_notes WHERE user_id=%s"),
+                               "images": one("SELECT COUNT(*) AS n FROM evil_images WHERE user_id=%s"), "projects": one("SELECT COUNT(*) AS n FROM evil_projects WHERE user_id=%s")},
+                    "autoDeleteDays": q_one("SELECT auto_delete_days FROM evil_users WHERE id=%s", (uid,))["auto_delete_days"] or 0,
+                    "devices": [{"label": r["label"], "lastSeen": iso(r["last_seen"])} for r in devices]})
+
+
+@app.post("/api/privacy/settings")
+@login_required
+def privacy_settings():
+    try: days = int(body().get("autoDeleteDays", 0))
+    except (TypeError, ValueError): return err("Invalid choice.")
+    if days not in (0, 30, 90, 180, 365): return err("Invalid choice.")
+    q_run("UPDATE evil_users SET auto_delete_days=%s, auto_purge_at=NULL WHERE id=%s", (days or None, request.user["id"]))
+    return jsonify({"success": True})
+
+
+@app.post("/api/privacy/delete-chats")
+@login_required
+@limited("delete_chats", 5, 3600, per="user")
+def privacy_delete_chats():
+    if body().get("confirm") is not True: return err("Please confirm.")
+    q_run("DELETE FROM evil_conversations WHERE user_id=%s", (request.user["id"],)); return jsonify({"success": True})
+
+
+REPORT_REASONS = ("harmful", "wrong", "offensive", "other")
+
+
+@app.post("/api/messages/<int:message_id>/report")
+@login_required
+@limited("report", 10, 3600, per="user")
+def report_message(message_id):
+    d = body(); uid = request.user["id"]; reason = d.get("reason") if d.get("reason") in REPORT_REASONS else "other"
+    m = q_one("SELECT conversation_id,content FROM evil_messages WHERE id=%s AND user_id=%s AND role='assistant'", (message_id, uid))
+    if not m: return err("Message not found.", 404)
+    if q_one("SELECT 1 FROM evil_reports WHERE message_id=%s AND user_id=%s", (message_id, uid)): return err("You already reported this answer. Thank you.")
+    q = q_one("SELECT content FROM evil_messages WHERE conversation_id=%s AND id < %s AND role='user' ORDER BY id DESC LIMIT 1", (m["conversation_id"], message_id))
+    q_run("INSERT INTO evil_reports(user_id,message_id,reason,details,question,answer) VALUES (%s,%s,%s,%s,%s,%s)", (uid, message_id, reason, str(d.get("details", "")).strip()[:500], (q or {}).get("content", "")[:2000], m["content"][:4000]))
+    return jsonify({"success": True})
+
+
+@app.get("/api/admin/reports")
+@admin_required
+def admin_reports():
+    rows = q_all("SELECT r.id,r.reason,r.details,r.question,r.answer,r.created_at,u.username FROM evil_reports r JOIN evil_users u ON u.id=r.user_id WHERE r.status='open' ORDER BY r.id DESC LIMIT 50")
+    return jsonify({"reports": [{"id": r["id"], "reason": r["reason"], "details": r["details"], "question": r["question"][:300], "answer": r["answer"][:600], "username": r["username"], "createdAt": iso(r["created_at"])} for r in rows]})
+
+
+@app.post("/api/admin/reports/<int:report_id>/resolve")
+@admin_required
+def admin_resolve_report(report_id):
+    q_run("UPDATE evil_reports SET status='resolved' WHERE id=%s", (report_id,)); audit(request.user["username"], "report_resolved", f"report {report_id}"); return jsonify({"success": True})
+
+
 @app.get("/api/user/export")
 @login_required
 def export_me():
@@ -1250,7 +1460,16 @@ def export_me():
     for c in chats:
         msgs = q_all("SELECT role,content,created_at FROM evil_messages WHERE conversation_id=%s ORDER BY id", (str(c["id"]),))
         out.append({"title": c["title"], "created_at": iso(c["created_at"]), "messages": [{"role": m["role"], "content": m["content"], "at": iso(m["created_at"])} for m in msgs]})
-    data = json.dumps({"account": {"username": u["username"], "email": u["email"]}, "conversations": out}, indent=2)
+    uid = u["id"]
+    extra = {
+        "memories": [{"memory": r["memory"], "category": r["category"], "created_at": iso(r["created_at"])} for r in q_all("SELECT memory,category,created_at FROM evil_memories WHERE user_id=%s ORDER BY id", (uid,))],
+        "notes": [{"title": r["title"], "content": r["content"], "created_at": iso(r["created_at"])} for r in q_all("SELECT title,content,created_at FROM evil_notes WHERE user_id=%s ORDER BY id", (uid,))],
+        "reply_styles": [{"name": r["name"], "instruction": r["instruction"]} for r in q_all("SELECT name,instruction FROM evil_styles WHERE user_id=%s ORDER BY id", (uid,))],
+        "projects": [{"name": p["name"], "instructions": p["instructions"], "persona": p["persona"],
+                      "files": [{"filename": f["filename"], "content": f["content"]} for f in q_all("SELECT filename,content FROM evil_project_files WHERE project_id=%s ORDER BY id", (p["id"],))]}
+                     for p in q_all("SELECT id,name,instructions,persona FROM evil_projects WHERE user_id=%s ORDER BY id", (uid,))],
+    }
+    data = json.dumps({"account": {"username": u["username"], "email": u["email"]}, "conversations": out, **extra}, indent=2)
     return Response(data, mimetype="application/json", headers={"Content-Disposition": "attachment; filename=vyra-data.json"})
 
 
@@ -1297,6 +1516,10 @@ def leaderboard():
         prize = q_one("SELECT value FROM evil_settings WHERE key='weekly_prize'")
         resets = q_one("SELECT EXTRACT(EPOCH FROM ((date_trunc('week', NOW() AT TIME ZONE 'Africa/Lagos') + INTERVAL '7 days') AT TIME ZONE 'Africa/Lagos') - NOW())::int AS s")["s"]
         return jsonify({"mode": "weekly", "leaders": [{"username": r["username"], "score": r["score"]} for r in rows], "prize": prize["value"] if prize else "", "resetsInSeconds": resets})
+    if mode == "referrals":
+        rows = q_all("""SELECT u.username, COUNT(*) AS score FROM evil_users r JOIN evil_users u ON u.id=r.referred_by
+                        WHERE r.referral_rewarded=TRUE AND u.is_admin=FALSE GROUP BY u.username ORDER BY score DESC, u.username LIMIT 10""")
+        return jsonify({"mode": "referrals", "leaders": [{"username": r["username"], "score": r["score"]} for r in rows]})
     rows = q_all("SELECT username, streak_count AS score FROM evil_users WHERE is_admin=FALSE ORDER BY streak_count DESC NULLS LAST, username LIMIT 10")
     return jsonify({"mode": "streak", "leaders": [{"username": r["username"], "score": r["score"] or 0} for r in rows]})
 
@@ -2030,6 +2253,192 @@ def create_payment_request(u, plan, period, provider, reference=None, coupon="")
     return rid, amount, days
 
 
+RELAUNCH_WHERE = "relaunch_claimed=FALSE AND created_at < to_timestamp((SELECT value::bigint FROM evil_settings WHERE key='relaunch_trial_at'))"
+
+
+def relaunch_offer(u):
+    """Accounts that existed before the relaunch can claim one fresh free trial. The offer message is added to their notifications once and the claim card stays until used."""
+    if u["is_admin"]: return False
+    try:
+        if not q_one(f"SELECT 1 FROM evil_users WHERE id=%s AND {RELAUNCH_WHERE}", (u["id"],)): return False
+        if q_one("UPDATE evil_users SET relaunch_notified=TRUE WHERE id=%s AND relaunch_notified=FALSE RETURNING id", (u["id"],)):
+            q_run("INSERT INTO evil_notifications(user_id,message) VALUES (%s,%s)", (u["id"], f"We've relaunched {BRAND}! Your free {TRIAL_DAYS}-day trial is waiting. Open the claim card here or on the Plans page and tap Claim."))
+        return True
+    except Exception:
+        log.exception("relaunch offer failed"); return False
+
+
+@app.post("/api/trial/claim")
+@login_required
+@limited("trial_claim", 10, 3600, per="user")
+def claim_relaunch_trial():
+    row = q_one(f"UPDATE evil_users SET trial_ends_at=GREATEST(COALESCE(trial_ends_at, NOW()), NOW() + make_interval(days => %s::int)), relaunch_claimed=TRUE WHERE id=%s AND is_admin=FALSE AND {RELAUNCH_WHERE} RETURNING trial_ends_at", (TRIAL_DAYS, request.user["id"]))
+    if not row: return err("This offer isn't available for your account (it may already be claimed).")
+    q_run("INSERT INTO evil_notifications(user_id,message) VALUES (%s,%s)", (request.user["id"], f"Welcome back! Your free {TRIAL_DAYS}-day trial is active with full access."))
+    return jsonify({"success": True, "trialEndsAt": iso(row["trial_ends_at"]), "message": f"Your free {TRIAL_DAYS}-day trial is active."})
+
+
+def get_promo():
+    """The admin's promo banner, or None when there is none or it has ended."""
+    row = q_one("SELECT value FROM evil_settings WHERE key='promo_banner'")
+    if not row: return None
+    try: d = json.loads(row["value"])
+    except ValueError: return None
+    if d.get("until") and float(d["until"]) < time.time(): return None
+    return {"id": str(d.get("id", "")), "text": str(d.get("text", ""))[:200]}
+
+
+def maybe_warn_expiry(u, plan_key, trial):
+    """One in-app notification when a paid plan is 3 days or less from ending (once per expiry date)."""
+    if u["is_admin"] or trial or plan_key == "free" or not u["plan_expires_at"]: return
+    try:
+        row = q_one("""UPDATE evil_users SET expiry_warned_for=plan_expires_at WHERE id=%s AND plan_expires_at > NOW() AND plan_expires_at <= NOW() + INTERVAL '3 days'
+                       AND expiry_warned_for IS DISTINCT FROM plan_expires_at RETURNING CEIL(EXTRACT(EPOCH FROM (plan_expires_at - NOW())) / 86400)::int AS d""", (u["id"],))
+        if row:
+            n = max(1, int(row["d"]))
+            q_run("INSERT INTO evil_notifications(user_id,message) VALUES (%s,%s)", (u["id"], f"Your {PLANS[plan_key]['name']} plan ends in {n} day{'s' if n != 1 else ''}. Renew from Plans to keep your limits."))
+    except Exception: log.exception("expiry warning failed")
+
+
+@app.get("/api/billing/history")
+@login_required
+def billing_history():
+    uid = request.user["id"]
+    pays = q_all("SELECT id,plan,amount_ngn,original_amount_ngn,coupon_code,provider,status,billing_period,duration_days,created_at FROM evil_payment_requests WHERE user_id=%s ORDER BY id DESC LIMIT 50", (uid,))
+    gifts = q_all("SELECT plan,duration_days,created_at FROM evil_plan_gifts WHERE user_id=%s ORDER BY id DESC LIMIT 20", (uid,))
+    return jsonify({"payments": [{"id": r["id"], "plan": PLANS.get(r["plan"], {}).get("name", r["plan"]), "amount": r["amount_ngn"], "original": r["original_amount_ngn"], "coupon": r["coupon_code"], "provider": r["provider"],
+                                  "status": r["status"], "period": r["billing_period"], "days": r["duration_days"], "createdAt": iso(r["created_at"])} for r in pays],
+                    "gifts": [{"plan": PLANS.get(r["plan"], {}).get("name", r["plan"]), "days": r["duration_days"], "createdAt": iso(r["created_at"])} for r in gifts]})
+
+
+@app.get("/receipt/<int:request_id>")
+@login_required
+def receipt_page(request_id):
+    from html import escape as e
+    r = q_one("SELECT id,plan,amount_ngn,original_amount_ngn,coupon_code,provider,billing_period,duration_days,reference,created_at FROM evil_payment_requests WHERE id=%s AND user_id=%s AND status='approved'", (request_id, request.user["id"]))
+    if not r: return Response("Receipt not found. Only approved payments have a receipt.", 404, mimetype="text/plain")
+    paid = int(r["amount_ngn"]); orig = int(r["original_amount_ngn"] or paid)
+    rows = [("Receipt no.", f"RCT-{r['id']:06d}"), ("Date", r["created_at"].strftime("%d %b %Y, %H:%M UTC")), ("Customer", f"{request.user['username']} ({request.user['email']})"),
+            ("Plan", f"{PLANS.get(r['plan'], {}).get('name', r['plan'])} ({r['billing_period'] or 'monthly'}, {r['duration_days'] or PLAN_DAYS} days)"),
+            ("Payment method", "Card / Paystack" if r["provider"] == "paystack" else "Bank transfer"), ("Reference", r["reference"] or "-")]
+    if r["coupon_code"] and orig > paid: rows += [("Price", f"₦{orig:,}"), ("Coupon " + r["coupon_code"], f"-₦{orig - paid:,}")]
+    rows.append(("Amount paid", f"₦{paid:,}"))
+    table = "".join(f"<tr><th>{e(k)}</th><td>{e(str(v))}</td></tr>" for k, v in rows)
+    page = f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Receipt RCT-{r['id']:06d}</title>
+<style>body{{font-family:system-ui,sans-serif;max-width:560px;margin:24px auto;padding:0 16px;color:#111}}h1{{font-size:22px;margin:0}}p{{color:#555}}table{{width:100%;border-collapse:collapse;margin:16px 0}}
+th,td{{text-align:left;padding:10px 6px;border-bottom:1px solid #ddd;font-size:15px}}th{{color:#555;font-weight:600;width:42%}}button{{padding:10px 16px;font-size:15px}}@media print{{button{{display:none}}}}</style></head>
+<body><h1>{e(BRAND)}</h1><p>Payment receipt</p><table>{table}</table><button id="print-btn" type="button">Print or save as PDF</button><script src="/static/receipt.js"></script></body></html>"""
+    return Response(page, mimetype="text/html")
+
+
+@app.post("/api/gift/redeem")
+@login_required
+@limited("gift_redeem", 10, 60, per="user")
+def redeem_gift():
+    code = re.sub(r"[^A-Za-z0-9_-]", "", str(body().get("code", "")))[:40]; u = request.user
+    g = q_one("SELECT id,plan,duration_days,redeemed_by,(expires_at IS NOT NULL AND expires_at <= NOW()) AS expired FROM evil_gift_links WHERE code=%s", (code,)) if code else None
+    if not g: return err("That gift code isn't valid.", 404)
+    if g["redeemed_by"]: return err("This gift has already been used.")
+    if g["expired"]: return err("This gift link has expired.")
+    plan_key, trial = effective_plan(u)
+    if plan_key != "free" and not trial and PLAN_ORDER.index(plan_key) > PLAN_ORDER.index(g["plan"]):
+        return err("You already have a higher plan, so this gift was not used. It is still valid for someone else.")
+    claimed = q_one("UPDATE evil_gift_links SET redeemed_by=%s, redeemed_at=NOW() WHERE id=%s AND redeemed_by IS NULL AND (expires_at IS NULL OR expires_at > NOW()) RETURNING id", (u["id"], g["id"]))
+    if not claimed: return err("This gift has already been used.")
+    activate_plan(u["id"], g["plan"], int(g["duration_days"]))
+    audit(u["username"], "gift_link_redeemed", f"link {g['id']}")
+    return jsonify({"success": True, "message": f"Gift added: {PLANS[g['plan']]['name']} for {g['duration_days']} days."})
+
+
+@app.get("/api/student-request")
+@login_required
+def my_student_request():
+    r = q_one("SELECT status,coupon_code FROM evil_student_requests WHERE user_id=%s ORDER BY id DESC LIMIT 1", (request.user["id"],))
+    return jsonify({"status": r["status"] if r else None, "code": r["coupon_code"] if r and r["status"] == "approved" else None})
+
+
+@app.post("/api/student-request")
+@login_required
+@limited("student_req", 5, 3600, per="user")
+def create_student_request():
+    d = body(); school = re.sub(r"\s+", " ", str(d.get("school", ""))).strip()[:100]; note = str(d.get("note", "")).strip()[:500]; uid = request.user["id"]
+    if len(school) < 2: return err("Tell us your school or university.")
+    prev = q_one("SELECT status FROM evil_student_requests WHERE user_id=%s AND status IN ('pending','approved') LIMIT 1", (uid,))
+    if prev: return err("You already have a student discount request." if prev["status"] == "pending" else "You already received a student coupon.")
+    q_run("INSERT INTO evil_student_requests(user_id,school,note) VALUES (%s,%s,%s)", (uid, school, note))
+    return jsonify({"success": True})
+
+
+@app.get("/api/admin/student-requests")
+@admin_required
+def admin_student_requests():
+    rows = q_all("SELECT s.id,s.school,s.note,s.created_at,u.username,u.email FROM evil_student_requests s JOIN evil_users u ON u.id=s.user_id WHERE s.status='pending' ORDER BY s.id LIMIT 50")
+    return jsonify({"requests": [{"id": r["id"], "school": r["school"], "note": r["note"], "username": r["username"], "email": r["email"], "createdAt": iso(r["created_at"])} for r in rows]})
+
+
+@app.post("/api/admin/student-requests/<int:req_id>/<action>")
+@admin_required
+def admin_review_student(req_id, action):
+    if action not in ("approve", "reject"): return err("Unknown action.", 404)
+    if action == "reject":
+        row = q_one("UPDATE evil_student_requests SET status='rejected' WHERE id=%s AND status='pending' RETURNING user_id", (req_id,))
+        if not row: return err("Already handled.", 404)
+        q_run("INSERT INTO evil_notifications(user_id,message) VALUES (%s,%s)", (row["user_id"], "We couldn't verify your student discount request. You can send a new one with more details."))
+    else:
+        try: pct = max(5, min(60, int(body().get("percent", 30))))
+        except (TypeError, ValueError): pct = 30
+        code = "STU" + secrets.token_hex(3).upper()
+        row = q_one("UPDATE evil_student_requests SET status='approved', coupon_code=%s WHERE id=%s AND status='pending' RETURNING user_id", (code, req_id))
+        if not row: return err("Already handled.", 404)
+        q_run("INSERT INTO evil_coupons(code,discount_type,discount_value,max_uses,expires_at,created_by) VALUES (%s,'percent',%s,1,NOW() + INTERVAL '30 days',%s)", (code, pct, request.user["id"]))
+        q_run("INSERT INTO evil_notifications(user_id,message) VALUES (%s,%s)", (row["user_id"], f"Student discount approved: use code {code} for {pct}% off at checkout. It works once and expires in 30 days."))
+    audit(request.user["username"], f"student_{action}", f"request {req_id}")
+    return jsonify({"success": True})
+
+
+@app.get("/api/admin/gift-links")
+@admin_required
+def admin_list_gift_links():
+    rows = q_all("SELECT g.code,g.plan,g.duration_days,g.expires_at,g.created_at,u.username AS redeemer FROM evil_gift_links g LEFT JOIN evil_users u ON u.id=g.redeemed_by ORDER BY g.id DESC LIMIT 30")
+    base = SITE_URL or request.host_url.rstrip("/")
+    return jsonify({"links": [{"url": f"{base}/?gift={r['code']}", "plan": PLANS.get(r["plan"], {}).get("name", r["plan"]), "days": r["duration_days"], "redeemedBy": r["redeemer"], "createdAt": iso(r["created_at"])} for r in rows]})
+
+
+@app.post("/api/admin/gift-links")
+@admin_required
+@limited("gift_links", 30, 3600, per="user")
+def admin_create_gift_link():
+    d = body(); plan = str(d.get("plan", ""))
+    try: days = int(d.get("days", 30))
+    except (TypeError, ValueError): return err("Days must be a whole number.")
+    if plan not in PLANS or plan == "free": return err("Choose a paid plan.")
+    if days < 1 or days > 365: return err("Days must be between 1 and 365.")
+    code = secrets.token_urlsafe(9)
+    q_run("INSERT INTO evil_gift_links(code,plan,duration_days,created_by,expires_at) VALUES (%s,%s,%s,%s,NOW() + INTERVAL '30 days')", (code, plan, days, request.user["id"]))
+    audit(request.user["username"], "gift_link_created", f"{plan} {days}d")
+    return jsonify({"success": True, "url": f"{SITE_URL or request.host_url.rstrip('/')}/?gift={code}"})
+
+
+@app.get("/api/admin/promo")
+@admin_required
+def admin_get_promo():
+    return jsonify({"promo": get_promo()})
+
+
+@app.post("/api/admin/promo")
+@admin_required
+def admin_set_promo():
+    d = body(); text = re.sub(r"\s+", " ", str(d.get("text", ""))).strip()[:200]
+    if not text:
+        q_run("DELETE FROM evil_settings WHERE key='promo_banner'"); audit(request.user["username"], "promo_clear"); return jsonify({"success": True, "promo": None})
+    try: days = max(0, min(60, int(d.get("days", 7))))
+    except (TypeError, ValueError): days = 7
+    val = json.dumps({"id": secrets.token_hex(4), "text": text, "until": (time.time() + days * 86400) if days else None})
+    q_run("INSERT INTO evil_settings(key,value) VALUES ('promo_banner',%s) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value", (val,))
+    audit(request.user["username"], "promo_set", text[:100])
+    return jsonify({"success": True, "promo": get_promo()})
+
+
 @app.post("/api/upgrade")
 @login_required
 @limited("upgrade", 10, 3600, per="user")
@@ -2238,8 +2647,21 @@ def admin_coupon_toggle(coupon_id):
 @app.get("/api/admin/users")
 @admin_required
 def admin_users():
-    rows = q_all("""SELECT id,username,email,public_id,plan,is_suspended,is_verified,plan_expires_at,created_at,last_seen_at,
-                    (trial_ends_at IS NOT NULL AND trial_ends_at > NOW()) AS trial FROM evil_users WHERE is_admin=FALSE ORDER BY id DESC LIMIT 500""")
+    where, params = ["is_admin=FALSE"], []
+    q = re.sub(r"\s+", " ", request.args.get("q", "")).strip()[:80]
+    if q:
+        like = "%" + re.sub(r"([%_\\])", r"\\\1", q) + "%"; where.append("(username ILIKE %s OR email ILIKE %s OR public_id ILIKE %s)"); params += [like, like, like]
+    plan = request.args.get("plan", "")
+    if plan in PLANS: where.append("plan=%s"); params.append(plan)
+    status = request.args.get("status", "")
+    if status == "suspended": where.append("is_suspended=TRUE")
+    elif status == "unverified": where.append("is_verified=FALSE")
+    elif status == "trial": where.append("trial_ends_at IS NOT NULL AND trial_ends_at > NOW()")
+    elif status == "paying": where.append("plan<>'free' AND plan_expires_at IS NOT NULL AND plan_expires_at > NOW()")
+    elif status == "inactive": where.append("(last_seen_at IS NULL OR last_seen_at < NOW() - INTERVAL '30 days')")
+    cond = " AND ".join(where)
+    rows = q_all(f"""SELECT id,username,email,public_id,plan,is_suspended,is_verified,plan_expires_at,created_at,last_seen_at,
+                    (trial_ends_at IS NOT NULL AND trial_ends_at > NOW()) AS trial FROM evil_users WHERE {cond} ORDER BY id DESC LIMIT 200""", tuple(params))
     return jsonify({"users": [{**r, "plan_expires_at": iso(r["plan_expires_at"]), "created_at": iso(r["created_at"]), "last_seen_at": iso(r["last_seen_at"])} for r in rows]})
 
 
@@ -2482,9 +2904,144 @@ def admin_stats():
 @app.get("/api/admin/audit")
 @admin_required
 def admin_audit():
-    rows = q_all("SELECT actor,action,detail,created_at FROM evil_audit_log ORDER BY id DESC LIMIT 60")
-    fails = q_all("SELECT username,ip,created_at FROM evil_login_attempts WHERE success=FALSE ORDER BY id DESC LIMIT 25")
+    day = request.args.get("date", "")
+    if day:
+        import datetime
+        try: day = datetime.date.fromisoformat(day).isoformat()
+        except ValueError: return err("Pick a valid date.")
+        rows = q_all("SELECT actor,action,detail,created_at FROM evil_audit_log WHERE (created_at AT TIME ZONE 'Africa/Lagos')::date=%s::date ORDER BY id DESC LIMIT 200", (day,))
+        fails = q_all("SELECT username,ip,created_at FROM evil_login_attempts WHERE success=FALSE AND (created_at AT TIME ZONE 'Africa/Lagos')::date=%s::date ORDER BY id DESC LIMIT 100", (day,))
+    else:
+        rows = q_all("SELECT actor,action,detail,created_at FROM evil_audit_log ORDER BY id DESC LIMIT 60")
+        fails = q_all("SELECT username,ip,created_at FROM evil_login_attempts WHERE success=FALSE ORDER BY id DESC LIMIT 25")
     return jsonify({"audit": [{**r, "created_at": iso(r["created_at"])} for r in rows], "failedLogins": [{**r, "created_at": iso(r["created_at"])} for r in fails]})
+
+
+def _day_stats(offset):
+    """Metrics for one Lagos calendar day (offset 0 = today, 1 = yesterday)."""
+    d = "((NOW() AT TIME ZONE 'Africa/Lagos')::date - %s)"; lag = "(created_at AT TIME ZONE 'Africa/Lagos')::date"
+    one = lambda sql: q_one(sql, (offset,))["n"]
+    return {"signups": one(f"SELECT COUNT(*) AS n FROM evil_users WHERE is_admin=FALSE AND {lag}={d}"),
+            "activeUsers": one(f"SELECT COUNT(DISTINCT user_id) AS n FROM evil_messages WHERE role='user' AND {lag}={d}"),
+            "messages": one(f"SELECT COUNT(*) AS n FROM evil_messages WHERE role='user' AND {lag}={d}"),
+            "images": one(f"SELECT COUNT(*) AS n FROM evil_images WHERE {lag}={d}"),
+            "revenue": int(one(f"SELECT COALESCE(SUM(amount_ngn),0) AS n FROM evil_payment_requests WHERE status='approved' AND (COALESCE(reviewed_at, created_at) AT TIME ZONE 'Africa/Lagos')::date={d}"))}
+
+
+def _ai_cost(since_sql):
+    rates = {"fast": float(os.environ.get("AI_COST_FAST", "0.0002")), "balanced": float(os.environ.get("AI_COST_BALANCED", "0.0006")), "deep": float(os.environ.get("AI_COST_DEEP", "0.0015"))}
+    img = float(os.environ.get("AI_COST_IMAGE", "0"))
+    rows = q_all(f"SELECT COALESCE(mode,'balanced') AS m, COUNT(*) AS n FROM evil_messages WHERE role='assistant' AND {since_sql} GROUP BY 1")
+    n = {r["m"]: r["n"] for r in rows}; imgs = q_one(f"SELECT COUNT(*) AS n FROM evil_images WHERE {since_sql}")["n"]
+    return {"replies": n, "images": imgs, "usd": round(sum(rates.get(k, rates["balanced"]) * v for k, v in n.items()) + img * imgs, 4)}
+
+
+@app.get("/api/admin/summary")
+@admin_required
+def admin_summary():
+    today = "(created_at AT TIME ZONE 'Africa/Lagos')::date = (NOW() AT TIME ZONE 'Africa/Lagos')::date"
+    month = "date_trunc('month', created_at AT TIME ZONE 'Africa/Lagos') = date_trunc('month', NOW() AT TIME ZONE 'Africa/Lagos')"
+    return jsonify({"today": _day_stats(0), "yesterday": _day_stats(1),
+                    "pendingPayments": q_one("SELECT COUNT(*) AS n FROM evil_payment_requests WHERE status='pending'")["n"],
+                    "openReports": q_one("SELECT COUNT(*) AS n FROM evil_reports WHERE status='open'")["n"],
+                    "unreadSupport": q_one("SELECT COUNT(DISTINCT user_id) AS n FROM evil_support_messages WHERE sender='user' AND read_at IS NULL")["n"],
+                    "trialClaims": q_one("SELECT COUNT(*) AS n FROM evil_users WHERE relaunch_claimed=TRUE")["n"],
+                    "aiToday": _ai_cost(today), "aiMonth": _ai_cost(month)})
+
+
+@app.get("/api/admin/health")
+@admin_required
+@limited("admin_health", 20, 300, per="user")
+def admin_health():
+    out = []
+    def check(name, fn):
+        t0 = time.time()
+        try: ok, detail = fn()
+        except Exception as exc: ok, detail = False, type(exc).__name__ + ": " + str(exc)[:120]
+        out.append({"name": name, "ok": bool(ok), "detail": detail, "ms": int((time.time() - t0) * 1000)})
+    check("Database", lambda: (q_one("SELECT 1 AS x")["x"] == 1, "Connected"))
+    def ai():
+        if not GROQ_API_KEY: return False, "GROQ_API_KEY is not set"
+        n = len(list(make_client().with_options(timeout=6, max_retries=0).models.list().data)); return True, f"Groq reachable ({n} models)"
+    check("AI (Groq)", ai)
+    def mail():
+        if not mail_enabled(): return False, "No mail provider configured (codes wait for admin approval)"
+        return True, "Brevo" if BREVO_API_KEY else ("Resend" if RESEND_API_KEY else "SMTP") + " configured. Use the test box below to confirm delivery."
+    check("Email", mail)
+    check("Payments (Paystack)", lambda: (bool(PAYSTACK_SECRET_KEY), "Key set" if PAYSTACK_SECRET_KEY else "Not set: only bank transfer works"))
+    def img():
+        r = requests.head("https://image.pollinations.ai", timeout=5, allow_redirects=True); return r.status_code < 500, f"Image service answered ({r.status_code})"
+    check("Image service", img)
+    check("Admin two-step login", lambda: (bool(q_one("SELECT totp_enabled FROM evil_users WHERE id=%s", (request.user["id"],))["totp_enabled"]), "On" if q_one("SELECT totp_enabled FROM evil_users WHERE id=%s", (request.user["id"],))["totp_enabled"] else "Off: turn it on in Settings"))
+    return jsonify({"checks": out, "siteUrl": SITE_URL or "(not set)"})
+
+
+@app.post("/api/admin/health/test-email")
+@admin_required
+@limited("test_email", 5, 3600, per="user")
+def admin_test_email():
+    to = str(body().get("to", "")).strip().lower()
+    if not valid_email(to): return err("Enter a valid email address.")
+    if not mail_enabled(): return err("No mail provider is configured.")
+    ok = send_mail(to, f"{BRAND} test email", "This is a test email from your admin Health page. If you can read it, email works.")
+    return jsonify({"success": ok, "message": "The provider accepted the email. Check the inbox (and spam)." if ok else "The provider rejected or failed to send it. Check the logs."})
+
+
+@app.post("/api/admin/gift-bulk")
+@admin_required
+@limited("gift_bulk", 10, 3600, per="user")
+def admin_gift_bulk():
+    d = body(); plan = str(d.get("plan", "")); audience = str(d.get("audience", "")); reason = str(d.get("reason", "")).strip()[:300]
+    try: days = int(d.get("days", 30))
+    except (TypeError, ValueError): return err("Days must be a whole number.")
+    if plan not in PLANS or plan == "free": return err("Choose a paid plan.")
+    if days < 1 or days > 365: return err("Days must be between 1 and 365.")
+    base = "is_admin=FALSE AND is_suspended=FALSE"; params = []
+    if audience == "free": base += " AND (plan='free' OR plan IS NULL OR plan_expires_at IS NULL OR plan_expires_at < NOW())"
+    elif audience == "usernames":
+        names = [n.strip().lower() for n in re.split(r"[,\n; ]+", str(d.get("usernames", ""))) if n.strip()][:200]
+        if not names: return err("Enter at least one username.")
+        base += " AND LOWER(username) = ANY(%s)"; params.append(names)
+    elif audience != "all": return err("Choose who should receive the gift.")
+    rows = q_all(f"SELECT id,username,CASE WHEN plan<>'free' AND plan_expires_at > NOW() THEN plan ELSE 'free' END AS active_plan FROM evil_users WHERE {base} ORDER BY id LIMIT 501", tuple(params))
+    if len(rows) > 500: return err("That is more than 500 people. Narrow it down (for example use a list of usernames).")
+    rank = lambda p: PLAN_ORDER.index(LEGACY_PLAN_MAP.get(p, p)) if LEGACY_PLAN_MAP.get(p, p) in PLAN_ORDER else 0
+    targets = [r for r in rows if rank(r["active_plan"]) <= PLAN_ORDER.index(plan)]
+    skipped = len(rows) - len(targets)
+    if d.get("confirm") is not True: return jsonify({"preview": True, "count": len(targets), "skipped": skipped, "sample": [r["username"] for r in targets[:8]]})
+    note = f"You've received a {PLANS[plan]['name']} plan gift for {days} days!" + (f" Note: {reason}" if reason else "")
+    with db() as conn, conn.cursor() as cur:
+        for r in targets:
+            cur.execute("""UPDATE evil_users SET plan_expires_at = CASE WHEN plan=%s AND plan_expires_at > NOW() THEN plan_expires_at + (%s || ' days')::interval ELSE NOW() + (%s || ' days')::interval END, plan=%s WHERE id=%s""", (plan, str(days), str(days), plan, r["id"]))
+            cur.execute("INSERT INTO evil_plan_gifts(user_id,admin_id,plan,duration_days,reason) VALUES (%s,%s,%s,%s,%s)", (r["id"], request.user["id"], plan, days, reason))
+            cur.execute("INSERT INTO evil_notifications(user_id,message) VALUES (%s,%s)", (r["id"], note))
+    audit(request.user["username"], "gift_bulk", f"{plan} {days}d to {len(targets)} users ({audience})")
+    return jsonify({"success": True, "gifted": len(targets), "skipped": skipped, "message": f"Gifted {PLANS[plan]['name']} for {days} days to {len(targets)} users." + (f" Skipped {skipped} who already have a higher plan." if skipped else "")})
+
+
+@app.get("/api/admin/canned")
+@admin_required
+def admin_canned():
+    if not q_one("SELECT 1 FROM evil_settings WHERE key='canned_seeded'"):
+        for t, x in (("Payment received", "Thank you! We received your payment and your plan is now active. Enjoy!"), ("Send payment proof", "Please upload a clear screenshot of your transfer from the Plans page so we can confirm your payment."), ("Thanks for contacting us", "Thanks for reaching out. We're looking into this and will update you soon.")):
+            q_run("INSERT INTO evil_canned(title,text) VALUES (%s,%s)", (t, x))
+        q_run("INSERT INTO evil_settings(key,value) VALUES ('canned_seeded','1') ON CONFLICT (key) DO NOTHING")
+    return jsonify({"replies": [dict(r) for r in q_all("SELECT id,title,text FROM evil_canned ORDER BY id")]})
+
+
+@app.post("/api/admin/canned")
+@admin_required
+def admin_canned_add():
+    d = body(); text = str(d.get("text", "")).strip()[:2000]; title = re.sub(r"\s+", " ", str(d.get("title") or text)).strip()[:40]
+    if len(text) < 2: return err("Write the reply text first.")
+    if q_one("SELECT COUNT(*) AS n FROM evil_canned")["n"] >= 30: return err("You can keep up to 30 canned replies.")
+    row = q_one("INSERT INTO evil_canned(title,text) VALUES (%s,%s) RETURNING id", (title, text)); return jsonify({"success": True, "id": row["id"]})
+
+
+@app.delete("/api/admin/canned/<int:canned_id>")
+@admin_required
+def admin_canned_delete(canned_id):
+    q_run("DELETE FROM evil_canned WHERE id=%s", (canned_id,)); return jsonify({"success": True})
 
 
 @app.get("/api/admin/export")
