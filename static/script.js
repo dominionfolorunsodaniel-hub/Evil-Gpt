@@ -175,7 +175,7 @@ $("reset-form").addEventListener("submit", async (e) => {
 /* ---------------------------------------------------------------- app boot */
 async function enterApp() {
   $("auth-view").classList.add("hidden"); $("app-view").classList.remove("hidden");
-  await refreshMe();
+  await refreshMe(); paintHistoryEarly();
   const tasks = [loadPersonas(), loadHistory(), loadNotifs(), loadDailyPrompt(), loadStyles()];
   await Promise.all(tasks.map((t) => t.catch(() => {})));
   offerPendingGift(); setGreeting(); const rememberedPage = store.get("vyra-page"); newChat(); maybeTour(); if (["chat","toolbox","images","plans","workspace"].includes(rememberedPage)) showPage(rememberedPage);
@@ -283,7 +283,8 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closeMod
 
 /* theme */
 function applyThemeIcon() { const t = document.documentElement.dataset.theme; $("theme-btn").innerHTML = ico(t === "light" ? "moon" : "sun"); }
-$("theme-btn").onclick = () => { const t = document.documentElement.dataset.theme === "light" ? "dark" : "light"; document.documentElement.dataset.theme = t; store.set("vyra-theme", t); applyThemeIcon(); };
+$("theme-btn").onclick = () => { const order = ["auto", "light", "dark"], cur = (window.vyraTheme && window.vyraTheme.mode()) || "auto", next = order[(order.indexOf(cur) + 1) % 3]; window.vyraTheme.set(next); applyThemeIcon(); toast(next === "auto" ? "Theme: follows your phone" : "Theme: " + next); };
+document.addEventListener("vyra-theme", () => applyThemeIcon());
 applyThemeIcon();
 
 /* ---------------------------------------------------------------- notifications */
@@ -383,10 +384,11 @@ function newChat(keepProject) {
 }
 $("new-chat").onclick = newChat;
 async function openConversation(id) {
+  showChatSkeleton();
   try {
     const d = await api("/api/conversations/" + id); S.conv = id; S.editFromId = null; S.projectId = d.projectId || null; S.memoryOn = d.useMemory !== false; $("mem-switch").checked = S.memoryOn; updateOptsDot(); // each chat keeps its own project and memory switch
     S.msgs = d.messages.map((m) => ({ id: m.id, role: m.role, content: m.content, feedback: m.feedback, pinned: m.pinned, mode: m.mode, createdAt: m.created_at })); renderMessages(); $("message-input").value = store.get(draftKey()) || ""; autosize(); markActive(); showPage("chat"); toBottom();
-  } catch (e) { toast(e.message, "error"); }
+  } catch (e) { toast(e.message, "error"); renderMessages(); }
 }
 function autosize() { const t = $("message-input"); t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 180) + "px"; updateChips(); }
 $("message-input").addEventListener("input", autosize);
@@ -517,9 +519,28 @@ function clearFile() { S.fileText = ""; S.fileName = ""; $("file-chip").classLis
 
 /* ---------------------------------------------------------------- history sidebar */
 let searchTimer = 0;
+const CHAT_CACHE_KEY = "vyra-chat-cache";
+function userKey() { const u = S.user || {}; return String(u.id || u.email || u.username || ""); }
+function cacheChats() {
+  if (S.historyView !== "active" || !userKey()) return;
+  try { store.set(CHAT_CACHE_KEY, JSON.stringify({ u: userKey(), chats: (S.chats || []).slice(0, 40), folders: S.folders || [] })); } catch (e) {}
+}
+function readChatCache() {
+  try { const c = JSON.parse(store.get(CHAT_CACHE_KEY) || "null"); return c && c.u === userKey() && Array.isArray(c.chats) ? c : null; } catch (e) { return null; }
+}
+function skeletonRows(n) { let h = ""; for (let i = 0; i < n; i++) h += `<div class="h-row sk-row"><span class="skeleton ${i % 2 ? "w60" : "w40"}"></span></div>`; return h; }
+function paintHistoryEarly() {
+  const c = readChatCache();
+  if (c) { S.chats = c.chats; S.folders = c.folders || []; try { renderHistory(); } catch (e) {} return; }
+  if (!$("history-list").children.length) $("history-list").innerHTML = skeletonRows(6);
+}
+function showChatSkeleton() {
+  const box = $("chat-messages"); $("welcome").classList.add("hidden");
+  box.innerHTML = `<div class="sk-chat"><span class="skeleton w60"></span><span class="skeleton"></span><span class="skeleton w40"></span><span class="skeleton"></span></div>`;
+}
 async function loadHistory() {
   const [d, f] = await Promise.all([api("/api/conversations" + (S.historyView === "archived" ? "?archived=1" : "")), S.historyView === "archived" ? Promise.resolve(null) : api("/api/folders").catch(() => null)]);
-  S.chats = d.conversations; if (f) S.folders = f.folders; renderHistory();
+  S.chats = d.conversations; if (f) S.folders = f.folders; renderHistory(); cacheChats();
 }
 function markActive() { document.querySelectorAll(".h-row").forEach((r) => r.classList.toggle("active", r.dataset.id === S.conv)); }
 function tagChips(c) { return c.tags ? c.tags.split(",").map((t) => t.trim()).filter(Boolean).map((t) => `<span class="h-tag">${esc(t)}</span>`).join("") : ""; }
@@ -598,17 +619,21 @@ $("generate-img-btn").onclick = async () => {
   if (S.imgStyle) prompt += ", " + S.imgStyle.toLowerCase() + " style";
   const btn = $("generate-img-btn"); setBtn(btn, true, ico("zap") + "Generating...");
   try {
-    const d = await post("/api/generate-image", { prompt }); const box = $("img-result"), img = $("img-result-img");
+    const d = await post("/api/generate-image", { prompt, size: S.imgSize || "square" }); const box = $("img-result"), img = $("img-result-img");
     box.classList.remove("hidden"); box.querySelector(".skeleton").classList.remove("hidden"); img.style.opacity = "0";
-    img.onload = () => { box.querySelector(".skeleton").classList.add("hidden"); img.style.opacity = "1"; loadGallery(); };
+    img.onload = () => { box.querySelector(".skeleton").classList.add("hidden"); img.style.opacity = "1"; box.style.aspectRatio = img.naturalWidth && img.naturalHeight ? img.naturalWidth + " / " + img.naturalHeight : "1"; loadGallery(); };
     img.onerror = () => { box.querySelector(".skeleton").classList.add("hidden"); toast("The image service is busy. Try again in a moment.", "error"); };
     img.src = d.image_url; $("img-download").href = d.image_url; refreshMe();
   } catch (e) { toast(e.message, "error"); } finally { setBtn(btn, false, ico("zap") + "Generate image"); }
 };
 async function loadGallery() {
-  try { const d = await api("/api/images"); $("gallery").innerHTML = d.images.length ? d.images.map((i) => `<div class="g-item"><img loading="lazy" src="${esc(i.display_url)}" alt="${esc(i.prompt)}"><div class="g-actions"><a href="${esc(i.display_url)}" download target="_blank" rel="noopener" aria-label="Download">${ico("download", "sm")}</a><button type="button" data-del-img="${i.id}" aria-label="Delete">${ico("trash", "sm")}</button></div></div>`).join("") : `<div class="empty" style="grid-column:1/-1">Images you make will be saved here.</div>`; } catch (e) {}
+  try { const d = await api("/api/images"); $("gallery").innerHTML = d.images.length ? d.images.map((i) => `<div class="g-item"><img loading="lazy" src="${esc(i.display_url)}" alt="${esc(i.prompt)}"><div class="g-actions">${S.images && S.images.edit ? `<button type="button" data-edit-img="${esc(i.display_url)}" aria-label="Edit this picture">${ico("edit", "sm")}</button>` : ""}${String(i.prompt).startsWith("Edit: ") ? "" : `<button type="button" data-var-img="${esc(i.prompt)}" aria-label="Make another version">${ico("refresh", "sm")}</button>`}<a href="${esc(i.display_url)}" download target="_blank" rel="noopener" aria-label="Download">${ico("download", "sm")}</a><button type="button" data-del-img="${i.id}" aria-label="Delete">${ico("trash", "sm")}</button></div></div>`).join("") : `<div class="empty" style="grid-column:1/-1">Images you make will be saved here.</div>`; } catch (e) {}
 }
-$("gallery").onclick = async (e) => { const b = e.target.closest("[data-del-img]"); if (!b) return; try { await post(`/api/images/${b.dataset.delImg}/delete`); loadGallery(); } catch (err) { toast(err.message, "error"); } };
+$("gallery").onclick = async (e) => {
+  const ed = e.target.closest("[data-edit-img]"), vr = e.target.closest("[data-var-img]");
+  if (ed) { try { const r = await fetch(ed.dataset.editImg, { credentials: "same-origin" }); if (!r.ok) throw new Error("Could not open that picture."); setEditFile(new File([await r.blob()], "picture.jpg", { type: "image/jpeg" })); $("edit-card").scrollIntoView({ behavior: "smooth", block: "center" }); } catch (err) { toast(err.message, "error"); } return; }
+  if (vr) { S.imgStyle = ""; document.querySelectorAll("#style-chips .chip").forEach((c) => c.classList.remove("on")); $("image-prompt").value = vr.dataset.varImg.replace(/^Edit: /, ""); $("generate-img-btn").click(); window.scrollTo({ top: 0, behavior: "smooth" }); return; }
+  const b = e.target.closest("[data-del-img]"); if (!b) return; try { await post(`/api/images/${b.dataset.delImg}/delete`); loadGallery(); } catch (err) { toast(err.message, "error"); } };
 
 /* ---------------------------------------------------------------- Plans, checkout, referral, leaderboard */
 let BILLING_PERIOD = "monthly";
@@ -707,7 +732,7 @@ $("logout-others").onclick = () => confirmBox("Log out of all other devices?", "
 $("install-btn").onclick = async () => {
   if (window.vyraInstall) { window.vyraInstall.prompt(); await window.vyraInstall.userChoice; window.vyraInstall = null; } else toast("On iPhone: tap Share, then Add to Home Screen.");
 };
-$("logout").onclick = async () => { try { await post("/logout"); } catch (e) {} location.href = "/?login=1"; };
+$("logout").onclick = async () => { try { localStorage.removeItem(CHAT_CACHE_KEY); } catch (e) {} try { await post("/logout"); } catch (e) {} location.href = "/?login=1"; };
 $("delete-account").onclick = () => {
   $("generic-card").innerHTML = `<div class="modal-head"><h2>Delete your account?</h2><button class="icon-btn" data-close aria-label="Close">${ico("x")}</button></div><p class="muted">This permanently deletes your account, chats and images. Enter your password to confirm.</p><input class="input" id="del-pw" type="password" autocomplete="current-password" placeholder="Your password"><div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px"><button class="btn" data-close>Cancel</button><button class="btn danger" id="del-go">Delete my account</button></div>`;
   openModal("generic-modal"); $("del-go").onclick = async () => { try { await post("/api/user/delete", { password: $("del-pw").value }); location.href = "/"; } catch (e) { toast(e.message, "error"); } };
@@ -1358,6 +1383,93 @@ $("admin-page").addEventListener("click", async (e) => {
   } catch (err) { toast(err.message, "error"); }
 });
 $("admin-page").addEventListener("change", (e) => { if (e.target.id === "bg-aud") $("bg-names").classList.toggle("hidden", e.target.value !== "usernames"); });
+// ---- Batch 8: phone bottom navigation, install prompt after the 3rd visit
+(function mobileExtras() {
+  const mq = matchMedia("(max-width: 860px)");
+  const nav = document.createElement("nav"); nav.id = "bottom-nav"; nav.setAttribute("aria-label", "Main");
+  document.querySelectorAll(".nav-item[data-page]").forEach((b) => {
+    if (b.dataset.page === "admin") return;
+    const x = document.createElement("button"); x.type = "button"; x.className = "bn-item"; x.dataset.page = b.dataset.page; x.innerHTML = b.innerHTML;
+    x.onclick = () => showPage(b.dataset.page); nav.appendChild(x);
+  });
+  $("app-view").appendChild(nav);
+  const sync = () => { const p = S.page || "chat"; nav.querySelectorAll(".bn-item").forEach((x) => x.classList.toggle("active", x.dataset.page === p)); document.body.classList.toggle("has-bn", mq.matches); };
+  document.addEventListener("click", (e) => { if (e.target.closest(".nav-item,.bn-item")) setTimeout(sync, 0); });
+  setTimeout(sync, 400); setInterval(sync, 1500);
+  if (mq.addEventListener) mq.addEventListener("change", sync);
+  const inp = $("message-input");
+  inp.addEventListener("focus", () => document.body.classList.add("kb-open")); inp.addEventListener("blur", () => document.body.classList.remove("kb-open"));
+
+  // Install prompt: count one visit per browser session, offer after the 3rd, never nag.
+  try { if (!sessionStorage.getItem("vyra-visit-counted")) { sessionStorage.setItem("vyra-visit-counted", "1"); store.set("vyra-visits", String((parseInt(store.get("vyra-visits") || "0", 10) || 0) + 1)); } } catch (e) {}
+  const standalone = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  let shown = false;
+  function maybeOfferInstall() {
+    if (shown || standalone() || store.get("vyra-installed")) return;
+    if ((parseInt(store.get("vyra-visits") || "0", 10) || 0) < 3) return;
+    const dis = parseInt(store.get("vyra-install-dismissed") || "0", 10); if (dis && Date.now() - dis < 30 * 86400000) return;
+    if (!window.vyraInstall && !isIos) return;
+    if ($("app-view").classList.contains("hidden")) return;
+    shown = true;
+    const bar = document.createElement("div"); bar.id = "install-bar"; bar.setAttribute("role", "dialog");
+    bar.innerHTML = `<div class="ib-text"><b>Add Vyra to your home screen</b><span>Opens faster and feels like an app.</span></div><button class="btn small" id="ib-go">${isIos && !window.vyraInstall ? "How" : "Install"}</button><button class="icon-btn" id="ib-x" aria-label="Not now">&times;</button>`;
+    document.body.appendChild(bar);
+    $("ib-x").onclick = () => { store.set("vyra-install-dismissed", String(Date.now())); bar.remove(); };
+    $("ib-go").onclick = async () => {
+      if (window.vyraInstall) { try { window.vyraInstall.prompt(); await window.vyraInstall.userChoice; } catch (e) {} window.vyraInstall = null; bar.remove(); }
+      else { toast("On iPhone: tap Share, then Add to Home Screen."); store.set("vyra-install-dismissed", String(Date.now())); bar.remove(); }
+    };
+  }
+  document.addEventListener("vyra-installable", () => setTimeout(maybeOfferInstall, 3000));
+  document.addEventListener("vyra-installed", () => { store.set("vyra-installed", "1"); const b = $("install-bar"); if (b) b.remove(); });
+  setTimeout(maybeOfferInstall, 8000);
+})();
+
+// ---- Batch 9: image shapes and photo editing
+(function imageStudioPlus() {
+  S.imgSize = "square";
+  $("size-chips").onclick = (e) => { const b = e.target.closest("[data-size]"); if (!b) return; S.imgSize = b.dataset.size; document.querySelectorAll("#size-chips .chip").forEach((c) => c.classList.toggle("on", c === b)); };
+  const ED = { file: null, url: "" };
+  window.setEditFile = (f) => {
+    ED.file = f; if (ED.url) URL.revokeObjectURL(ED.url);
+    ED.url = f ? URL.createObjectURL(f) : ""; const p = $("edit-preview"); p.src = ED.url; p.classList.toggle("hidden", !f);
+  };
+  function shrink(file) { // phones take big photos: shrink before uploading so it is fast and never hits the size limit
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file), im = new Image();
+      im.onload = () => {
+        const k = Math.min(1, 1024 / Math.max(im.naturalWidth, im.naturalHeight)), c = document.createElement("canvas");
+        c.width = Math.max(1, Math.round(im.naturalWidth * k)); c.height = Math.max(1, Math.round(im.naturalHeight * k));
+        c.getContext("2d").drawImage(im, 0, 0, c.width, c.height); URL.revokeObjectURL(url);
+        c.toBlob((b) => b ? resolve(b) : reject(new Error("Could not read that picture.")), "image/jpeg", 0.9);
+      };
+      im.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Could not read that picture.")); };
+      im.src = url;
+    });
+  }
+  $("edit-file").onchange = (e) => { const f = e.target.files && e.target.files[0]; if (f) setEditFile(f); e.target.value = ""; };
+  $("edit-go").onclick = async () => {
+    const prompt = $("edit-prompt").value.trim();
+    if (!ED.file) return toast("Choose a picture first.");
+    if (prompt.length < 3) return toast("Say what the picture should become.");
+    const btn = $("edit-go"); setBtn(btn, true, ico("edit") + "Editing...");
+    try {
+      const blob = await shrink(ED.file), fd = new FormData();
+      fd.append("image", blob, "picture.jpg"); fd.append("prompt", prompt); fd.append("strength", $("edit-strength").value);
+      const d = await api("/api/edit-image", { method: "POST", body: fd });
+      const box = $("img-result"), img = $("img-result-img");
+      box.classList.remove("hidden"); box.style.aspectRatio = "1"; box.querySelector(".skeleton").classList.remove("hidden"); img.style.opacity = "0";
+      img.onload = () => { box.querySelector(".skeleton").classList.add("hidden"); img.style.opacity = "1"; box.style.aspectRatio = img.naturalWidth && img.naturalHeight ? img.naturalWidth + " / " + img.naturalHeight : "1"; loadGallery(); };
+      img.onerror = () => { box.querySelector(".skeleton").classList.add("hidden"); toast("Could not show the edited picture. Check your gallery.", "error"); };
+      img.src = d.image_url; $("img-download").href = d.image_url; refreshMe();
+    } catch (e) { toast(e.message, "error"); } finally { setBtn(btn, false, ico("edit") + "Edit picture"); }
+  };
+  const sync = () => $("edit-card").classList.toggle("hidden", !(S.images && S.images.edit));
+  document.addEventListener("click", (e) => { if (e.target.closest('[data-page="images"]')) setTimeout(sync, 300); });
+  setInterval(sync, 2000);
+})();
+
 (async function boot() {
   const ref = document.body.dataset.ref || new URLSearchParams(location.search).get("ref") || "";
   if (ref) { $("reg-ref").value = ref.toUpperCase(); showForm("register"); }
