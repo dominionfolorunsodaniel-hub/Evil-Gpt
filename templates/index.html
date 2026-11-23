@@ -91,6 +91,7 @@
       <button class="nav-item" data-page="images"><svg class="ico"><use href="#i-image"/></svg>Image Studio</button>
       <button class="nav-item" data-page="plans"><svg class="ico"><use href="#i-star"/></svg>Plans</button>
       <button class="nav-item" data-page="settings"><svg class="ico"><use href="#i-settings"/></svg>Settings</button>
+      <button class="nav-item hidden" id="side-install" type="button"><svg class="ico"><use href="#i-download"/></svg>Install app</button>
       <button class="nav-item hidden" id="admin-nav" data-page="admin"><svg class="ico"><use href="#i-shield"/></svg>Admin</button>
     </nav>
     <div class="search"><svg class="ico sm"><use href="#i-search"/></svg><input id="search-chats" type="search" placeholder="Search chats (Ctrl+K)" aria-label="Search chats"></div>
@@ -255,17 +256,18 @@
           <textarea id="image-prompt" class="input" rows="3" maxlength="600" placeholder="A yellow danfo bus driving through a neon Lagos night, cinematic" aria-label="Image description" style="margin:0"></textarea>
           <div class="chips" id="style-chips"></div>
           <div class="chips" id="size-chips" aria-label="Shape"><button type="button" class="chip on" data-size="square">Square</button><button type="button" class="chip" data-size="portrait">Portrait</button><button type="button" class="chip" data-size="landscape">Landscape</button></div>
+          <label class="check" style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" id="img-enhance" checked> Improve my description automatically (better pictures)</label>
           <button id="generate-img-btn" class="btn primary"><svg class="ico"><use href="#i-zap"/></svg>Generate image</button>
           <span id="image-limit-label" class="tiny muted"><span class="skeleton w60"></span></span>
         </div>
         <div class="card img-box hidden" id="edit-card" style="max-width:640px;margin-top:14px">
           <h3 style="margin:0">Edit a picture</h3>
-          <p class="muted tiny" style="margin:0">Upload a photo and say what it should become. It restyles and transforms the picture; it keeps the overall layout.</p>
+          <p class="muted tiny" style="margin:0">Upload a picture and say what to change, like "make the shirt red" or "put it in a snowy street". Everything else stays the same.</p>
           <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><label class="btn sm" for="edit-file"><svg class="ico sm"><use href="#i-paperclip"/></svg>Choose picture</label><input type="file" id="edit-file" accept="image/png,image/jpeg,image/webp" class="hidden"><img id="edit-preview" class="edit-preview hidden" alt="Picture to edit"></div>
-          <textarea id="edit-prompt" class="input" rows="2" maxlength="500" placeholder="Turn this into a watercolor painting at sunset" aria-label="What to change" style="margin:0"></textarea>
-          <select id="edit-strength" class="input" aria-label="How much to change" style="max-width:260px"><option value="subtle">Change a little</option><option value="medium" selected>Change a medium amount</option><option value="strong">Change a lot</option></select>
+          <textarea id="edit-prompt" class="input" rows="2" maxlength="500" placeholder="Change the background to a beach at sunset" aria-label="What to change" style="margin:0"></textarea>
           <button id="edit-go" class="btn primary"><svg class="ico"><use href="#i-edit"/></svg>Edit picture</button>
         </div>
+        <p id="img-used" class="muted tiny hidden" style="max-width:520px;margin:8px 0 0"></p>
         <div id="img-result" class="img-result hidden"><span class="skeleton"></span><img id="img-result-img" alt="Generated image">
           <div class="overlay"><a id="img-download" class="btn sm" download="vyra-image.jpg" target="_blank" rel="noopener"><svg class="ico sm"><use href="#i-download"/></svg>Download</a></div></div>
         <h3 style="margin-top:34px">Your images</h3>
@@ -294,7 +296,7 @@
         <div class="card set-card" style="max-width:640px;margin-top:14px"><h3>Appearance</h3>
           <label class="opt"><span class="muted tiny">Theme</span><select id="theme-select" class="select" aria-label="Theme"><option value="auto">Follow my phone</option><option value="light">Light</option><option value="dark">Dark</option></select></label></div>
         <div class="card set-card" style="max-width:640px;margin:14px 0 24px"><h3>App</h3>
-          <div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="btn" id="refresh-app"><svg class="ico sm"><use href="#i-refresh"/></svg>Refresh app</button><button type="button" class="btn" id="open-account-settings"><svg class="ico sm"><use href="#i-user"/></svg>Account settings</button></div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="btn primary hidden" id="settings-install"><svg class="ico sm"><use href="#i-download"/></svg>Install app</button><button type="button" class="btn" id="refresh-app"><svg class="ico sm"><use href="#i-refresh"/></svg>Refresh app</button><button type="button" class="btn" id="open-account-settings"><svg class="ico sm"><use href="#i-user"/></svg>Account settings</button></div>
           <p class="muted tiny" style="margin:8px 0 0">Refresh app loads the newest version and clears the saved copy on this phone. Your chats are safe.</p></div>
       </div>
     </section>
