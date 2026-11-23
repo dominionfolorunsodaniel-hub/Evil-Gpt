@@ -509,12 +509,12 @@ async function syncIds(stopped) { // after Stop: learn the saved ids so edit/reg
 $("attach-btn").onclick = () => $("file-input").click();
 async function processPDFFile(f){
   if(!f)return;
-  if(!/\.(pdf|docx|xlsx)$/i.test(f.name)) return toast("Please choose a PDF, Word (.docx) or Excel (.xlsx) file.","error");
+  if(!/\.(pdf|docx|xlsx|zip)$/i.test(f.name)) return toast("Please choose a PDF, Word, Excel or Zip file.","error");
   if(f.size>8*1024*1024) return toast("That file is over 8 MB.","error");
   const fd=new FormData();fd.append("file",f);toast("Reading your file...");
   try{const d=await api("/api/extract-text",{method:"POST",body:fd});S.fileText=d.text;S.fileName=d.filename;
     $("file-chip").innerHTML=`${ico("paperclip","sm")}<span>${esc(d.filename)}${d.truncated?" (first part)":""}</span><button type="button" aria-label="Remove file" id="file-x">${ico("x","sm")}</button>`;
-    $("file-chip").classList.remove("hidden");$("file-x").onclick=clearFile;if(!$ ("message-input").value)$ ("message-input").value="Summarise this document for me.";autosize();
+    $("file-chip").classList.remove("hidden");$("file-x").onclick=clearFile;if(!$ ("message-input").value)$ ("message-input").value=/\.zip$/i.test(f.name)?"Go through these files and tell me what this project does.":"Summarise this document for me.";autosize();
   }catch(err){toast(err.message,"error");}
 }
 $("file-input").onchange=(e)=>{const f=e.target.files[0];e.target.value="";processPDFFile(f);};
