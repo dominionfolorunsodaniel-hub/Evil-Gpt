@@ -1,6 +1,6 @@
 // VYRA AI service worker. Versioned shell cache; network-first for assets so deployments are visible immediately.
-const CACHE = "vyra-shell-v8-flat";
-const SHELL = ["/static/style.css?v=20261122-flat", "/static/script.js?v=20261122-flat", "/static/theme.js?v=20261122-flat", "/static/pwa.js?v=20261122-flat", "/static/icon-192.png", "/offline.html"];
+const CACHE = "vyra-shell-v10-images";
+const SHELL = ["/static/style.css?v=20261123-images", "/static/script.js?v=20261123-images", "/static/theme.js?v=20261123-images", "/static/pwa.js?v=20261123-images", "/static/icon-192.png", "/offline.html"];
 self.addEventListener("install", (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener("activate", (e) => { e.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim())); });
 self.addEventListener("fetch", (e) => {

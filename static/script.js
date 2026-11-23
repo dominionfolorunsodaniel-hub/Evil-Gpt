@@ -628,7 +628,7 @@ $("generate-img-btn").onclick = async () => {
   if (S.imgStyle) prompt += ", " + S.imgStyle.toLowerCase() + " style";
   const btn = $("generate-img-btn"); setBtn(btn, true, ico("zap") + "Generating...");
   try {
-    const d = await post("/api/generate-image", { prompt, size: S.imgSize || "square" }); const box = $("img-result"), img = $("img-result-img");
+    const d = await post("/api/generate-image", { prompt, size: S.imgSize || "square", enhance: $("img-enhance").checked }); const used = $("img-used"); used.textContent = d.prompt_used ? "Improved description: " + d.prompt_used : ""; used.classList.toggle("hidden", !d.prompt_used); const box = $("img-result"), img = $("img-result-img");
     box.classList.remove("hidden"); box.querySelector(".skeleton").classList.remove("hidden"); img.style.opacity = "0";
     img.onload = () => { box.querySelector(".skeleton").classList.add("hidden"); img.style.opacity = "1"; box.style.aspectRatio = img.naturalWidth && img.naturalHeight ? img.naturalWidth + " / " + img.naturalHeight : "1"; loadGallery(); };
     img.onerror = () => { box.querySelector(".skeleton").classList.add("hidden"); toast("The image service is busy. Try again in a moment.", "error"); };
@@ -1450,7 +1450,7 @@ $("admin-page").addEventListener("change", (e) => { if (e.target.id === "bg-aud"
     const btn = $("edit-go"); setBtn(btn, true, ico("edit") + "Editing...");
     try {
       const blob = await shrink(ED.file), fd = new FormData();
-      fd.append("image", blob, "picture.jpg"); fd.append("prompt", prompt); fd.append("strength", $("edit-strength").value);
+      fd.append("image", blob, "picture.jpg"); fd.append("prompt", prompt);
       const d = await api("/api/edit-image", { method: "POST", body: fd });
       const box = $("img-result"), img = $("img-result-img");
       box.classList.remove("hidden"); box.style.aspectRatio = "1"; box.querySelector(".skeleton").classList.remove("hidden"); img.style.opacity = "0";
@@ -1478,6 +1478,27 @@ $("admin-page").addEventListener("change", (e) => { if (e.target.id === "bg-aud"
     } catch (e) {}
     location.reload();
   };
+})();
+
+// ---- Batch 13: visible "Install app" buttons (side menu + Settings) with step-by-step help when the browser has no one-tap install
+(function installButtons() {
+  const standalone = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  const ua = navigator.userAgent, ios = /iphone|ipad|ipod/i.test(ua), android = /android/i.test(ua);
+  function refresh() { const show = !standalone() && !store.get("vyra-installed"); ["side-install", "settings-install"].forEach((id) => $(id).classList.toggle("hidden", !show)); }
+  function help() {
+    const steps = ios ? ["Open this site in <b>Safari</b> (not inside another app).", "Tap the <b>Share</b> button at the bottom.", "Scroll and tap <b>Add to Home Screen</b>, then <b>Add</b>."]
+      : android ? ["Open this site in <b>Chrome</b>.", "Tap the <b>3-dot menu</b> at the top right.", "Tap <b>Install app</b> or <b>Add to Home screen</b>, then confirm."]
+      : ["Open this site in <b>Chrome or Edge</b>.", "Click the <b>install icon</b> at the right end of the address bar, or open the menu and choose <b>Install</b>."];
+    $("generic-card").innerHTML = `<div class="modal-head"><h2>Install ${esc(document.title)}</h2><button class="icon-btn" data-close aria-label="Close">${ico("x")}</button></div><p class="muted">It opens full screen like an app, with its own icon. No app store needed.</p><ol>${steps.map((x) => `<li>${x}</li>`).join("")}</ol>`;
+    openModal("generic-modal");
+  }
+  async function install() {
+    closeSidebar();
+    if (window.vyraInstall) { try { window.vyraInstall.prompt(); await window.vyraInstall.userChoice; } catch (e) {} window.vyraInstall = null; }
+    else help();
+  }
+  $("side-install").onclick = install; $("settings-install").onclick = install;
+  document.addEventListener("vyra-installed", refresh); refresh();
 })();
 
 (async function boot() {
