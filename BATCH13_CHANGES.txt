@@ -1,0 +1,4 @@
+Batch 13 - visible Install app
+- 'Install app' button in the side menu and Settings page (hidden once installed)
+- One tap on Android/Chrome when the browser allows; otherwise step-by-step help for iPhone/Android/desktop
+Files: templates/index.html, static/script.js, static/sw.js

@@ -1,0 +1,7 @@
+Batch 14 - Image Studio on FLUX.2 klein
+- Generation and real instruction-based editing now use Cloudflare FLUX.2 klein (old SD models are being removed by Cloudflare)
+- Auto prompt improver (Groq fast model), toggle on by default; shows the improved description
+- Edit keeps the picture's shape; no more 'strength' picker
+- Stored images re-saved as JPEG; newest 40 kept per user
+- Env (optional): CF_GEN_MODEL, CF_EDIT_MODEL, CF_DAILY_IMAGE_CAP (default 40)
+Files: app.py, templates/index.html, static/script.js, static/sw.js

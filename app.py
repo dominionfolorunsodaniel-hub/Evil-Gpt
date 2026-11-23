@@ -1559,16 +1559,15 @@ def create_reward_request():
 
 
 # ----------------------------------------------------------------------------- Image Studio
-# Cloudflare Workers AI (free daily allowance). Needs CF_ACCOUNT_ID and CF_API_TOKEN in the environment. Without them the old free generator is used and editing stays hidden.
+# Cloudflare Workers AI, FLUX.2 [klein]: one model makes AND edits pictures. Needs CF_ACCOUNT_ID and CF_API_TOKEN in the environment.
+# Without them the old free generator is used and editing stays hidden.
 CF_ACCOUNT_ID = os.environ.get("CF_ACCOUNT_ID", "").strip()
 CF_API_TOKEN = os.environ.get("CF_API_TOKEN", "").strip()
-try: CF_DAILY_CAP = max(1, int(os.environ.get("CF_DAILY_IMAGE_CAP", "80")))
-except ValueError: CF_DAILY_CAP = 80
-CF_GEN_MODEL = "@cf/black-forest-labs/flux-1-schnell"
-CF_WIDE_MODEL = "@cf/bytedance/stable-diffusion-xl-lightning"
-CF_EDIT_MODEL = "@cf/runwayml/stable-diffusion-v1-5-img2img"
+try: CF_DAILY_CAP = max(1, int(os.environ.get("CF_DAILY_IMAGE_CAP", "40")))
+except ValueError: CF_DAILY_CAP = 40
+CF_GEN_MODEL = os.environ.get("CF_GEN_MODEL", "@cf/black-forest-labs/flux-2-klein-4b").strip()
+CF_EDIT_MODEL = os.environ.get("CF_EDIT_MODEL", "@cf/black-forest-labs/flux-2-klein-9b").strip()
 IMG_SIZES = {"square": (1024, 1024), "portrait": (768, 1024), "landscape": (1024, 768)}
-EDIT_STRENGTH = {"subtle": 0.35, "medium": 0.55, "strong": 0.75}
 try:
     from PIL import Image, ImageOps
 except Exception:  # Pillow missing: editing is switched off instead of failing
@@ -1588,11 +1587,13 @@ def cf_used_today():
     return row["n"] if row else 0
 
 
-def cf_run(model, payload):
-    """Calls one Workers AI model and returns (bytes, mime). Raises on any problem; never logs the token."""
+def cf_run(model, fields, images=()):
+    """One FLUX.2 call (multipart form). Returns (bytes, mime). Raises on any problem; never logs the token."""
     import base64
+    files = {k: (None, str(v)) for k, v in fields.items()}
+    for i, img in enumerate(images): files[f"input_image_{i}"] = (f"image{i}.jpg", img, "image/jpeg")
     r = requests.post(f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/ai/run/{model}",
-                      headers={"Authorization": f"Bearer {CF_API_TOKEN}"}, json=payload, timeout=(5, 40))
+                      headers={"Authorization": f"Bearer {CF_API_TOKEN}"}, files=files, timeout=(5, 60))
     if r.status_code != 200: raise RuntimeError(f"Cloudflare answered {r.status_code}: {r.text[:160]}")
     if r.headers.get("Content-Type", "").lower().startswith("image/"): data = r.content
     else:
@@ -1600,18 +1601,41 @@ def cf_run(model, payload):
         if not b64: raise RuntimeError("Cloudflare returned no image")
         data = base64.b64decode(b64)
     mime = sniff_image(data)
-    if not mime or len(data) > 8 * 1024 * 1024: raise RuntimeError("Cloudflare returned an unusable image")
+    if not mime or len(data) > 12 * 1024 * 1024: raise RuntimeError("Cloudflare returned an unusable image")
     return data, mime
 
 
+def shrink_for_storage(data, mime):
+    """Re-saves as a good-quality JPEG so the database stays small and pictures load fast."""
+    if Image is None: return data, mime
+    try:
+        im = Image.open(io.BytesIO(data)).convert("RGB"); buf = io.BytesIO(); im.save(buf, "JPEG", quality=88, optimize=True)
+        return (buf.getvalue(), "image/jpeg") if len(buf.getvalue()) < len(data) else (data, mime)
+    except Exception:
+        return data, mime
+
+
+def enhance_image_prompt(prompt):
+    """Turns a short idea into a rich image prompt with the fast model. Any problem returns the original text."""
+    try:
+        r = make_client().chat.completions.create(model=GROQ_FAST_MODEL, temperature=0.7, max_tokens=200, timeout=10, messages=[
+            {"role": "system", "content": "Rewrite the user's image idea as ONE vivid, detailed prompt for an AI image generator, max 70 words. Cover subject, setting, style, lighting, camera angle/composition and mood. Keep the user's meaning and keep any words they want written in the image, in quotes. Output only the prompt, in English."},
+            {"role": "user", "content": prompt}])
+        t = (r.choices[0].message.content or "").strip().strip('"').strip()
+        return t[:600] if len(t) >= 15 else prompt
+    except Exception:
+        return prompt
+
+
 def save_cf_image(uid, prompt, data, mime, tag):
+    data, mime = shrink_for_storage(data, mime)
     img = q_one("INSERT INTO evil_images(user_id,prompt,url) VALUES (%s,%s,%s) RETURNING id", (uid, prompt, "cf:" + tag))
     try:
         q_run("INSERT INTO evil_image_blobs(image_id,mime,data) VALUES (%s,%s,%s)", (img["id"], mime, psycopg2.Binary(data)))
     except Exception:
         q_run("DELETE FROM evil_images WHERE id=%s", (img["id"],)); raise
-    # Only the 60 newest images are ever listed, so older stored files are dropped to keep the database small.
-    try: q_run("DELETE FROM evil_image_blobs WHERE image_id IN (SELECT id FROM evil_images WHERE user_id=%s ORDER BY id DESC OFFSET 60)", (uid,))
+    # Only the 40 newest images are listed, so older stored files are dropped to keep the database small.
+    try: q_run("DELETE FROM evil_image_blobs WHERE image_id IN (SELECT id FROM evil_images WHERE user_id=%s ORDER BY id DESC OFFSET 40)", (uid,))
     except Exception: log.exception("image prune failed")
     return img["id"]
 
@@ -1646,31 +1670,30 @@ def generate_image():
     row = take_image_credit(u, limit)
     if not row: return err(f"You've used all {limit} images for today. They reset at midnight, or upgrade for more.", 429)
     w, h = IMG_SIZES[size]
+    used_prompt = enhance_image_prompt(prompt) if data_in.get("enhance", True) else prompt
     if cf_ready():
         try:
             if cf_used_today() < CF_DAILY_CAP:
-                if size == "square": out, mime = cf_run(CF_GEN_MODEL, {"prompt": prompt, "steps": 6, "seed": secrets.randbelow(10 ** 6)})
-                else: out, mime = cf_run(CF_WIDE_MODEL, {"prompt": prompt, "width": w, "height": h, "num_steps": 4})
+                out, mime = cf_run(CF_GEN_MODEL, {"prompt": used_prompt, "width": w, "height": h})
                 new_id = save_cf_image(u["id"], prompt, out, mime, "gen")
-                return jsonify({"success": True, "image_url": f"/api/images/{new_id}/render", "id": new_id, "used": row["images_generated_today"], "limit": limit})
+                return jsonify({"success": True, "image_url": f"/api/images/{new_id}/render", "id": new_id, "used": row["images_generated_today"], "limit": limit, "prompt_used": used_prompt if used_prompt != prompt else ""})
         except Exception:
             log.warning("Cloudflare image generation failed, using the backup generator", exc_info=True)
     seed = secrets.randbelow(10 ** 8)
-    url = f"https://image.pollinations.ai/prompt/{quote(prompt)}?width={w}&height={h}&nologo=true&seed={seed}"
+    url = f"https://image.pollinations.ai/prompt/{quote(used_prompt)}?width={w}&height={h}&nologo=true&seed={seed}"
     img = q_one("INSERT INTO evil_images(user_id,prompt,url) VALUES (%s,%s,%s) RETURNING id", (u["id"], prompt, url))
-    return jsonify({"success": True, "image_url": f"/api/images/{img['id']}/render", "id": img["id"], "used": row["images_generated_today"], "limit": limit})
+    return jsonify({"success": True, "image_url": f"/api/images/{img['id']}/render", "id": img["id"], "used": row["images_generated_today"], "limit": limit, "prompt_used": used_prompt if used_prompt != prompt else ""})
 
 
 @app.post("/api/edit-image")
 @login_required
 @limited("image_edit", 8, 60, per="user")
 def edit_image():
-    """Restyles/transforms an uploaded picture from a text instruction (image-to-image)."""
+    """Changes an uploaded picture from a plain instruction (FLUX.2 image editing)."""
     if not cf_enabled(): return err("Photo editing is not switched on yet.", 503)
     prompt = str(request.form.get("prompt", "")).strip()
-    if len(prompt) < 3: return err("Say what the picture should become.")
+    if len(prompt) < 3: return err("Say what should change in the picture.")
     if len(prompt) > 500: return err("Keep the instruction under 500 characters.")
-    strength = EDIT_STRENGTH.get(request.form.get("strength", "medium"), 0.55)
     f = request.files.get("image")
     if not f: return err("Choose a picture to edit first.")
     raw = f.read(6 * 1024 * 1024 + 1)
@@ -1680,9 +1703,10 @@ def edit_image():
         im = Image.open(io.BytesIO(raw))
         if im.width * im.height > 25_000_000: return err("That picture is too large.")
         im = ImageOps.exif_transpose(im).convert("RGB")
-        im.thumbnail((512, 512))
-        im = im.resize((max(64, im.width // 8 * 8), max(64, im.height // 8 * 8)))
-        buf = io.BytesIO(); im.save(buf, "JPEG", quality=90); import base64; b64 = base64.b64encode(buf.getvalue()).decode()
+        k = 1024 / max(im.width, im.height)  # result keeps the picture's own shape
+        out_w = min(1920, max(256, round(im.width * k / 16) * 16)); out_h = min(1920, max(256, round(im.height * k / 16) * 16))
+        im.thumbnail((512, 512))  # the editor accepts reference pictures up to 512 px
+        buf = io.BytesIO(); im.save(buf, "JPEG", quality=92); ref = buf.getvalue()
     except Exception:
         return err("I couldn't read that picture. Try another one.")
     if cf_used_today() >= CF_DAILY_CAP: return err("Photo editing is at its daily limit. Please try again tomorrow.", 503)
@@ -1690,7 +1714,7 @@ def edit_image():
     row = take_image_credit(u, limit)
     if not row: return err(f"You've used all {limit} images for today. They reset at midnight, or upgrade for more.", 429)
     try:
-        out, mime = cf_run(CF_EDIT_MODEL, {"prompt": prompt, "negative_prompt": "blurry, distorted, low quality", "image_b64": b64, "strength": strength, "num_steps": 20, "guidance": 7.5})
+        out, mime = cf_run(CF_EDIT_MODEL, {"prompt": prompt + ". Keep everything else in the picture the same.", "width": out_w, "height": out_h}, [ref])
         new_id = save_cf_image(u["id"], "Edit: " + prompt[:590], out, mime, "edit")
     except Exception:
         log.warning("Cloudflare image edit failed", exc_info=True)
@@ -1701,7 +1725,7 @@ def edit_image():
 @app.get("/api/images")
 @login_required
 def list_images():
-    rows = q_all("SELECT id,prompt,url,created_at FROM evil_images WHERE user_id=%s ORDER BY id DESC LIMIT 60", (request.user["id"],))
+    rows = q_all("SELECT id,prompt,url,created_at FROM evil_images WHERE user_id=%s ORDER BY id DESC LIMIT 40", (request.user["id"],))
     return jsonify({"images": [{"id": r["id"], "prompt": r["prompt"], "display_url": f"/api/images/{r['id']}/render", "created_at": iso(r["created_at"])} for r in rows]})
 
 
