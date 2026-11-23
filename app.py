@@ -1819,13 +1819,41 @@ def extract_office_text(data, ext):
         return "\n\n".join(out)
 
 
+ZIP_TEXT_EXT = {"txt", "md", "csv", "json", "html", "htm", "css", "js", "mjs", "ts", "tsx", "jsx", "py", "java", "c", "h", "cpp", "cs", "go", "rs", "rb", "php", "sql", "xml", "yml", "yaml", "toml", "ini", "cfg", "sh", "bat", "svg", "vue", "kt", "swift", "dart", "r", "ipynb"}
+
+
+def extract_zip_text(data):
+    """Reads a .zip WITHOUT unpacking anything to disk: lists the files and returns the text of the small, readable ones.
+    Guards: file-count limit, per-file read limit (the zip's own size claims are not trusted), no secrets files, no encrypted or binary files."""
+    names, chunks, total, skipped = [], [], 0, 0
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        infos = [i for i in zf.infolist() if not i.is_dir()]
+        if len(infos) > 1000: raise ValueError("too many files")
+        for i in infos:
+            parts = [p for p in i.filename.replace("\\", "/").split("/") if p]
+            if not parts or ".." in parts or parts[0] == "__MACOSX" or parts[-1] == ".DS_Store": continue
+            path = "/".join(parts)[:150]; names.append(path)
+            leaf = parts[-1].lower(); ext = leaf.rsplit(".", 1)[-1] if "." in leaf else ""
+            if leaf.startswith(".env") or leaf in ("id_rsa", "id_ed25519") or ext in ("pem", "key", "p12", "pfx") or "secret" in leaf:
+                skipped += 1; continue  # never feed secrets to the AI
+            if ext not in ZIP_TEXT_EXT or i.flag_bits & 0x1 or i.file_size > 300_000 or total >= 150_000:
+                skipped += 1; continue
+            with zf.open(i) as fh: raw = fh.read(300_001)
+            if len(raw) > 300_000 or b"\x00" in raw[:2000]: skipped += 1; continue
+            txt = raw.decode("utf-8", "replace").strip()
+            if txt: chunks.append(f"=== {path} ===\n{txt}"); total += len(txt)
+    if not chunks: raise ValueError("no readable text files")
+    listing = "Files in the zip (%d%s):\n%s" % (len(names), f", {skipped} not read" if skipped else "", "\n".join("- " + n for n in names[:60]) + ("\n- ..." if len(names) > 60 else ""))
+    return listing + "\n\n" + "\n\n".join(chunks)
+
+
 @app.post("/api/extract-text")
 @login_required
 @limited("extract", 10, 60, per="user")
 def extract_text():
     f = request.files.get("file")
     if not f: return err("Choose a file first.")
-    data = f.read(); fname = (f.filename or "").lower()
+    data = f.read(); fname = (f.filename or "").lower(); is_zip = False
     if data.startswith(b"%PDF"):
         try:
             import PyPDF2
@@ -1837,10 +1865,15 @@ def extract_text():
         try: text = extract_office_text(data, fname.rsplit(".", 1)[1]).strip()
         except Exception:
             log.exception("office extract failed"); return err("Couldn't read that file. Make sure it is a normal, unprotected .docx or .xlsx.")
+    elif data[:2] == b"PK" and fname.endswith(".zip"):
+        try: text = extract_zip_text(data).strip(); is_zip = True
+        except ValueError as e: return err("That zip has " + str(e) + ".")
+        except Exception:
+            log.exception("zip extract failed"); return err("Couldn't open that zip. Make sure it is a normal, unprotected .zip file.")
     else:
-        return err("Only PDF, Word (.docx) and Excel (.xlsx) files are supported right now.")
+        return err("Only PDF, Word (.docx), Excel (.xlsx) and Zip (.zip) files are supported right now.")
     if not text: return err("That file has no readable text (a PDF may be a scan).")
-    cap = 30000 if request.args.get("for") == "project" else 6000  # project files may hold more text than a one-off chat attachment
+    cap = (40000 if request.args.get("for") == "project" else 20000) if is_zip else (30000 if request.args.get("for") == "project" else 6000)  # project files may hold more text than a one-off chat attachment
     return jsonify({"success": True, "text": text[:cap], "truncated": len(text) > cap, "filename": (f.filename or "file")[:120]})
 
 

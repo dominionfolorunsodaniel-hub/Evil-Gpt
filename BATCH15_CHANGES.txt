@@ -1,0 +1,4 @@
+Batch 15 - zip upload + install hardening
+- Attach a .zip in chat: Vyra lists the files and reads the small text/code files (no secrets files, no binaries, nothing unpacked to disk)
+- Manifest: added id/lang/categories for Chrome installability
+Files: app.py, templates/index.html, static/script.js, static/sw.js, static/manifest.json
