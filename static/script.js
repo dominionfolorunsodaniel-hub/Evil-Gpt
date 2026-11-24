@@ -202,10 +202,31 @@ function setGreeting() {
   $("welcome").querySelector(".sub").textContent = "What are we creating today?";
 }
 const TOP = ["business", "enterprise", "infinity"];
+function resetIn(iso) {
+  const ms = new Date(iso) - Date.now(); if (!(ms > 0)) return "";
+  const m = Math.ceil(ms / 6e4), h = Math.floor(m / 60); return h ? `${h}h ${m % 60}m` : `${m}m`;
+}
+function resetPhrase(us) { const w = us.window, t = w && w.resetsAt ? resetIn(w.resetsAt) : ""; return t ? `Resets in ${t}.` : (w ? `Refills ${S.windowHours || 4} hours after your next message.` : ""); }
+function usageSideText(us) {
+  if (us.trial) return "Unlimited in your trial";
+  const t = us.window && us.window.resetsAt ? resetIn(us.window.resetsAt) : "";
+  return `${us.remaining.toLocaleString()} messages left` + (t ? ` · resets in ${t}` : "");
+}
+function usageLabelText(us) {
+  if (us.trial) return "Unlimited messages during your trial";
+  if (us.remaining <= 0) return "Limit reached. " + resetPhrase(us);
+  const t = us.window && us.window.resetsAt ? resetIn(us.window.resetsAt) : "", bonus = us.bonus ? ` (includes ${us.bonus} bonus)` : "";
+  return `${us.remaining.toLocaleString()} messages left${bonus}` + (t ? ` · resets in ${t}` : ` every ${S.windowHours || 4} hours`);
+}
+setInterval(() => { // keeps the countdown fresh and refills the bar when the window ends
+  const us = S.usage; if (!us || us.trial || !us.window || !us.window.resetsAt || !$("side-usage")) return;
+  if (new Date(us.window.resetsAt) <= Date.now()) { refreshMe().catch(() => {}); return; }
+  $("side-usage").textContent = usageSideText(us); $("usage-label").textContent = usageLabelText(us);
+}, 30000);
 function planLabel() { const u = S.user; if (u.isAdmin) return "Infinity"; return u.trial ? "Free trial" : (S.plans[u.plan]?.name || "Free"); }
 async function refreshMe() {
   const d = await api("/api/me"); S.user = d.user; S.usage = d.usage; S.images = d.images; S.plans = d.plans; S.paystack = d.paystack; S.badges = d.badges;
-  if (d.billing && d.billing.multipliers) Object.assign(BILLING_FACTORS, d.billing.multipliers); // one source of truth: the server
+  S.windowHours = (d.billing && d.billing.windowHours) || 4; if (d.billing && d.billing.multipliers) Object.assign(BILLING_FACTORS, d.billing.multipliers); // one source of truth: the server
   const u = S.user, us = S.usage;
   $("news-dot").classList.toggle("hidden", !u.hasNewsUpdate);
   $("side-username").textContent = u.username; $("avatar").textContent = u.username[0].toUpperCase();
@@ -216,14 +237,14 @@ async function refreshMe() {
   const frac = us.trial ? 1 : Math.max(0, Math.min(1, us.remaining / Math.max(1, us.limit)));
   const low = !us.trial && us.remaining <= Math.max(3, Math.round(us.limit * 0.2));
   $("side-meter").classList.toggle("warn", low); $("side-meter").firstElementChild.style.width = (us.trial ? 100 : Math.min(100, (us.used / us.limit) * 100)) + "%";
-  $("side-usage").textContent = us.trial ? "Unlimited in your trial" : `${us.remaining.toLocaleString()} messages left`;
+  $("side-usage").textContent = usageSideText(us);
   $("side-plan-note").textContent = u.trial && us.trialEndsAt ? "ends " + new Date(us.trialEndsAt).toLocaleDateString("en-NG", { day: "numeric", month: "short" }) : "";
-  $("usage-label").textContent = us.trial ? "Unlimited messages during your trial" : `${us.remaining.toLocaleString()} of ${us.limit.toLocaleString()} messages left this month`;
+  $("usage-label").textContent = usageLabelText(us);
   const ring = $("usage-ring"); ring.classList.toggle("warn", low); ring.querySelector(".fg").style.strokeDashoffset = String(150.8 * (1 - frac));
   $("streak-label").textContent = u.streak; const ci = $("checkin-btn"); ci.classList.toggle("done", u.checkedInToday);
   $("checkin-text").textContent = u.checkedInToday ? "Checked in today" : "Daily check-in";
   const n = $("nudge");
-  if (low && !us.trial) { $("nudge-text").textContent = us.remaining <= 0 ? "You've used all your messages this month." : `Only ${us.remaining} messages left this month.`; n.classList.remove("hidden"); $("nudge-checkin").classList.toggle("hidden", u.checkedInToday); } else n.classList.add("hidden");
+  if (low && !us.trial) { $("nudge-text").textContent = us.remaining <= 0 ? "You've reached your message limit. " + resetPhrase(us) : `Only ${us.remaining} messages left. ${resetPhrase(us)}`; n.classList.remove("hidden"); $("nudge-checkin").classList.toggle("hidden", u.checkedInToday); } else n.classList.add("hidden");
   $("image-limit-label").textContent = `${S.images.used} of ${S.images.limit} images used today. Resets at midnight.`;
   $("usage-number").textContent = us.trial ? "Unlimited (trial)" : `${us.used.toLocaleString()} / ${us.limit.toLocaleString()}`;
   $("usage-meter").classList.toggle("warn", low); $("usage-meter").firstElementChild.style.width = (us.trial ? 100 : Math.min(100, (us.used / us.limit) * 100)) + "%";
@@ -659,17 +680,17 @@ function renderPlans() {
   ensureCurrencyPicker(); const usdView=((u.currency||"NGN")!=="NGN"); $("currency-view").value=usdView?"USD":"NGN";
   const entries=Object.entries(plans).filter(([k,p])=>p&&p.name&&["free","starter","plus","pro","business","enterprise"].includes(k));
   const fallback={
-    free:{name:"Free",price:0,price_usd:0,monthly_messages:20,daily_images:3},
-    starter:{name:"Starter",price:1500,price_usd:5,monthly_messages:120,daily_images:10},
-    plus:{name:"Plus",price:5000,price_usd:12.99,monthly_messages:400,daily_images:30},
-    pro:{name:"Pro",price:15000,price_usd:29.99,monthly_messages:1200,daily_images:100},
-    business:{name:"Business",price:40000,price_usd:59.99,monthly_messages:4000,daily_images:300},
-    enterprise:{name:"Enterprise",price:100000,price_usd:99.99,monthly_messages:10000,daily_images:800}
+    free:{name:"Free",price:0,price_usd:0,window_messages:8,monthly_messages:150,daily_images:3},
+    starter:{name:"Starter",price:1500,price_usd:5,window_messages:25,monthly_messages:500,daily_images:10},
+    plus:{name:"Plus",price:5000,price_usd:12.99,window_messages:60,monthly_messages:1500,daily_images:30},
+    pro:{name:"Pro",price:15000,price_usd:29.99,window_messages:150,monthly_messages:4000,daily_images:100},
+    business:{name:"Business",price:40000,price_usd:59.99,window_messages:400,monthly_messages:12000,daily_images:300},
+    enterprise:{name:"Enterprise",price:100000,price_usd:99.99,window_messages:1000,monthly_messages:30000,daily_images:800}
   };
   const catalog=entries.length?entries:Object.entries(fallback), cur=u.trial?"free":(u.plan||"free"), factor=BILLING_FACTORS[BILLING_PERIOD]||1;
   grid.innerHTML=catalog.map(([k,p])=>{
     const messages=Number(p.monthly_messages||0), images=Number(p.daily_images||0), ngn=Math.round(Number(p.price||0)*factor), usd=(Number(p.price_usd||0)*factor).toFixed(2), isCur=k===cur;
-    const feats=[`${messages.toLocaleString()} messages a month`,`${images.toLocaleString()} images a day`,"Fast and Deep modes",k==="free"?"Chat history":"Premium feature allowance"];
+    const feats=[`${Number(p.window_messages||0).toLocaleString()} messages every ${S.windowHours||4} hours`,`${images.toLocaleString()} images a day`,"Fast and Deep modes",k==="free"?"Chat history":"Premium feature allowance"];
     const price=k==="free"?"Free":(usdView?`US$${usd} <small>/ ${BILLING_LABELS[BILLING_PERIOD]}</small><div class="tiny muted">Charged as ${money(ngn)} (naira)</div>`:`${money(ngn)} <small>/ ${BILLING_LABELS[BILLING_PERIOD]}</small><div class="tiny muted">About US$${usd}</div>`);
     const btn=k==="free"?`<button class="btn" disabled>${isCur?"Your plan":"Included"}</button>`:isCur?`<button class="btn" data-plan="${esc(k)}">Renew ${esc(BILLING_PERIOD)}</button>`:`<button class="btn primary" data-plan="${esc(k)}">Choose ${esc(p.name)}</button>`;
     return `<div class="plan ${k==="pro"?"popular":""} ${isCur?"current":""}">${k==="pro"?`<span class="pill brand tag">Most popular</span>`:""}<h3>${TOP.includes(k)?ico("crown","sm"):""}${esc(p.name)}</h3><div class="price">${price}</div><ul>${feats.map(f=>`<li>${ico("check")}${esc(f)}</li>`).join("")}</ul>${btn}</div>`;
@@ -682,7 +703,7 @@ function openCheckout(plan) {
   const usd=(Number(p.price_usd||0)*factor).toFixed(2), days=BILLING_LABELS[BILLING_PERIOD]||"30 days", usdView=((S.user||{}).currency||"NGN")!=="NGN";
   const priceLine=usdView?`US$${usd} (charged as ${money(amount)})`:`${money(amount)} (about US$${usd})`;
   $("pay-card").innerHTML=`<div class="modal-head"><h2 id="pay-title">${esc(p.name)} plan</h2><button class="icon-btn" data-close aria-label="Close">${ico("x")}</button></div>
-    <p class="muted" id="pay-summary" style="margin:0">${priceLine} · ${days}. ${Number(p.monthly_messages||0).toLocaleString()} messages/month and ${Number(p.daily_images||0).toLocaleString()} images/day.</p>
+    <p class="muted" id="pay-summary" style="margin:0">${priceLine} · ${days}. ${Number(p.window_messages||0).toLocaleString()} messages every ${S.windowHours||4} hours and ${Number(p.daily_images||0).toLocaleString()} images/day.</p>
     <div style="display:flex;gap:8px;margin-top:12px"><input class="input" id="pay-coupon" placeholder="Coupon code (optional)" maxlength="32" autocapitalize="characters" style="margin:0;flex:1"><button class="btn" id="pay-coupon-apply" type="button">Apply</button></div><p class="tiny" id="pay-coupon-note" style="margin:6px 0 0"></p>
     ${S.paystack?`<button class="btn primary block" id="pay-card-btn" style="margin-top:12px">${ico("card")}Pay by card (naira)</button><p class="tiny muted center" style="margin:8px 0">NGN checkout secured by Paystack.</p>`:""}
     <button class="btn block" id="pay-bank-btn" style="margin-top:${S.paystack?4:12}px">Pay by bank transfer</button><div id="bank-box"></div>`;
@@ -1258,7 +1279,7 @@ async function loadBillingExtras() {
 $("compare-btn").onclick = () => {
   const wrap = $("compare-wrap"); if (!wrap.classList.contains("hidden")) { wrap.classList.add("hidden"); return; }
   const ps = Object.entries(S.plans || {}).filter(([k, p]) => p && p.name && ["free", "starter", "plus", "pro", "business", "enterprise"].includes(k)), cur = S.user.trial ? "free" : (S.user.plan || "free");
-  const rows = [["Monthly price", (p) => (p.price ? money(p.price) : "Free")], ["Weekly price", (p) => (p.price ? money(Math.round(p.price * BILLING_FACTORS.weekly)) : "Free")], ["Annual price", (p) => (p.price ? money(Math.round(p.price * BILLING_FACTORS.annual)) : "Free")], ["Messages a month", (p) => Number(p.monthly_messages).toLocaleString()], ["Images a day", (p) => Number(p.daily_images).toLocaleString()]];
+  const rows = [["Monthly price", (p) => (p.price ? money(p.price) : "Free")], ["Weekly price", (p) => (p.price ? money(Math.round(p.price * BILLING_FACTORS.weekly)) : "Free")], ["Annual price", (p) => (p.price ? money(Math.round(p.price * BILLING_FACTORS.annual)) : "Free")], ["Messages per " + (S.windowHours || 4) + " hours", (p) => Number(p.window_messages).toLocaleString()], ["Monthly cap", (p) => Number(p.monthly_messages).toLocaleString()], ["Images a day", (p) => Number(p.daily_images).toLocaleString()]];
   wrap.innerHTML = `<table class="compare"><thead><tr><th></th>${ps.map(([k, p]) => `<th class="${k === cur ? "cur" : ""}">${esc(p.name)}</th>`).join("")}</tr></thead><tbody>${rows.map(([l, f]) => `<tr><th>${l}</th>${ps.map(([k, p]) => `<td class="${k === cur ? "cur" : ""}">${f(p)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
   wrap.classList.remove("hidden");
 };
