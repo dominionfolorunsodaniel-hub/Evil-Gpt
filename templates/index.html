@@ -157,7 +157,7 @@
           </div>
           <form id="chat-form" class="composer">
             <button type="button" id="attach-btn" class="icon-btn" aria-label="Attach a PDF, Word or Excel file" title="Attach a PDF, Word or Excel file"><svg class="ico"><use href="#i-paperclip"/></svg></button>
-            <input type="file" id="file-input" accept=".pdf,.docx,.xlsx,.zip,application/pdf,application/zip" class="hidden">
+            <input type="file" id="file-input" class="hidden">
             <button type="button" id="mic-btn" class="icon-btn hidden" aria-label="Speak your message" title="Speak your message"><svg class="ico"><use href="#i-mic"/></svg></button>
             <textarea id="message-input" rows="1" placeholder="Message {{ brand }}" aria-label="Message" maxlength="8000"></textarea>
             <button class="send" id="send-btn" type="submit" aria-label="Send">
@@ -214,6 +214,7 @@
           <div class="card">
             <h3>Saved Memory</h3><p class="tiny muted">Only save details you choose. You can review or delete them.</p>
             <button type="button" class="btn sm" id="knows-btn" style="margin-bottom:10px">What Vyra knows about me</button>
+            <p class="muted tiny hidden" id="memory-lock" style="margin:0 0 8px"></p>
             <textarea class="input" id="memory-input" rows="3" placeholder="A preference or fact you want VYRA to remember"></textarea>
             <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0"><select id="memory-cat" class="select" aria-label="Category"><option value="general">General</option><option value="personal">Personal</option><option value="work">Work</option><option value="preferences">Preferences</option><option value="goals">Goals</option></select><select id="memory-exp" class="select" aria-label="Forget after"><option value="">Never forget</option><option value="7">Forget in 7 days</option><option value="30">Forget in 30 days</option><option value="90">Forget in 90 days</option></select></div>
             <button class="btn primary" id="memory-add">Save memory</button><div id="memory-list" style="margin-top:12px"></div>
