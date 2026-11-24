@@ -1,0 +1,8 @@
+Batch 16 - message limits that reset every 4 hours
+- Per-plan limit per 4-hour window (Free 8, Starter 25, Plus 60, Pro 150, Business 400, Enterprise 1000) + monthly safety cap (150/500/1500/4000/12000/30000)
+- Deep mode counts as 2 messages
+- Window starts at the person's first message; shows 'resets in 2h 10m'
+- Bonus messages (check-ins, referrals, gifts) are used when the window is full
+- Trial and admin stay unlimited; failed AI replies refund the message
+- New table evil_usage_windows (CREATE IF NOT EXISTS). Optional env WINDOW_HOURS (default 4)
+Files: app.py, templates/landing.html, static/script.js, static/sw.js

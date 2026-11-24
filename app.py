@@ -67,13 +67,15 @@ MAX_MESSAGE_CHARS = 8000
 
 # VYRA subscription catalog: five paid tiers plus Free.
 PLANS = {
-    "free": {"name": "Free", "price": 0, "price_usd": 0, "monthly_messages": 20, "daily_images": 3},
-    "starter": {"name": "Starter", "price": 1500, "price_usd": 5.00, "monthly_messages": 120, "daily_images": 10},
-    "plus": {"name": "Plus", "price": 5000, "price_usd": 12.99, "monthly_messages": 400, "daily_images": 30},
-    "pro": {"name": "Pro", "price": 15000, "price_usd": 29.99, "monthly_messages": 1200, "daily_images": 100},
-    "business": {"name": "Business", "price": 40000, "price_usd": 59.99, "monthly_messages": 4000, "daily_images": 300},
-    "enterprise": {"name": "Enterprise", "price": 100000, "price_usd": 99.99, "monthly_messages": 10000, "daily_images": 800},
+    "free": {"name": "Free", "price": 0, "price_usd": 0, "window_messages": 8, "monthly_messages": 150, "daily_images": 3},
+    "starter": {"name": "Starter", "price": 1500, "price_usd": 5.00, "window_messages": 25, "monthly_messages": 500, "daily_images": 10},
+    "plus": {"name": "Plus", "price": 5000, "price_usd": 12.99, "window_messages": 60, "monthly_messages": 1500, "daily_images": 30},
+    "pro": {"name": "Pro", "price": 15000, "price_usd": 29.99, "window_messages": 150, "monthly_messages": 4000, "daily_images": 100},
+    "business": {"name": "Business", "price": 40000, "price_usd": 59.99, "window_messages": 400, "monthly_messages": 12000, "daily_images": 300},
+    "enterprise": {"name": "Enterprise", "price": 100000, "price_usd": 99.99, "window_messages": 1000, "monthly_messages": 30000, "daily_images": 800},
 }
+try: WINDOW_HOURS = max(1, min(24, int(os.environ.get("WINDOW_HOURS", "4"))))  # message limits reset this many hours after a person's first message
+except ValueError: WINDOW_HOURS = 4
 PLAN_ORDER = list(PLANS.keys())
 LEGACY_PLAN_MAP = {"ultra": "pro", "business_elite": "enterprise", "infinity": "enterprise"}
 BILLING_DAYS = {"weekly": 7, "monthly": 30, "annual": 365}
@@ -223,6 +225,7 @@ SCHEMA = [
     "CREATE UNIQUE INDEX IF NOT EXISTS evil_payreq_ref_idx ON evil_payment_requests(reference) WHERE reference IS NOT NULL",
     "ALTER TABLE evil_payment_requests ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ",
     "CREATE TABLE IF NOT EXISTS evil_images (id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES evil_users(id) ON DELETE CASCADE, prompt TEXT NOT NULL, url TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
+    "CREATE TABLE IF NOT EXISTS evil_usage_windows (user_id BIGINT PRIMARY KEY REFERENCES evil_users(id) ON DELETE CASCADE, window_start TIMESTAMPTZ NOT NULL DEFAULT NOW(), used INTEGER NOT NULL DEFAULT 0)",
     "CREATE TABLE IF NOT EXISTS evil_image_blobs (image_id BIGINT PRIMARY KEY REFERENCES evil_images(id) ON DELETE CASCADE, mime VARCHAR(30) NOT NULL, data BYTEA NOT NULL)",
     "CREATE TABLE IF NOT EXISTS evil_login_attempts (id BIGSERIAL PRIMARY KEY, username VARCHAR(80), ip VARCHAR(64), success BOOLEAN NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
     "CREATE INDEX IF NOT EXISTS evil_login_attempts_idx ON evil_login_attempts(username, ip, created_at)",
@@ -463,6 +466,12 @@ def admin_required(fn):
     return wrapped
 
 
+def window_state(u):
+    """(messages used in the current window, when it ends) or (0, None) if no window is running."""
+    row = q_one(f"SELECT used, (window_start + INTERVAL '{WINDOW_HOURS} hours') AS ends, (window_start + INTERVAL '{WINDOW_HOURS} hours' > NOW()) AS active FROM evil_usage_windows WHERE user_id=%s", (u["id"],))
+    return (row["used"], row["ends"]) if row and row["active"] else (0, None)
+
+
 def usage_status(u):
     plan_key, trial = effective_plan(u)
     month = q_one("SELECT to_char(NOW() AT TIME ZONE 'UTC','YYYY-MM') AS m")["m"]
@@ -470,8 +479,59 @@ def usage_status(u):
     used = row["message_count"] if row else 0
     if u["is_admin"]: return {"used": used, "limit": 99999, "remaining": 99999, "trial": False}  # the admin account is never quota-limited
     if trial: return {"used": used, "limit": 99999, "remaining": 99999, "trial": True, "trialEndsAt": iso(u["trial_ends_at"])}
-    limit = PLANS[plan_key]["monthly_messages"] + (u["bonus_messages"] or 0)
-    return {"used": used, "limit": limit, "remaining": max(0, limit - used), "trial": False}
+    wl, ml = PLANS[plan_key]["window_messages"], PLANS[plan_key]["monthly_messages"]
+    w_used, ends = window_state(u); bonus = u["bonus_messages"] or 0
+    available = min(max(0, wl - w_used), max(0, ml - used))  # the monthly cap is a safety net on top of the window
+    return {"used": min(w_used, wl), "limit": wl, "remaining": available + bonus, "trial": False, "bonus": bonus,
+            "window": {"hours": WINDOW_HOURS, "limit": wl, "used": w_used, "resetsAt": iso(ends) if ends else None},
+            "monthly": {"used": used, "limit": ml}}
+
+
+_WINDOW_SQL = f"""INSERT INTO evil_usage_windows(user_id,window_start,used) VALUES (%(uid)s, NOW(), %(c)s)
+    ON CONFLICT (user_id) DO UPDATE SET
+      window_start = CASE WHEN evil_usage_windows.window_start + INTERVAL '{WINDOW_HOURS} hours' <= NOW() THEN NOW() ELSE evil_usage_windows.window_start END,
+      used = CASE WHEN evil_usage_windows.window_start + INTERVAL '{WINDOW_HOURS} hours' <= NOW() THEN %(c)s ELSE evil_usage_windows.used + %(c)s END
+    WHERE (CASE WHEN evil_usage_windows.window_start + INTERVAL '{WINDOW_HOURS} hours' <= NOW() THEN 0 ELSE evil_usage_windows.used END) + %(c)s <= %(lim)s
+    RETURNING window_start, used"""
+
+
+def _reset_text(ends):
+    secs = max(0, int((ends - q_one("SELECT NOW() AS n")["n"]).total_seconds())) if ends else 0
+    h, m = secs // 3600, (secs % 3600 + 59) // 60
+    if m == 60: h, m = h + 1, 0
+    return f"{h}h {m}m" if h else f"{max(1, m)}m"
+
+
+def reserve_message(u, plan_key, trial, cost):
+    """Takes `cost` messages atomically. Order: the 4-hour window first, then bonus messages (check-ins, referrals, gifts).
+    Returns (reservation, None) or (None, error_response). Trial and admin accounts are not limited."""
+    month = q_one("SELECT to_char(NOW() AT TIME ZONE 'UTC','YYYY-MM') AS m")["m"]
+    res = {"month": month, "cost": cost, "src": "open", "ws": None}
+    if not trial and not u["is_admin"]:
+        wl, ml = PLANS[plan_key]["window_messages"], PLANS[plan_key]["monthly_messages"]
+        used_m = (q_one("SELECT message_count FROM evil_usage WHERE user_id=%s AND usage_month=%s", (u["id"], month)) or {"message_count": 0})["message_count"]
+        month_ok = used_m < ml
+        row = q_one(_WINDOW_SQL, {"uid": u["id"], "c": cost, "lim": wl}) if month_ok else None
+        if row: res.update(src="window", ws=row["window_start"])
+        elif q_one("UPDATE evil_users SET bonus_messages=bonus_messages-%s WHERE id=%s AND COALESCE(bonus_messages,0)>=%s RETURNING bonus_messages", (cost, u["id"], cost)):
+            res["src"] = "bonus"
+        elif not month_ok:
+            return None, err("You've reached this month's message limit for your plan. Upgrade for more, or use your check-in bonus messages.", 429, limitReached=True, reason="month")
+        else:
+            _, ends = window_state(u)
+            return None, err(f"You've used all {wl} messages for this {WINDOW_HOURS}-hour window. It resets in {_reset_text(ends)}. Upgrade for more, or use your check-in bonus.", 429,
+                             limitReached=True, reason="window", resetsAt=iso(ends) if ends else None)
+    q_run("INSERT INTO evil_usage(user_id,usage_month,message_count) VALUES (%s,%s,1) ON CONFLICT (user_id,usage_month) DO UPDATE SET message_count=evil_usage.message_count+1", (u["id"], month))
+    return res, None
+
+
+def release_message(u, res):
+    """Gives the reserved message back when the AI could not answer."""
+    try:
+        if res["src"] == "window": q_run("UPDATE evil_usage_windows SET used=GREATEST(0,used-%s) WHERE user_id=%s AND window_start=%s", (res["cost"], u["id"], res["ws"]))
+        elif res["src"] == "bonus": q_run("UPDATE evil_users SET bonus_messages=COALESCE(bonus_messages,0)+%s WHERE id=%s", (res["cost"], u["id"]))
+        q_run("UPDATE evil_usage SET message_count=GREATEST(0,message_count-1) WHERE user_id=%s AND usage_month=%s", (u["id"], res["month"]))
+    except Exception: log.exception("refund failed")
 
 
 def badges_for(u):
@@ -969,7 +1029,7 @@ def agent_research():
 @app.route("/")
 def index():
     if not session.get("user_id") and not request.args.get("force_login") and not request.args.get("login"):
-        return render_template("landing.html", brand=BRAND, plans=PLANS, ref=re.sub(r"[^A-Za-z0-9]", "", request.args.get("ref", ""))[:12])
+        return render_template("landing.html", brand=BRAND, plans=PLANS, window_hours=WINDOW_HOURS, ref=re.sub(r"[^A-Za-z0-9]", "", request.args.get("ref", ""))[:12])
     ref = re.sub(r"[^A-Za-z0-9]", "", request.args.get("ref", ""))[:12]
     return render_template("index.html", brand=BRAND, ref=ref, paystack=bool(PAYSTACK_SECRET_KEY), support_whatsapp=WHATSAPP_SUPPORT_NUMBER)
 
@@ -1340,7 +1400,7 @@ def me():
         "usage": usage_status(u),
         "images": {"used": u["images_today"], "limit": 99999 if u["is_admin"] else PLANS[plan_key]["daily_images"], "edit": cf_enabled()},
         "badges": badges_for(u),
-        "plans": PLANS, "billing": {"days": BILLING_DAYS, "multipliers": BILLING_MULTIPLIERS, "trialDays": TRIAL_DAYS}, "paystack": bool(PAYSTACK_SECRET_KEY), "brand": BRAND})
+        "plans": PLANS, "billing": {"days": BILLING_DAYS, "multipliers": BILLING_MULTIPLIERS, "trialDays": TRIAL_DAYS, "windowHours": WINDOW_HOURS}, "paystack": bool(PAYSTACK_SECRET_KEY), "brand": BRAND})
 
 
 @app.post("/api/user/update-persona")
@@ -2202,16 +2262,12 @@ def ask_stream():
     if not GROQ_API_KEY: return err("The AI isn't configured yet. The admin needs to add GROQ_API_KEY.", 503)
 
     # Reserve one message up front (atomic) so parallel sends can't go over the limit. Refunded if the AI fails.
-    status = usage_status(u)
     plan_key, trial = effective_plan(u)
-    month = q_one("SELECT to_char(NOW() AT TIME ZONE 'UTC','YYYY-MM') AS m")["m"]
-    if not trial and status["remaining"] <= 0:
-        return err("You've used all your messages for this month. Check in daily for bonus messages, or upgrade.", 429, limitReached=True)
-    q_run("INSERT INTO evil_usage(user_id,usage_month,message_count) VALUES (%s,%s,1) ON CONFLICT (user_id,usage_month) DO UPDATE SET message_count=evil_usage.message_count+1", (u["id"], month))
+    cost = 2 if model_type == "deep" else 1  # Deep answers cost more to run, so they use 2 messages
+    reservation, blocked = reserve_message(u, plan_key, trial, cost)
+    if blocked: return blocked
 
-    def refund():
-        try: q_run("UPDATE evil_usage SET message_count=GREATEST(0,message_count-1) WHERE user_id=%s AND usage_month=%s", (u["id"], month))
-        except Exception: log.exception("refund failed")
+    def refund(): release_message(u, reservation)
 
     is_new = False
     try:
