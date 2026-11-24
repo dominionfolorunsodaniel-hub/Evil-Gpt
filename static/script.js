@@ -202,6 +202,13 @@ function setGreeting() {
   $("welcome").querySelector(".sub").textContent = "What are we creating today?";
 }
 const TOP = ["business", "enterprise", "infinity"];
+function applyMemoryLock() {
+  const ok = !!(S.user && S.user.canUseMemory), plan = (S.user && S.user.memoryPlan) || "Enterprise";
+  const lock = $("memory-lock"); lock.classList.toggle("hidden", ok);
+  lock.textContent = ok ? "" : `Each chat starts fresh and does not know your other chats. Memory that carries across chats is on the ${plan} plan.`;
+  ["memory-input", "memory-cat", "memory-exp", "memory-add"].forEach((id) => { const el = $(id); if (el) el.disabled = !ok; });
+  const sw = $("mem-switch"); if (sw) { sw.disabled = !ok; if (!ok) sw.checked = false; const lbl = sw.parentElement && sw.parentElement.querySelector("span"); if (lbl) lbl.textContent = ok ? "Use my memory in this chat" : `Use my memory in this chat (${plan} plan)`; }
+}
 function resetIn(iso) {
   const ms = new Date(iso) - Date.now(); if (!(ms > 0)) return "";
   const m = Math.ceil(ms / 6e4), h = Math.floor(m / 60); return h ? `${h}h ${m % 60}m` : `${m}m`;
@@ -245,6 +252,7 @@ async function refreshMe() {
   $("checkin-text").textContent = u.checkedInToday ? "Checked in today" : "Daily check-in";
   const n = $("nudge");
   if (low && !us.trial) { $("nudge-text").textContent = us.remaining <= 0 ? "You've reached your message limit. " + resetPhrase(us) : `Only ${us.remaining} messages left. ${resetPhrase(us)}`; n.classList.remove("hidden"); $("nudge-checkin").classList.toggle("hidden", u.checkedInToday); } else n.classList.add("hidden");
+  applyMemoryLock();
   $("image-limit-label").textContent = `${S.images.used} of ${S.images.limit} images used today. Resets at midnight.`;
   $("usage-number").textContent = us.trial ? "Unlimited (trial)" : `${us.used.toLocaleString()} / ${us.limit.toLocaleString()}`;
   $("usage-meter").classList.toggle("warn", low); $("usage-meter").firstElementChild.style.width = (us.trial ? 100 : Math.min(100, (us.used / us.limit) * 100)) + "%";
@@ -410,13 +418,13 @@ function refreshActions() { S.msgs.forEach((m) => { if (m.pending || !m.el) retu
 function newChat(keepProject) {
   if (S.busy && S.abort) S.abort.abort();
   if (!keepProject) S.projectId = null; // a normal new chat never inherits a project
-  S.conv = null; S.msgs = []; S.editFromId = null; S.memoryOn = true; $("mem-switch").checked = true; clearFile(); renderMessages(); $("message-input").value = store.get(draftKey()) || ""; autosize(); markActive(); showPage("chat"); $("message-input").focus();
+  S.conv = null; S.msgs = []; S.editFromId = null; S.memoryOn = true; $("mem-switch").checked = !!(S.user && S.user.canUseMemory); clearFile(); renderMessages(); $("message-input").value = store.get(draftKey()) || ""; autosize(); markActive(); showPage("chat"); $("message-input").focus();
 }
 $("new-chat").onclick = newChat;
 async function openConversation(id) {
   showChatSkeleton();
   try {
-    const d = await api("/api/conversations/" + id); S.conv = id; S.editFromId = null; S.projectId = d.projectId || null; S.memoryOn = d.useMemory !== false; $("mem-switch").checked = S.memoryOn; updateOptsDot(); // each chat keeps its own project and memory switch
+    const d = await api("/api/conversations/" + id); S.conv = id; S.editFromId = null; S.projectId = d.projectId || null; S.memoryOn = d.useMemory !== false; $("mem-switch").checked = S.memoryOn && !!(S.user && S.user.canUseMemory); updateOptsDot(); // each chat keeps its own project and memory switch
     S.msgs = d.messages.map((m) => ({ id: m.id, role: m.role, content: m.content, feedback: m.feedback, pinned: m.pinned, mode: m.mode, createdAt: m.created_at })); renderMessages(); $("message-input").value = store.get(draftKey()) || ""; autosize(); markActive(); showPage("chat"); toBottom();
   } catch (e) { toast(e.message, "error"); renderMessages(); }
 }
@@ -530,12 +538,12 @@ async function syncIds(stopped) { // after Stop: learn the saved ids so edit/reg
 $("attach-btn").onclick = () => $("file-input").click();
 async function processPDFFile(f){
   if(!f)return;
-  if(!/\.(pdf|docx|xlsx|zip)$/i.test(f.name)) return toast("Please choose a PDF, Word, Excel or Zip file.","error");
+  if(!/\.(pdf|docx|xlsx|zip|tar|tgz|gz|bz2|xz|tbz2|txz)$/i.test(f.name)) return toast("Please choose a PDF, Word, Excel, Zip or Tar (.tar.gz) file.","error");
   if(f.size>8*1024*1024) return toast("That file is over 8 MB.","error");
   const fd=new FormData();fd.append("file",f);toast("Reading your file...");
   try{const d=await api("/api/extract-text",{method:"POST",body:fd});S.fileText=d.text;S.fileName=d.filename;
     $("file-chip").innerHTML=`${ico("paperclip","sm")}<span>${esc(d.filename)}${d.truncated?" (first part)":""}</span><button type="button" aria-label="Remove file" id="file-x">${ico("x","sm")}</button>`;
-    $("file-chip").classList.remove("hidden");$("file-x").onclick=clearFile;if(!$ ("message-input").value)$ ("message-input").value=/\.zip$/i.test(f.name)?"Go through these files and tell me what this project does.":"Summarise this document for me.";autosize();
+    $("file-chip").classList.remove("hidden");$("file-x").onclick=clearFile;if(!$ ("message-input").value)$ ("message-input").value=/\.(zip|tar|tgz|gz|bz2|xz|tbz2|txz)$/i.test(f.name)?"Go through these files and tell me what this project does.":"Summarise this document for me.";autosize();
   }catch(err){toast(err.message,"error");}
 }
 $("file-input").onchange=(e)=>{const f=e.target.files[0];e.target.value="";processPDFFile(f);};
