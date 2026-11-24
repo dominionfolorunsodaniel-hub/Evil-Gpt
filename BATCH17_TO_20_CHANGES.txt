@@ -1,0 +1,19 @@
+Batch 17 - tar uploads + file picker fix
+- Attach .tar, .tar.gz, .tgz, .tar.bz2, .tar.xz (same safe reader as zip; nothing unpacked to disk; bomb guard)
+- File picker no longer filters file types (phone pickers were greying out unknown ones)
+Files: app.py, templates/index.html, static/script.js, static/sw.js
+Batch 18 - each chat starts fresh; cross-chat memory only on top plan/admin
+- Saved memories are only used (and can only be added) for Enterprise plan or admin; others: every chat starts fresh
+- 'Remember that ...' tells lower plans kindly that nothing was saved
+- Memory page shows a lock note; memory switch disabled for them. Existing memories are kept, not deleted
+- Optional env MEMORY_PLANS (default enterprise), e.g. business,enterprise
+- Unchanged: chat history inside a chat, Projects instructions, About-you profile
+Files: app.py, templates/index.html, static/script.js, static/sw.js
+Batch 19 - Claude-style new chat
+- Plain New chat row with round + icon, flat chat list, underline Chats/Archived tabs, centered greeting with pill suggestions
+- CSS only (style.css) + cache bump
+Batch 20 - chat limit per plan
+- Max active chats: free 15, starter 40, plus 100, pro 300, business 1000, enterprise & admin unlimited (edit max_chats in PLANS)
+- Archived chats do not count; old chats always keep working and can be continued; nothing is deleted
+- Over the limit: friendly message, no message is charged
+- /api/me returns maxChats

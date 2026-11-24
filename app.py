@@ -67,16 +67,19 @@ MAX_MESSAGE_CHARS = 8000
 
 # VYRA subscription catalog: five paid tiers plus Free.
 PLANS = {
-    "free": {"name": "Free", "price": 0, "price_usd": 0, "window_messages": 8, "monthly_messages": 150, "daily_images": 3},
-    "starter": {"name": "Starter", "price": 1500, "price_usd": 5.00, "window_messages": 25, "monthly_messages": 500, "daily_images": 10},
-    "plus": {"name": "Plus", "price": 5000, "price_usd": 12.99, "window_messages": 60, "monthly_messages": 1500, "daily_images": 30},
-    "pro": {"name": "Pro", "price": 15000, "price_usd": 29.99, "window_messages": 150, "monthly_messages": 4000, "daily_images": 100},
-    "business": {"name": "Business", "price": 40000, "price_usd": 59.99, "window_messages": 400, "monthly_messages": 12000, "daily_images": 300},
-    "enterprise": {"name": "Enterprise", "price": 100000, "price_usd": 99.99, "window_messages": 1000, "monthly_messages": 30000, "daily_images": 800},
+    "free": {"name": "Free", "price": 0, "price_usd": 0, "window_messages": 8, "monthly_messages": 150, "max_chats": 15, "daily_images": 3},
+    "starter": {"name": "Starter", "price": 1500, "price_usd": 5.00, "window_messages": 25, "monthly_messages": 500, "max_chats": 40, "daily_images": 10},
+    "plus": {"name": "Plus", "price": 5000, "price_usd": 12.99, "window_messages": 60, "monthly_messages": 1500, "max_chats": 100, "daily_images": 30},
+    "pro": {"name": "Pro", "price": 15000, "price_usd": 29.99, "window_messages": 150, "monthly_messages": 4000, "max_chats": 300, "daily_images": 100},
+    "business": {"name": "Business", "price": 40000, "price_usd": 59.99, "window_messages": 400, "monthly_messages": 12000, "max_chats": 1000, "daily_images": 300},
+    "enterprise": {"name": "Enterprise", "price": 100000, "price_usd": 99.99, "window_messages": 1000, "monthly_messages": 30000, "max_chats": 0, "daily_images": 800},
 }
 try: WINDOW_HOURS = max(1, min(24, int(os.environ.get("WINDOW_HOURS", "4"))))  # message limits reset this many hours after a person's first message
 except ValueError: WINDOW_HOURS = 4
 PLAN_ORDER = list(PLANS.keys())
+# Memory that carries over between chats is a top-plan feature (admin always has it). Every chat otherwise starts fresh.
+MEMORY_PLANS = {p.strip() for p in os.environ.get("MEMORY_PLANS", "enterprise").split(",") if p.strip() in PLANS} or {"enterprise"}
+MEMORY_PLAN_NAME = PLANS[min(MEMORY_PLANS, key=PLAN_ORDER.index)]["name"]
 LEGACY_PLAN_MAP = {"ultra": "pro", "business_elite": "enterprise", "infinity": "enterprise"}
 BILLING_DAYS = {"weekly": 7, "monthly": 30, "annual": 365}
 BILLING_MULTIPLIERS = {"weekly": 0.35, "monthly": 1.0, "annual": 10.0}  # annual ~= two months free
@@ -464,6 +467,17 @@ def admin_required(fn):
         request.user = u
         return fn(*a, **kw)
     return wrapped
+
+
+def chat_limit(u):
+    """Most active (not archived) chats a person can keep. 0 = no limit. Admin has no limit; trials count as their plan."""
+    if u["is_admin"]: return 0
+    plan_key, _trial = effective_plan(u)
+    return int(PLANS.get(plan_key, PLANS["free"]).get("max_chats", 0) or 0)
+
+def can_use_memory(u):
+    plan_key, trial = effective_plan(u)
+    return bool(u["is_admin"] or (not trial and plan_key in MEMORY_PLANS))
 
 
 def window_state(u):
@@ -911,6 +925,7 @@ def parse_expiry(d):
 @login_required
 def add_memory():
     d = body(); memory = str(d.get("memory", "")).strip()[:1000]
+    if not can_use_memory(request.user): return err(f"Memory that carries across chats is available on the {MEMORY_PLAN_NAME} plan.", 403)
     if len(memory) < 3: return err("Enter a useful memory.")
     count = q_one("SELECT COUNT(*) AS n FROM evil_memories WHERE user_id=%s AND (expires_at IS NULL OR expires_at > NOW())", (request.user["id"],))["n"]
     if count >= 100: return err("Memory limit reached. Review or delete older memories first.", 429)
@@ -1396,7 +1411,8 @@ def me():
                  "referralCode": u["referral_code"], "referrals": refs, "aboutMe": u["about_me"] or "", "aiNickname": u["ai_nickname"] or "",
                  "hasNewsUpdate": (u["last_seen_changelog"] or 0) < CHANGELOG_VERSION,
                  "country": u.get("country_code"), "currency": u.get("preferred_currency") or "NGN",
-                 "language": u.get("preferred_language") or "English", "trialEndsAt": iso(u["trial_ends_at"])},
+                 "language": u.get("preferred_language") or "English", "trialEndsAt": iso(u["trial_ends_at"]),
+                 "canUseMemory": can_use_memory(u), "maxChats": chat_limit(u), "memoryPlan": MEMORY_PLAN_NAME},
         "usage": usage_status(u),
         "images": {"used": u["images_today"], "limit": 99999 if u["is_admin"] else PLANS[plan_key]["daily_images"], "edit": cf_enabled()},
         "badges": badges_for(u),
@@ -1882,29 +1898,66 @@ def extract_office_text(data, ext):
 ZIP_TEXT_EXT = {"txt", "md", "csv", "json", "html", "htm", "css", "js", "mjs", "ts", "tsx", "jsx", "py", "java", "c", "h", "cpp", "cs", "go", "rs", "rb", "php", "sql", "xml", "yml", "yaml", "toml", "ini", "cfg", "sh", "bat", "svg", "vue", "kt", "swift", "dart", "r", "ipynb"}
 
 
-def extract_zip_text(data):
-    """Reads a .zip WITHOUT unpacking anything to disk: lists the files and returns the text of the small, readable ones.
-    Guards: file-count limit, per-file read limit (the zip's own size claims are not trusted), no secrets files, no encrypted or binary files."""
-    names, chunks, total, skipped = [], [], 0, 0
-    with zipfile.ZipFile(io.BytesIO(data)) as zf:
-        infos = [i for i in zf.infolist() if not i.is_dir()]
-        if len(infos) > 1000: raise ValueError("too many files")
-        for i in infos:
-            parts = [p for p in i.filename.replace("\\", "/").split("/") if p]
-            if not parts or ".." in parts or parts[0] == "__MACOSX" or parts[-1] == ".DS_Store": continue
-            path = "/".join(parts)[:150]; names.append(path)
-            leaf = parts[-1].lower(); ext = leaf.rsplit(".", 1)[-1] if "." in leaf else ""
-            if leaf.startswith(".env") or leaf in ("id_rsa", "id_ed25519") or ext in ("pem", "key", "p12", "pfx") or "secret" in leaf:
-                skipped += 1; continue  # never feed secrets to the AI
-            if ext not in ZIP_TEXT_EXT or i.flag_bits & 0x1 or i.file_size > 300_000 or total >= 150_000:
-                skipped += 1; continue
-            with zf.open(i) as fh: raw = fh.read(300_001)
-            if len(raw) > 300_000 or b"\x00" in raw[:2000]: skipped += 1; continue
-            txt = raw.decode("utf-8", "replace").strip()
-            if txt: chunks.append(f"=== {path} ===\n{txt}"); total += len(txt)
+def _archive_text(items):
+    """items: iterable of (path, size, encrypted, read_fn). Lists every file and returns the text of the small readable ones.
+    Guards: file-count limit, per-file read limit (an archive's own size claims are not trusted), no secrets files, no encrypted or binary files."""
+    names, chunks, total, skipped, count = [], [], 0, 0, 0
+    for path_raw, size, encrypted, read_fn in items:
+        count += 1
+        if count > 1000: raise ValueError("too many files")
+        parts = [p for p in str(path_raw).replace("\\", "/").split("/") if p and p != "."]
+        if not parts or ".." in parts or parts[0] == "__MACOSX" or parts[-1] == ".DS_Store": continue
+        path = "/".join(parts)[:150]; names.append(path)
+        leaf = parts[-1].lower(); ext = leaf.rsplit(".", 1)[-1] if "." in leaf else ""
+        if leaf.startswith(".env") or leaf in ("id_rsa", "id_ed25519") or ext in ("pem", "key", "p12", "pfx") or "secret" in leaf:
+            skipped += 1; continue  # never feed secrets to the AI
+        if ext not in ZIP_TEXT_EXT or encrypted or size > 300_000 or total >= 150_000:
+            skipped += 1; continue
+        raw = read_fn(300_001)
+        if len(raw) > 300_000 or b"\x00" in raw[:2000]: skipped += 1; continue
+        txt = raw.decode("utf-8", "replace").strip()
+        if txt: chunks.append(f"=== {path} ===\n{txt}"); total += len(txt)
     if not chunks: raise ValueError("no readable text files")
-    listing = "Files in the zip (%d%s):\n%s" % (len(names), f", {skipped} not read" if skipped else "", "\n".join("- " + n for n in names[:60]) + ("\n- ..." if len(names) > 60 else ""))
+    listing = "Files in the archive (%d%s):\n%s" % (len(names), f", {skipped} not read" if skipped else "", "\n".join("- " + n for n in names[:60]) + ("\n- ..." if len(names) > 60 else ""))
     return listing + "\n\n" + "\n\n".join(chunks)
+
+
+def extract_zip_text(data):
+    """Reads a .zip WITHOUT unpacking anything to disk."""
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        def items():
+            for i in zf.infolist():
+                if i.is_dir(): continue
+                def rd(limit, i=i):
+                    with zf.open(i) as fh: return fh.read(limit)
+                yield i.filename, i.file_size, bool(i.flag_bits & 0x1), rd
+        return _archive_text(items())
+
+
+TAR_MAX_UNPACKED = 80_000_000  # decompression-bomb guard for .tar.gz/.tgz/.tar.bz2/.tar.xz
+
+
+def looks_like_tar(data):
+    return data[:2] == b"\x1f\x8b" or data[:3] == b"BZh" or data[:6] == b"\xfd7zXZ\x00" or data[257:262] == b"ustar"
+
+
+def extract_tar_text(data):
+    """Reads .tar, .tar.gz/.tgz, .tar.bz2 and .tar.xz in memory. Decompression is capped so a tiny 'bomb' file cannot use up the server."""
+    import tarfile, zlib, bz2, lzma
+    if data[:2] == b"\x1f\x8b": raw = zlib.decompressobj(31).decompress(data, TAR_MAX_UNPACKED + 1)
+    elif data[:3] == b"BZh": raw = bz2.BZ2Decompressor().decompress(data, TAR_MAX_UNPACKED + 1)
+    elif data[:6] == b"\xfd7zXZ\x00": raw = lzma.LZMADecompressor().decompress(data, TAR_MAX_UNPACKED + 1)
+    else: raw = data
+    if len(raw) > TAR_MAX_UNPACKED: raise ValueError("an archive that is too large once unpacked")
+    with tarfile.open(fileobj=io.BytesIO(raw), mode="r:") as tf:
+        def items():
+            for m in tf:
+                if not m.isfile(): continue  # skips folders, links and devices
+                def rd(limit, m=m):
+                    fh = tf.extractfile(m)
+                    return fh.read(limit) if fh else b""
+                yield m.name, m.size, False, rd
+        return _archive_text(items())
 
 
 @app.post("/api/extract-text")
@@ -1930,8 +1983,13 @@ def extract_text():
         except ValueError as e: return err("That zip has " + str(e) + ".")
         except Exception:
             log.exception("zip extract failed"); return err("Couldn't open that zip. Make sure it is a normal, unprotected .zip file.")
+    elif looks_like_tar(data):
+        try: text = extract_tar_text(data).strip(); is_zip = True
+        except ValueError as e: return err("That archive has " + str(e) + ".")
+        except Exception:
+            log.exception("tar extract failed"); return err("Couldn't open that archive. Make sure it is a normal .tar, .tar.gz, .tgz, .tar.bz2 or .tar.xz file.")
     else:
-        return err("Only PDF, Word (.docx), Excel (.xlsx) and Zip (.zip) files are supported right now.")
+        return err("Only PDF, Word, Excel, Zip and Tar (.tar, .tar.gz, .tgz) files are supported right now.")
     if not text: return err("That file has no readable text (a PDF may be a scan).")
     cap = (40000 if request.args.get("for") == "project" else 20000) if is_zip else (30000 if request.args.get("for") == "project" else 6000)  # project files may hold more text than a one-off chat attachment
     return jsonify({"success": True, "text": text[:cap], "truncated": len(text) > cap, "filename": (f.filename or "file")[:120]})
@@ -2279,6 +2337,11 @@ def ask_stream():
                 if not project_id: project_id = existing_conv.get("project_id")
                 mem_on = existing_conv.get("use_memory") is not False
             else:
+                lim = chat_limit(u)
+                if lim:
+                    cur.execute("SELECT COUNT(*) AS n FROM evil_conversations WHERE user_id=%s AND archived=FALSE", (u["id"],))
+                    if (cur.fetchone() or {}).get("n", 0) >= lim:
+                        refund(); return err(f"You have reached your limit of {lim} chats. Open an older chat to keep going there, or archive or delete one to start a new topic. Higher plans allow more chats.", 403, code="chat_limit")
                 conv_id = str(uuid.uuid4()); is_new = True
                 mem_on = mem_req
                 cur.execute("INSERT INTO evil_conversations(id,user_id,title,project_id,use_memory) VALUES (%s,%s,%s,%s,%s)", (conv_id, u["id"], (question[:40] + "...") if len(question) > 40 else question, project_id, mem_on))
@@ -2288,6 +2351,7 @@ def ask_stream():
     except Exception:
         log.exception("ask_stream setup failed"); refund(); return err("Couldn't start that chat. Please try again.", 500)
 
+    can_mem = can_use_memory(u); mem_on = mem_on and can_mem  # each chat starts fresh unless the plan includes cross-chat memory
     can_persona = CUSTOM_PERSONA_FREE or u["is_admin"] or trial or plan_key != "free"
     sys_prompt = u["custom_persona"] if (u["custom_persona"] and can_persona) else PERSONAS.get(persona, PERSONAS["assistant"])["instructions"]
     sys_prompt += ("\nPersonality: be warm, witty and playful, like a clever friend. Answer the question first, then add a little fun. "
@@ -2302,7 +2366,9 @@ def ask_stream():
     sys_prompt += f"\n{BRAND} was created by COLD. If asked who created, built or owns {BRAND}, say it was created by COLD."
     remember_note = ""
     m_rem = re.match(r"^\s*(?:please\s+)?remember(?:\s+that\b|\s*:)\s*(.{3,500})$", question, re.I | re.S)
-    if m_rem and not mem_on:
+    if m_rem and not can_mem:
+        remember_note = f"\nMemory that carries across chats is only on the {MEMORY_PLAN_NAME} plan, so NOTHING was saved. Tell the user kindly in one sentence; this chat still remembers everything said in it."
+    elif m_rem and not mem_on:
         remember_note = "\nThe user's memory is switched off for this chat, so NOTHING was saved. Tell them to turn on 'Use my memory in this chat' in Options if they want it remembered."
     elif m_rem:  # "remember that ..." really saves to the user's memory (same table the Memory page shows)
         try:
