@@ -62,7 +62,7 @@
         {% if key == 'pro' %}<span class="pill brand tag">Most popular</span>{% endif %}
         <h3>{{ p.name }}</h3>
         <div class="price">{% if p.price %}₦{{ '{:,}'.format(p.price) }}<small> / 30 days</small>{% else %}Free{% endif %}</div>
-        <ul><li><svg class="ico"><use href="#i-check"/></svg>{{ '{:,}'.format(p.monthly_messages) }} messages a month</li><li><svg class="ico"><use href="#i-check"/></svg>{{ '{:,}'.format(p.daily_images) }} images a day</li></ul>
+        <ul><li><svg class="ico"><use href="#i-check"/></svg>{{ '{:,}'.format(p.window_messages) }} messages every {{ window_hours }} hours</li><li><svg class="ico"><use href="#i-check"/></svg>{{ '{:,}'.format(p.daily_images) }} images a day</li></ul>
         <a class="btn {{ 'primary' if key == 'pro' else '' }}" href="{{ start }}">{{ 'Start free' if key == 'free' else 'Get ' ~ p.name }}</a>
       </div>
       {% endfor %}
