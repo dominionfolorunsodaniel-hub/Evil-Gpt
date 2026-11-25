@@ -490,7 +490,7 @@ async function send(text, opts = {}) {
   const paint = () => { raf = 0; const stick = nearBottom(); body.innerHTML = md(ai.content); if (stick) toBottom(); };
   try {
     const res = await fetch("/ask/stream", { method: "POST", credentials: "same-origin", signal: ctrl.signal, headers: { "Content-Type": "application/json", "X-Requested-With": "vyra" },
-      body: JSON.stringify({ question: text, conversationId: S.conv, persona: $("persona-select").value, language: $("lang-select").value, modelType: S.mode, temperature: $("temp-slider").value, truncateFromId, fileText, length: opts.length || S.length, tone: S.tone, eli5: S.eli5, projectId: S.projectId, useMemory: S.memoryOn, styleId: S.styleId || null }) });
+      body: JSON.stringify({ rid: (window.crypto && crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2)), question: text, conversationId: S.conv, persona: $("persona-select").value, language: $("lang-select").value, modelType: S.mode, temperature: $("temp-slider").value, truncateFromId, fileText, length: opts.length || S.length, tone: S.tone, eli5: S.eli5, projectId: S.projectId, useMemory: S.memoryOn, styleId: S.styleId || null }) });
     if (!res.ok) { const d = await res.json().catch(() => ({})); const err = new Error(d.error || "Something went wrong. Please try again."); err.data = d; throw err; }
     const reader = res.body.getReader(), dec = new TextDecoder(); let buf = "";
     while (true) {
@@ -595,7 +595,8 @@ function renderHistory(results = null) {
     const items = S.chats.filter((c) => !c.pinned && c.folderId === f.id), shut = folds.has(f.id);
     html += `<div class="history-group folder-head"><button type="button" class="fold-toggle" data-fold="${f.id}" aria-expanded="${!shut}">${shut ? "&#9656;" : "&#9662;"} ${esc(f.name)} <span>${items.length}</span></button><button type="button" class="h-more" data-fmore="${f.id}" aria-label="Folder options">${ico("more", "sm")}</button></div>` + (shut ? "" : items.map(row).join(""));
   });
-  html += free.length ? `<div class="history-group">${pinned.length || folders.length ? "Recent" : "Chats"}</div>` + free.map(row).join("") : "";
+  const grp = (c) => { const t = c.updatedAt ? new Date(c.updatedAt) : null; if (!t || isNaN(t)) return "Older"; const d0 = new Date(); d0.setHours(0, 0, 0, 0); const days = Math.round((d0 - new Date(t.getFullYear(), t.getMonth(), t.getDate())) / 864e5); return days <= 0 ? "Today" : days === 1 ? "Yesterday" : days <= 7 ? "Previous 7 days" : "Older"; };
+  ["Today", "Yesterday", "Previous 7 days", "Older"].forEach((g) => { const items = free.filter((c) => grp(c) === g); if (items.length) html += `<div class="history-group">${g}</div>` + items.map(row).join(""); });
   box.innerHTML = html; markActive();
 }
 function foldedSet() { try { return new Set(JSON.parse(store.get("vyra-folds") || "[]")); } catch (e) { return new Set(); } }
