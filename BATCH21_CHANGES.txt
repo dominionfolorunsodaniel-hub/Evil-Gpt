@@ -1,0 +1,6 @@
+Batch 21 - chat history polish
+- Sidebar groups chats: Today / Yesterday / Previous 7 days / Older (pinned and folders stay on top)
+- Duplicate-send guard: a retried send with the same request id is ignored (409), so no double messages
+- /api/conversations returns updatedAt
+- Already existed (checked): new chat, auto titles, open+continue, rename, delete w/ confirm, search, per-user ownership, indexes, mobile menu + tap-outside
+Files: app.py, static/script.js, static/sw.js

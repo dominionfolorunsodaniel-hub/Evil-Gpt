@@ -469,6 +469,18 @@ def admin_required(fn):
     return wrapped
 
 
+_RECENT_SENDS, _RECENT_LOCK = {}, threading.Lock()
+def duplicate_send(user_id, rid):
+    """True if this exact send (client request id) was already accepted in the last 2 minutes, so a retry can't save the message twice."""
+    rid = str(rid or "")[:64]
+    if not rid: return False
+    now = time.time(); key = (user_id, rid)
+    with _RECENT_LOCK:
+        for k in [k for k, t in _RECENT_SENDS.items() if now - t > 120]: _RECENT_SENDS.pop(k, None)
+        if key in _RECENT_SENDS: return True
+        _RECENT_SENDS[key] = now
+    return False
+
 def chat_limit(u):
     """Most active (not archived) chats a person can keep. 0 = no limit. Admin has no limit; trials count as their plan."""
     if u["is_admin"]: return 0
@@ -2000,10 +2012,10 @@ def extract_text():
 @login_required
 def conversations():
     archived = request.args.get("archived") == "1"
-    rows = q_all("""SELECT id,title,pinned,tags,archived,project_id,folder_id,(share_token IS NOT NULL) AS shared FROM evil_conversations
+    rows = q_all("""SELECT id,title,pinned,tags,archived,project_id,folder_id,updated_at,(share_token IS NOT NULL) AS shared FROM evil_conversations
                     WHERE user_id=%s AND archived=%s ORDER BY pinned DESC, updated_at DESC LIMIT 80""", (request.user["id"], archived))
     return jsonify({"conversations": [{"id": str(r["id"]), "title": r["title"], "pinned": r["pinned"], "shared": r["shared"],
-                                        "tags": r["tags"] or "", "archived": r["archived"], "projectId": r["project_id"], "folderId": r["folder_id"]} for r in rows]})
+                                        "tags": r["tags"] or "", "archived": r["archived"], "projectId": r["project_id"], "folderId": r["folder_id"], "updatedAt": iso(r["updated_at"])} for r in rows]})
 
 
 def folder_name():
@@ -2318,6 +2330,7 @@ def ask_stream():
     if not question: return err("Type a message first.")
     if len(question) > MAX_MESSAGE_CHARS: return err(f"That message is too long. Keep it under {MAX_MESSAGE_CHARS} characters.")
     if not GROQ_API_KEY: return err("The AI isn't configured yet. The admin needs to add GROQ_API_KEY.", 503)
+    if duplicate_send(u["id"], d.get("rid")): return err("That message was already sent.", 409, code="duplicate")
 
     # Reserve one message up front (atomic) so parallel sends can't go over the limit. Refunded if the AI fails.
     plan_key, trial = effective_plan(u)
