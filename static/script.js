@@ -202,6 +202,11 @@ function setGreeting() {
   $("welcome").querySelector(".sub").textContent = "What are we creating today?";
 }
 const TOP = ["business", "enterprise", "infinity"];
+function applyMsgLimit() { const el = $("message-input"); if (el && S.user && S.user.maxChars) el.maxLength = S.user.maxChars; }
+function applyTempRange() {
+  const t = S.user && S.user.aiTemp, el = $("temp-slider"); if (!t || !el || el.dataset.ready) return;
+  el.max = t.max; el.value = t.default; el.dataset.ready = "1";
+}
 function applyMemoryLock() {
   const ok = !!(S.user && S.user.canUseMemory), plan = (S.user && S.user.memoryPlan) || "Enterprise";
   const lock = $("memory-lock"); lock.classList.toggle("hidden", ok);
@@ -252,7 +257,7 @@ async function refreshMe() {
   $("checkin-text").textContent = u.checkedInToday ? "Checked in today" : "Daily check-in";
   const n = $("nudge");
   if (low && !us.trial) { $("nudge-text").textContent = us.remaining <= 0 ? "You've reached your message limit. " + resetPhrase(us) : `Only ${us.remaining} messages left. ${resetPhrase(us)}`; n.classList.remove("hidden"); $("nudge-checkin").classList.toggle("hidden", u.checkedInToday); } else n.classList.add("hidden");
-  applyMemoryLock();
+  applyMemoryLock(); applyTempRange(); applyMsgLimit();
   $("image-limit-label").textContent = `${S.images.used} of ${S.images.limit} images used today. Resets at midnight.`;
   $("usage-number").textContent = us.trial ? "Unlimited (trial)" : `${us.used.toLocaleString()} / ${us.limit.toLocaleString()}`;
   $("usage-meter").classList.toggle("warn", low); $("usage-meter").firstElementChild.style.width = (us.trial ? 100 : Math.min(100, (us.used / us.limit) * 100)) + "%";
@@ -539,9 +544,9 @@ $("attach-btn").onclick = () => $("file-input").click();
 async function processPDFFile(f){
   if(!f)return;
   if(!/\.(pdf|docx|xlsx|zip|tar|tgz|gz|bz2|xz|tbz2|txz)$/i.test(f.name)) return toast("Please choose a PDF, Word, Excel, Zip or Tar (.tar.gz) file.","error");
-  if(f.size>8*1024*1024) return toast("That file is over 8 MB.","error");
+  {const mb=(S.user&&S.user.maxFileMb)||8;if(f.size>mb*1024*1024) return toast(`That file is over ${mb} MB, the limit for your plan. Upgrade to upload bigger files.`,"error");}
   const fd=new FormData();fd.append("file",f);toast("Reading your file...");
-  try{const d=await api("/api/extract-text",{method:"POST",body:fd});S.fileText=d.text;S.fileName=d.filename;
+  try{const d=await api("/api/extract-text",{method:"POST",body:fd});S.fileText=d.text;S.fileName=d.filename;if(d.truncated)toast("Big file: Vyra reads the first part of it.");
     $("file-chip").innerHTML=`${ico("paperclip","sm")}<span>${esc(d.filename)}${d.truncated?" (first part)":""}</span><button type="button" aria-label="Remove file" id="file-x">${ico("x","sm")}</button>`;
     $("file-chip").classList.remove("hidden");$("file-x").onclick=clearFile;if(!$ ("message-input").value)$ ("message-input").value=/\.(zip|tar|tgz|gz|bz2|xz|tbz2|txz)$/i.test(f.name)?"Go through these files and tell me what this project does.":"Summarise this document for me.";autosize();
   }catch(err){toast(err.message,"error");}
@@ -991,7 +996,7 @@ $("project-list").onclick=async e=>{
 $("project-file-list").onclick=async e=>{const b=e.target.closest("[data-pfile-delete]");if(!b||!S.selectedProject)return;try{await api(`/api/projects/${S.selectedProject}/files/${b.dataset.pfileDelete}`,{method:"DELETE"});loadProjectFiles();}catch(err){toast(err.message,"error");}};
 $("project-file-upload").onchange=async e=>{const f=e.target.files[0];e.target.value="";if(!f)return;
   try{
-    if(/\.(pdf|docx|xlsx)$/i.test(f.name)){if(f.size>8*1024*1024)return toast("That file is over 8 MB.","error");const fd=new FormData();fd.append("file",f);toast("Reading your file...");const d=await api("/api/extract-text?for=project",{method:"POST",body:fd});$("project-file-name").value=d.filename;$("project-file-content").value=d.text;}
+    if(/\.(pdf|docx|xlsx)$/i.test(f.name)){{const mb=(S.user&&S.user.maxFileMb)||8;if(f.size>mb*1024*1024)return toast(`That file is over ${mb} MB, the limit for your plan. Upgrade to upload bigger files.`,"error");}const fd=new FormData();fd.append("file",f);toast("Reading your file...");const d=await api("/api/extract-text?for=project",{method:"POST",body:fd});$("project-file-name").value=d.filename;$("project-file-content").value=d.text;}
     else if(/\.(txt|md|csv|json)$/i.test(f.name)&&f.size<=200000){const t=await f.text();$("project-file-name").value=f.name;$("project-file-content").value=t.slice(0,30000);}
     else return toast("Choose a PDF, Word, Excel, .txt, .md, .csv or .json file.","error");
     toast("File loaded. Press Add project file to save it.");
@@ -1137,7 +1142,7 @@ $("history-list").addEventListener("click", (e) => {
 function setOpts(open) { $("opts-panel").classList.toggle("hidden", !open); $("opts-btn").setAttribute("aria-expanded", open); $("opts-btn").classList.toggle("on", open); store.set("vyra-opts", open ? "1" : "0"); }
 $("opts-btn").onclick = () => setOpts($("opts-panel").classList.contains("hidden"));
 function updateOptsDot() {
-  const changed = $("persona-select").value !== "assistant" || $("lang-select").value !== "English" || +$("temp-slider").value !== 0.7 || (S.length && S.length !== "normal") || (S.tone && S.tone !== "friendly") || S.eli5 || S.memoryOn === false || !!S.styleId;
+  const changed = $("persona-select").value !== "assistant" || $("lang-select").value !== "English" || Math.abs(+$("temp-slider").value - ((S.user && S.user.aiTemp && S.user.aiTemp.default) || 0.9)) > 0.01 || (S.length && S.length !== "normal") || (S.tone && S.tone !== "friendly") || S.eli5 || S.memoryOn === false || !!S.styleId;
   $("opts-dot").classList.toggle("hidden", !changed);
 }
 document.addEventListener("click", () => setTimeout(updateOptsDot, 0));
