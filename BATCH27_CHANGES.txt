@@ -1,0 +1,5 @@
+Batch 27 - safer creativity settings
+- Max creativity default now 1.2 (was 1.5); AI_TEMPERATURE_MAX env still overrides
+- Chat replies now use top_p 0.9, frequency penalty 0.3, presence penalty 0.2 (env: AI_TOP_P, AI_FREQUENCY_PENALTY, AI_PRESENCE_PENALTY)
+- If the AI provider rejects these settings, it retries without them and keeps working
+File: app.py

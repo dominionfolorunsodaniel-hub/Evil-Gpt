@@ -474,8 +474,21 @@ def admin_required(fn):
 def _env_float(name, default, lo, hi):
     try: return max(lo, min(hi, float(os.environ.get(name, default))))
     except ValueError: return default
-AI_TEMP_MAX = _env_float("AI_TEMPERATURE_MAX", 1.5, 0.5, 2.0)      # highest creativity the slider/server allows
+AI_TEMP_MAX = _env_float("AI_TEMPERATURE_MAX", 1.2, 0.5, 2.0)      # highest creativity the slider/server allows
 AI_TEMP_DEFAULT = min(AI_TEMP_MAX, _env_float("AI_TEMPERATURE_DEFAULT", 0.9, 0.0, 2.0))  # starting creativity for everyone
+AI_TOP_P = _env_float("AI_TOP_P", 0.9, 0.1, 1.0)
+AI_FREQ_PEN = _env_float("AI_FREQUENCY_PENALTY", 0.3, 0.0, 1.0)
+AI_PRES_PEN = _env_float("AI_PRESENCE_PENALTY", 0.2, 0.0, 1.0)
+_SAMPLING_OK = [True]
+def chat_create(**kw):
+    """Chat call with top_p + repeat penalties. If the AI provider rejects those settings, retry once without them and stop sending them."""
+    if _SAMPLING_OK[0]:
+        try: return make_client().chat.completions.create(**kw, top_p=AI_TOP_P, frequency_penalty=AI_FREQ_PEN, presence_penalty=AI_PRES_PEN)
+        except Exception as exc:
+            m = str(exc).lower()
+            if not any(w in m for w in ("top_p", "penalty", "unsupported", "unrecognized", "unknown")): raise
+            _SAMPLING_OK[0] = False; log.warning("provider rejected sampling settings; continuing without them")
+    return make_client().chat.completions.create(**kw)
 OWNER_PROMPT = os.environ.get("OWNER_PROMPT", "").strip()[:4000]  # your own instructions added to the AI's brain for every chat
 OWNER_PROMPT_MIN_PLAN = os.environ.get("OWNER_PROMPT_MIN_PLAN", "business").strip().lower()  # your prompt applies from this plan upward
 if OWNER_PROMPT_MIN_PLAN not in PLANS: OWNER_PROMPT_MIN_PLAN = "business"
@@ -2476,7 +2489,7 @@ def ask_stream():
             while True:
                 try:
                     if model_type == "deep":
-                        draft_resp = make_client().chat.completions.create(model=model, messages=messages, temperature=temp, stream=False, max_tokens=2000)
+                        draft_resp = chat_create(model=model, messages=messages, temperature=temp, stream=False, max_tokens=2000)
                         draft = (draft_resp.choices[0].message.content or "").strip()
                         if not draft: raise RuntimeError("The model returned an empty draft.")
                         review_messages = [
@@ -2489,7 +2502,7 @@ def ask_stream():
                         for offset in range(0, len(final_text), 180):
                             yield sse({"t": final_text[offset:offset+180]})
                         break
-                    stream = make_client().chat.completions.create(model=model, messages=messages, temperature=temp, stream=True, max_tokens=1500)
+                    stream = chat_create(model=model, messages=messages, temperature=temp, stream=True, max_tokens=1500)
                     for chunk in stream:
                         if not chunk.choices: continue
                         delta = chunk.choices[0].delta.content or ""
