@@ -64,15 +64,17 @@ CUSTOM_PERSONA_FREE = os.environ.get("CUSTOM_PERSONA_FREE") == "1"  # set to 1 t
 TRIAL_DAYS = int(os.environ.get("TRIAL_DAYS_V2", "7"))  # new name on purpose: an old TRIAL_DAYS=3 set on Render is ignored
 PLAN_DAYS = int(os.environ.get("PLAN_DAYS", "30"))
 MAX_MESSAGE_CHARS = 8000
+try: FILE_TEXT_CAP = max(6000, min(150000, int(os.environ.get("FILE_TEXT_CAP", "40000"))))  # how much of an attached file the AI reads (typed-message limits don't apply to files)
+except ValueError: FILE_TEXT_CAP = 40000
 
 # VYRA subscription catalog: five paid tiers plus Free.
 PLANS = {
-    "free": {"name": "Free", "price": 0, "price_usd": 0, "window_messages": 8, "monthly_messages": 150, "max_chats": 15, "daily_images": 3},
-    "starter": {"name": "Starter", "price": 1500, "price_usd": 5.00, "window_messages": 25, "monthly_messages": 500, "max_chats": 40, "daily_images": 10},
-    "plus": {"name": "Plus", "price": 5000, "price_usd": 12.99, "window_messages": 60, "monthly_messages": 1500, "max_chats": 100, "daily_images": 30},
-    "pro": {"name": "Pro", "price": 15000, "price_usd": 29.99, "window_messages": 150, "monthly_messages": 4000, "max_chats": 300, "daily_images": 100},
-    "business": {"name": "Business", "price": 40000, "price_usd": 59.99, "window_messages": 400, "monthly_messages": 12000, "max_chats": 1000, "daily_images": 300},
-    "enterprise": {"name": "Enterprise", "price": 100000, "price_usd": 99.99, "window_messages": 1000, "monthly_messages": 30000, "max_chats": 0, "daily_images": 800},
+    "free": {"name": "Free", "price": 0, "price_usd": 0, "window_messages": 8, "monthly_messages": 150, "max_chars": 1500, "max_file_mb": 6, "max_chats": 15, "daily_images": 3},
+    "starter": {"name": "Starter", "price": 1500, "price_usd": 5.00, "window_messages": 25, "monthly_messages": 500, "max_chars": 3000, "max_file_mb": 10, "max_chats": 40, "daily_images": 10},
+    "plus": {"name": "Plus", "price": 5000, "price_usd": 12.99, "window_messages": 60, "monthly_messages": 1500, "max_chars": 5000, "max_file_mb": 15, "max_chats": 100, "daily_images": 30},
+    "pro": {"name": "Pro", "price": 15000, "price_usd": 29.99, "window_messages": 150, "monthly_messages": 4000, "max_chars": 8000, "max_file_mb": 25, "max_chats": 300, "daily_images": 100},
+    "business": {"name": "Business", "price": 40000, "price_usd": 59.99, "window_messages": 400, "monthly_messages": 12000, "max_chars": 12000, "max_file_mb": 40, "max_chats": 1000, "daily_images": 300},
+    "enterprise": {"name": "Enterprise", "price": 100000, "price_usd": 99.99, "window_messages": 1000, "monthly_messages": 30000, "max_chars": 20000, "max_file_mb": 50, "max_chats": 0, "daily_images": 800},
 }
 try: WINDOW_HOURS = max(1, min(24, int(os.environ.get("WINDOW_HOURS", "4"))))  # message limits reset this many hours after a person's first message
 except ValueError: WINDOW_HOURS = 4
@@ -469,6 +471,18 @@ def admin_required(fn):
     return wrapped
 
 
+def _env_float(name, default, lo, hi):
+    try: return max(lo, min(hi, float(os.environ.get(name, default))))
+    except ValueError: return default
+AI_TEMP_MAX = _env_float("AI_TEMPERATURE_MAX", 1.5, 0.5, 2.0)      # highest creativity the slider/server allows
+AI_TEMP_DEFAULT = min(AI_TEMP_MAX, _env_float("AI_TEMPERATURE_DEFAULT", 0.9, 0.0, 2.0))  # starting creativity for everyone
+OWNER_PROMPT = os.environ.get("OWNER_PROMPT", "").strip()[:4000]  # your own instructions added to the AI's brain for every chat
+OWNER_PROMPT_MIN_PLAN = os.environ.get("OWNER_PROMPT_MIN_PLAN", "business").strip().lower()  # your prompt applies from this plan upward
+if OWNER_PROMPT_MIN_PLAN not in PLANS: OWNER_PROMPT_MIN_PLAN = "business"
+def gets_owner_prompt(u):
+    plan_key, _trial = effective_plan(u)  # trial users count too, by the plan their trial gives
+    return bool(OWNER_PROMPT and (u["is_admin"] or PLAN_ORDER.index(plan_key) >= PLAN_ORDER.index(OWNER_PROMPT_MIN_PLAN)))
+
 _RECENT_SENDS, _RECENT_LOCK = {}, threading.Lock()
 def duplicate_send(user_id, rid):
     """True if this exact send (client request id) was already accepted in the last 2 minutes, so a retry can't save the message twice."""
@@ -480,6 +494,16 @@ def duplicate_send(user_id, rid):
         if key in _RECENT_SENDS: return True
         _RECENT_SENDS[key] = now
     return False
+
+def file_limit_mb(u):
+    """Biggest file (MB) a person can upload for reading; grows with the plan. Trials/admin count as Enterprise."""
+    plan_key, _t = effective_plan(u)
+    return int(PLANS.get(plan_key, PLANS["free"]).get("max_file_mb", 8))
+
+def message_limit(u):
+    """Longest single message (characters) a person can send; grows with the plan. Trials/admin count as Enterprise."""
+    plan_key, _t = effective_plan(u)
+    return int(PLANS.get(plan_key, PLANS["free"]).get("max_chars", MAX_MESSAGE_CHARS))
 
 def chat_limit(u):
     """Most active (not archived) chats a person can keep. 0 = no limit. Admin has no limit; trials count as their plan."""
@@ -677,6 +701,11 @@ def valid_email(e):
 
 # ----------------------------------------------------------------------------- security headers / CSRF
 @app.before_request
+def _allow_big_uploads():
+    # Only the file-reader accepts bodies above the global limit; the plan limit is enforced inside it after login.
+    if request.method == "POST" and request.path == "/api/extract-text": request.max_content_length = 56 * 1024 * 1024
+
+@app.before_request
 def guard():
     if request.endpoint == "static": return
     if request.method in ("POST", "PUT", "PATCH", "DELETE") and request.path != "/api/paystack/webhook":
@@ -715,7 +744,7 @@ def not_found(e):
 
 
 @app.errorhandler(413)
-def too_big(e): return err("That file is too big. Maximum is 8 MB.", 413)
+def too_big(e): return err("That file is too big for your plan. Upgrade to upload bigger files." if request.path == "/api/extract-text" else "That file is too big. Maximum is 8 MB.", 413)
 
 
 @app.errorhandler(429)
@@ -1424,7 +1453,7 @@ def me():
                  "hasNewsUpdate": (u["last_seen_changelog"] or 0) < CHANGELOG_VERSION,
                  "country": u.get("country_code"), "currency": u.get("preferred_currency") or "NGN",
                  "language": u.get("preferred_language") or "English", "trialEndsAt": iso(u["trial_ends_at"]),
-                 "canUseMemory": can_use_memory(u), "maxChats": chat_limit(u), "memoryPlan": MEMORY_PLAN_NAME},
+                 "canUseMemory": can_use_memory(u), "aiTemp": {"default": AI_TEMP_DEFAULT, "max": AI_TEMP_MAX}, "maxChats": chat_limit(u), "maxChars": message_limit(u), "maxFileMb": file_limit_mb(u), "memoryPlan": MEMORY_PLAN_NAME},
         "usage": usage_status(u),
         "images": {"used": u["images_today"], "limit": 99999 if u["is_admin"] else PLANS[plan_key]["daily_images"], "edit": cf_enabled()},
         "badges": badges_for(u),
@@ -1976,14 +2005,17 @@ def extract_tar_text(data):
 @login_required
 @limited("extract", 10, 60, per="user")
 def extract_text():
+    flim = file_limit_mb(request.user)
+    if (request.content_length or 0) > flim * 1024 * 1024 + 65536: return err(f"That file is over {flim} MB, the limit for your plan. Upgrade to upload bigger files.", 413, code="file_too_big")
     f = request.files.get("file")
     if not f: return err("Choose a file first.")
     data = f.read(); fname = (f.filename or "").lower(); is_zip = False
+    if len(data) > flim * 1024 * 1024: return err(f"That file is over {flim} MB, the limit for your plan. Upgrade to upload bigger files.", 413, code="file_too_big")
     if data.startswith(b"%PDF"):
         try:
             import PyPDF2
             reader = PyPDF2.PdfReader(io.BytesIO(data))
-            text = "\n".join((p.extract_text() or "") for p in reader.pages[:30]).strip()
+            text = "\n".join((p.extract_text() or "") for p in reader.pages[:150]).strip()
         except Exception:
             log.exception("pdf extract failed"); return err("Couldn't read that PDF. It may be scanned or protected.")
     elif data[:2] == b"PK" and fname.endswith((".docx", ".xlsx")):
@@ -2003,7 +2035,7 @@ def extract_text():
     else:
         return err("Only PDF, Word, Excel, Zip and Tar (.tar, .tar.gz, .tgz) files are supported right now.")
     if not text: return err("That file has no readable text (a PDF may be a scan).")
-    cap = (40000 if request.args.get("for") == "project" else 20000) if is_zip else (30000 if request.args.get("for") == "project" else 6000)  # project files may hold more text than a one-off chat attachment
+    cap = max(FILE_TEXT_CAP, 40000) if request.args.get("for") == "project" else FILE_TEXT_CAP  # project files may hold more text than a one-off chat attachment
     return jsonify({"success": True, "text": text[:cap], "truncated": len(text) > cap, "filename": (f.filename or "file")[:120]})
 
 
@@ -2320,15 +2352,16 @@ def ask_stream():
     tone_pref = str(d.get("tone")) if d.get("tone") in TONE_PROMPTS else None
     eli5 = bool(d.get("eli5"))
     mem_req = d.get("useMemory") is not False; style_id = d.get("styleId")
-    try: temp = max(0.0, min(1.0, float(d.get("temperature", 0.7))))
-    except (TypeError, ValueError): temp = 0.7
-    extra = str(d.get("fileText", ""))[:6000]
+    try: temp = max(0.0, min(AI_TEMP_MAX, float(d.get("temperature", AI_TEMP_DEFAULT))))
+    except (TypeError, ValueError): temp = AI_TEMP_DEFAULT
+    extra = str(d.get("fileText", ""))[:FILE_TEXT_CAP]
     trunc = None
     if d.get("truncateFromId"):
         try: trunc = int(d["truncateFromId"])
         except (TypeError, ValueError): return err("Invalid message reference.")
     if not question: return err("Type a message first.")
-    if len(question) > MAX_MESSAGE_CHARS: return err(f"That message is too long. Keep it under {MAX_MESSAGE_CHARS} characters.")
+    mlim = message_limit(u)
+    if len(question) > mlim: return err(f"That message is too long for your plan. Keep it under {mlim:,} characters, or upgrade for longer messages.", 413, code="message_too_long")
     if not GROQ_API_KEY: return err("The AI isn't configured yet. The admin needs to add GROQ_API_KEY.", 503)
     if duplicate_send(u["id"], d.get("rid")): return err("That message was already sent.", 409, code="duplicate")
 
@@ -2376,6 +2409,7 @@ def ask_stream():
                    "write each file as a fenced block whose language is exactly vyrafile, with the filename and extension (folders allowed, like site/index.html) alone on the FIRST line and the file content after it. "
                    "Use several blocks for several files; the app lets the user download them together as a zip. For .docx and .pdf write simple markdown (# headings, - bullets, blank lines). For .xlsx write CSV. "
                    "Never say you cannot create files. Add one short line saying what you made. Do not use vyrafile for ordinary code the user only wants to read.")
+    if gets_owner_prompt(u): sys_prompt += "\nOwner instructions (always follow these): " + OWNER_PROMPT
     sys_prompt += f"\n{BRAND} was created by COLD. If asked who created, built or owns {BRAND}, say it was created by COLD."
     remember_note = ""
     m_rem = re.match(r"^\s*(?:please\s+)?remember(?:\s+that\b|\s*:)\s*(.{3,500})$", question, re.I | re.S)

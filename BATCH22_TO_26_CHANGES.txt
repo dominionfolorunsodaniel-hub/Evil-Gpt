@@ -1,0 +1,23 @@
+Batch 22 - creativity + your own AI prompt
+- Creativity slider now goes to 1.5 (was 1.0), starts at 0.9 (was 0.7)
+- Render env vars: AI_TEMPERATURE_DEFAULT (0.9), AI_TEMPERATURE_MAX (1.5, up to 2), OWNER_PROMPT (your own instructions, max 4000 chars, added to every chat)
+- Files: app.py, templates/index.html, static/script.js, static/sw.js
+Batch 23 - OWNER_PROMPT only for Business+ 
+- Your OWNER_PROMPT now applies only to Business, Enterprise and admin (not trials). Lower plans get the normal AI
+- Optional env OWNER_PROMPT_MIN_PLAN (default business)
+File: app.py
+Batch 23 update: trial users also get OWNER_PROMPT (by the plan their trial gives)
+Batch 24 - longest message per plan
+- Free 1,500 chars, Starter 3,000, Plus 5,000, Pro 8,000, Business 12,000, Enterprise/trial/admin 20,000 (edit max_chars in PLANS)
+- Box stops typing at the limit; server also checks and says upgrade
+Files: app.py, static/script.js, static/sw.js
+Batch 25 - files are not limited by the typed-message limit
+- AI now reads up to 40,000 chars of an attached file (was 6,000; zip/tar was cut to 6,000 at send time - fixed). Env FILE_TEXT_CAP to change (max 150000)
+- PDFs read up to 150 pages (was 30)
+- Toast when a file is bigger than the read limit
+Files: app.py, static/script.js, static/sw.js
+Batch 26 - biggest file per plan
+- Free 6 MB, Starter 10, Plus 15, Pro 25, Business 40, Enterprise/trial/admin 50 (edit max_file_mb in PLANS)
+- Was a flat 8 MB for everyone. Only the file-reader route accepts big uploads; plan limit checked after login
+- Friendly 'upgrade' message in the app and from the server
+Files: app.py, static/script.js, static/sw.js
