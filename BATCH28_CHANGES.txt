@@ -1,0 +1,5 @@
+Batch 28 - big tar/zip files (bots, node_modules) now readable
+- Fixed 'archive too large once unpacked': tar is now read as a stream, and scanning stops at 400 MB unpacked instead of rejecting the file
+- Skips node_modules, .git, venv, caches and WhatsApp login-session folders (.wwebjs_auth, auth_info...) and creds/session json files
+- More than 1000 files no longer errors; the rest are just not listed
+File: app.py

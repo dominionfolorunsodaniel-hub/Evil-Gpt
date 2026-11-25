@@ -1952,18 +1952,22 @@ def extract_office_text(data, ext):
 ZIP_TEXT_EXT = {"txt", "md", "csv", "json", "html", "htm", "css", "js", "mjs", "ts", "tsx", "jsx", "py", "java", "c", "h", "cpp", "cs", "go", "rs", "rb", "php", "sql", "xml", "yml", "yaml", "toml", "ini", "cfg", "sh", "bat", "svg", "vue", "kt", "swift", "dart", "r", "ipynb"}
 
 
+ARCHIVE_JUNK_DIRS = {"node_modules", ".git", "__pycache__", "venv", ".venv", "env", ".next", ".cache", "dist", "build", ".wwebjs_auth", ".wwebjs_cache", "auth_info", "auth_info_baileys", ".idea", ".vscode", "site-packages", "vendor"}
+
+
 def _archive_text(items):
     """items: iterable of (path, size, encrypted, read_fn). Lists every file and returns the text of the small readable ones.
     Guards: file-count limit, per-file read limit (an archive's own size claims are not trusted), no secrets files, no encrypted or binary files."""
-    names, chunks, total, skipped, count = [], [], 0, 0, 0
+    names, chunks, total, skipped, count, ignored, more = [], [], 0, 0, 0, 0, False
     for path_raw, size, encrypted, read_fn in items:
-        count += 1
-        if count > 1000: raise ValueError("too many files")
         parts = [p for p in str(path_raw).replace("\\", "/").split("/") if p and p != "."]
         if not parts or ".." in parts or parts[0] == "__MACOSX" or parts[-1] == ".DS_Store": continue
+        if any(p in ARCHIVE_JUNK_DIRS for p in parts[:-1]): ignored += 1; continue  # dependency, cache and login-session folders add nothing useful
+        count += 1
+        if count > 1000: more = True; break
         path = "/".join(parts)[:150]; names.append(path)
         leaf = parts[-1].lower(); ext = leaf.rsplit(".", 1)[-1] if "." in leaf else ""
-        if leaf.startswith(".env") or leaf in ("id_rsa", "id_ed25519") or ext in ("pem", "key", "p12", "pfx") or "secret" in leaf:
+        if leaf.startswith(".env") or leaf in ("id_rsa", "id_ed25519") or ext in ("pem", "key", "p12", "pfx") or "secret" in leaf or leaf in ("creds.json", "session.json", "auth.json"):
             skipped += 1; continue  # never feed secrets to the AI
         if ext not in ZIP_TEXT_EXT or encrypted or size > 300_000 or total >= 150_000:
             skipped += 1; continue
@@ -1972,7 +1976,8 @@ def _archive_text(items):
         txt = raw.decode("utf-8", "replace").strip()
         if txt: chunks.append(f"=== {path} ===\n{txt}"); total += len(txt)
     if not chunks: raise ValueError("no readable text files")
-    listing = "Files in the archive (%d%s):\n%s" % (len(names), f", {skipped} not read" if skipped else "", "\n".join("- " + n for n in names[:60]) + ("\n- ..." if len(names) > 60 else ""))
+    extra_note = (f", {ignored} in dependency/cache folders ignored" if ignored else "") + (", more files not listed" if more else "")
+    listing = "Files in the archive (%d%s%s):\n%s" % (len(names), f", {skipped} not read" if skipped else "", extra_note, "\n".join("- " + n for n in names[:60]) + ("\n- ..." if len(names) > 60 else ""))
     return listing + "\n\n" + "\n\n".join(chunks)
 
 
@@ -1988,7 +1993,7 @@ def extract_zip_text(data):
         return _archive_text(items())
 
 
-TAR_MAX_UNPACKED = 80_000_000  # decompression-bomb guard for .tar.gz/.tgz/.tar.bz2/.tar.xz
+TAR_SCAN_LIMIT = 400_000_000  # most unpacked bytes we will scan through (decompression-bomb guard); bigger archives are read only up to here
 
 
 def looks_like_tar(data):
@@ -1996,17 +2001,17 @@ def looks_like_tar(data):
 
 
 def extract_tar_text(data):
-    """Reads .tar, .tar.gz/.tgz, .tar.bz2 and .tar.xz in memory. Decompression is capped so a tiny 'bomb' file cannot use up the server."""
-    import tarfile, zlib, bz2, lzma
-    if data[:2] == b"\x1f\x8b": raw = zlib.decompressobj(31).decompress(data, TAR_MAX_UNPACKED + 1)
-    elif data[:3] == b"BZh": raw = bz2.BZ2Decompressor().decompress(data, TAR_MAX_UNPACKED + 1)
-    elif data[:6] == b"\xfd7zXZ\x00": raw = lzma.LZMADecompressor().decompress(data, TAR_MAX_UNPACKED + 1)
-    else: raw = data
-    if len(raw) > TAR_MAX_UNPACKED: raise ValueError("an archive that is too large once unpacked")
-    with tarfile.open(fileobj=io.BytesIO(raw), mode="r:") as tf:
+    """Reads .tar, .tar.gz/.tgz, .tar.bz2 and .tar.xz as a stream in memory (nothing is unpacked to disk or held whole).
+    Big archives are fine: heavy folders like node_modules are skipped, and scanning stops at TAR_SCAN_LIMIT unpacked bytes."""
+    import tarfile
+    mode = "r|gz" if data[:2] == b"\x1f\x8b" else "r|bz2" if data[:3] == b"BZh" else "r|xz" if data[:6] == b"\xfd7zXZ\x00" else "r|"
+    with tarfile.open(fileobj=io.BytesIO(data), mode=mode) as tf:
         def items():
+            seen = 0
             for m in tf:
                 if not m.isfile(): continue  # skips folders, links and devices
+                seen += m.size
+                if seen > TAR_SCAN_LIMIT: return  # stop scanning; what we read so far is still used
                 def rd(limit, m=m):
                     fh = tf.extractfile(m)
                     return fh.read(limit) if fh else b""
