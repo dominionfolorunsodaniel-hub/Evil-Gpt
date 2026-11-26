@@ -1,0 +1,6 @@
+Batch 29 - why the AI ignored the owner prompt (found by code check)
+- Deep mode rewrote every answer through a reviewer step that did NOT include your prompt/tone/language/file rules. Reviewer now gets the full instructions
+- Reviewer temperature follows the creativity slider (capped at 0.4) instead of fixed 0.2
+- OWNER_PROMPT now placed LAST in the system prompt with 'highest priority' wording so the playful personality block can't override it
+- New admin-only check: open /api/admin/prompt-check while logged in as admin to see if OWNER_PROMPT loaded and applies to you
+File: app.py

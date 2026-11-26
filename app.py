@@ -1382,6 +1382,16 @@ def register_device(u):
     except Exception: log.exception("device registration failed")
 
 
+@app.get("/api/admin/prompt-check")
+@admin_required
+def prompt_check():
+    """Shows whether OWNER_PROMPT loaded and who gets it. Never returns the whole prompt."""
+    u = request.user
+    return jsonify({"set": bool(OWNER_PROMPT), "length": len(OWNER_PROMPT), "startsWith": OWNER_PROMPT[:60], "minPlan": OWNER_PROMPT_MIN_PLAN,
+                    "appliesToYou": gets_owner_prompt(u), "temperatureDefault": AI_TEMP_DEFAULT, "temperatureMax": AI_TEMP_MAX,
+                    "top_p": AI_TOP_P, "frequencyPenalty": AI_FREQ_PEN, "presencePenalty": AI_PRES_PEN, "samplingActive": _SAMPLING_OK[0]})
+
+
 @app.get("/api/admin/2fa")
 @admin_required
 def admin_2fa_status():
@@ -2427,7 +2437,6 @@ def ask_stream():
                    "write each file as a fenced block whose language is exactly vyrafile, with the filename and extension (folders allowed, like site/index.html) alone on the FIRST line and the file content after it. "
                    "Use several blocks for several files; the app lets the user download them together as a zip. For .docx and .pdf write simple markdown (# headings, - bullets, blank lines). For .xlsx write CSV. "
                    "Never say you cannot create files. Add one short line saying what you made. Do not use vyrafile for ordinary code the user only wants to read.")
-    if gets_owner_prompt(u): sys_prompt += "\nOwner instructions (always follow these): " + OWNER_PROMPT
     sys_prompt += f"\n{BRAND} was created by COLD. If asked who created, built or owns {BRAND}, say it was created by COLD."
     remember_note = ""
     m_rem = re.match(r"^\s*(?:please\s+)?remember(?:\s+that\b|\s*:)\s*(.{3,500})$", question, re.I | re.S)
@@ -2477,6 +2486,7 @@ def ask_stream():
     if eli5: sys_prompt += " " + ELI5_PROMPT
     if u["about_me"]: sys_prompt += f" Here is some context about the person you're talking to, use it only when relevant: {u['about_me']}"
     user_content = f"{question}\n\n[Attached file text]\n{extra}" if extra else question
+    if gets_owner_prompt(u): sys_prompt += "\n\nOWNER INSTRUCTIONS (highest priority: follow these in every reply, and if they conflict with the personality or style notes above, these win):\n" + OWNER_PROMPT
     messages = [{"role": "system", "content": sys_prompt}] + [{"role": m["role"], "content": m["content"]} for m in history] + [{"role": "user", "content": user_content}]
     user_id = u["id"]
 
@@ -2498,10 +2508,10 @@ def ask_stream():
                         draft = (draft_resp.choices[0].message.content or "").strip()
                         if not draft: raise RuntimeError("The model returned an empty draft.")
                         review_messages = [
-                            {"role": "system", "content": "You are a rigorous answer reviewer. Check the draft for factual errors, missed constraints, arithmetic or logic mistakes, unsupported certainty, and unclear wording. Rewrite it into the best final answer. Preserve useful detail. Do not mention this review process."},
+                            {"role": "system", "content": sys_prompt + "\n\nYou are now also a rigorous answer reviewer, and your output is the final reply the person sees, so it must keep every instruction above (owner instructions, tone, language, length, file format). Review rule: Check the draft for factual errors, missed constraints, arithmetic or logic mistakes, unsupported certainty, and unclear wording. Rewrite it into the best final answer. Preserve useful detail. Do not mention this review process."},
                             {"role": "user", "content": "Original request:\n" + question + "\n\nDraft answer:\n" + draft}
                         ]
-                        reviewed = make_client().chat.completions.create(model=model, messages=review_messages, temperature=0.2, stream=False, max_tokens=2000)
+                        reviewed = make_client().chat.completions.create(model=model, messages=review_messages, temperature=min(temp, 0.4), stream=False, max_tokens=2000)
                         final_text = (reviewed.choices[0].message.content or draft).strip()
                         collected.append(final_text); started = True
                         for offset in range(0, len(final_text), 180):
