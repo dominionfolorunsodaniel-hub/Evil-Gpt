@@ -1962,7 +1962,10 @@ def extract_office_text(data, ext):
 ZIP_TEXT_EXT = {"txt", "md", "csv", "json", "html", "htm", "css", "js", "mjs", "ts", "tsx", "jsx", "py", "java", "c", "h", "cpp", "cs", "go", "rs", "rb", "php", "sql", "xml", "yml", "yaml", "toml", "ini", "cfg", "sh", "bat", "svg", "vue", "kt", "swift", "dart", "r", "ipynb"}
 
 
-ARCHIVE_JUNK_DIRS = {"node_modules", ".git", "__pycache__", "venv", ".venv", "env", ".next", ".cache", "dist", "build", ".wwebjs_auth", ".wwebjs_cache", "auth_info", "auth_info_baileys", ".idea", ".vscode", "site-packages", "vendor"}
+ARCHIVE_JUNK_DIRS = {"node_modules", ".git", "__pycache__", "venv", ".venv", "env", ".next", ".cache", "dist", "build", ".wwebjs_auth", ".wwebjs_cache", "auth_info", "auth_info_baileys", "sessions", "session", "baileys_auth", "wa_auth", "tmp", "temp", "logs", "media", ".idea", ".vscode", "site-packages", "vendor"}
+
+
+ARCHIVE_SECRET_RE = re.compile(r"\b\d{8,10}:[A-Za-z0-9_-]{30,}\b|\bgsk_[A-Za-z0-9]{20,}|\bsk-[A-Za-z0-9_-]{20,}|\bAIza[0-9A-Za-z_-]{30,}|\bghp_[A-Za-z0-9]{30,}|\b(?:xox[bap]-)[A-Za-z0-9-]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*?-----END [A-Z ]*PRIVATE KEY-----")
 
 
 def _archive_text(items):
@@ -1977,13 +1980,13 @@ def _archive_text(items):
         if count > 1000: more = True; break
         path = "/".join(parts)[:150]; names.append(path)
         leaf = parts[-1].lower(); ext = leaf.rsplit(".", 1)[-1] if "." in leaf else ""
-        if leaf.startswith(".env") or leaf in ("id_rsa", "id_ed25519") or ext in ("pem", "key", "p12", "pfx") or "secret" in leaf or leaf in ("creds.json", "session.json", "auth.json"):
+        if leaf.startswith(".env") or leaf in ("id_rsa", "id_ed25519") or ext in ("pem", "key", "p12", "pfx") or "secret" in leaf or leaf in ("creds.json", "session.json", "auth.json") or leaf.startswith(("pre-key-", "session-", "sender-key", "app-state-sync", "lid-mapping")):
             skipped += 1; continue  # never feed secrets to the AI
         if ext not in ZIP_TEXT_EXT or encrypted or size > 300_000 or total >= 150_000:
             skipped += 1; continue
         raw = read_fn(300_001)
         if len(raw) > 300_000 or b"\x00" in raw[:2000]: skipped += 1; continue
-        txt = raw.decode("utf-8", "replace").strip()
+        txt = ARCHIVE_SECRET_RE.sub("[REDACTED]", raw.decode("utf-8", "replace")).strip()
         if txt: chunks.append(f"=== {path} ===\n{txt}"); total += len(txt)
     if not chunks: raise ValueError("no readable text files")
     extra_note = (f", {ignored} in dependency/cache folders ignored" if ignored else "") + (", more files not listed" if more else "")

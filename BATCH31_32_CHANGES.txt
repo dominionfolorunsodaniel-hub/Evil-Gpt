@@ -1,0 +1,8 @@
+Batch 31 - bot archives: skip WhatsApp session files, hide tokens
+- Skips sessions/ session/ media/ tmp/ logs/ folders and pre-key-*, session-*, sender-key*, creds files (WhatsApp login data never reaches the AI)
+- Telegram/Groq/OpenAI/Google/GitHub/Slack tokens and private keys found inside file text are replaced with [REDACTED] before the AI sees them
+File: app.py
+Batch 32 - reopen the last chat
+- Leaving and coming back (or refreshing) now reopens the chat you were in, not a blank chat. Pressing New chat starts a fresh one as before
+- Remembered per account on that device; if that chat was deleted it falls back to a new chat
+Files: static/script.js, static/sw.js
