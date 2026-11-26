@@ -43,8 +43,8 @@ app.config.update(
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
-GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
-GROQ_FAST_MODEL = os.environ.get("GROQ_FAST_MODEL", "llama-3.1-8b-instant")
+GROQ_MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")  # Groq retired the Llama 3.x models in Aug 2026
+GROQ_FAST_MODEL = os.environ.get("GROQ_FAST_MODEL", "openai/gpt-oss-20b")
 # Balanced sits between Fast and Deep. Groq's model lineup changes over time, so this is a separate
 # env var the admin can point at whatever mid-size model Groq currently offers. Unset, it just behaves like Fast.
 GROQ_BALANCED_MODEL = os.environ.get("GROQ_BALANCED_MODEL", GROQ_FAST_MODEL)
@@ -480,14 +480,23 @@ AI_TOP_P = _env_float("AI_TOP_P", 0.9, 0.1, 1.0)
 AI_FREQ_PEN = _env_float("AI_FREQUENCY_PENALTY", 0.3, 0.0, 1.0)
 AI_PRES_PEN = _env_float("AI_PRESENCE_PENALTY", 0.2, 0.0, 1.0)
 _SAMPLING_OK = [True]
-def chat_create(**kw):
-    """Chat call with top_p + repeat penalties. If the AI provider rejects those settings, retry once without them and stop sending them."""
-    if _SAMPLING_OK[0]:
-        try: return make_client().chat.completions.create(**kw, top_p=AI_TOP_P, frequency_penalty=AI_FREQ_PEN, presence_penalty=AI_PRES_PEN)
+REASONING_EFFORT = os.environ.get("REASONING_EFFORT", "low").strip().lower()
+if REASONING_EFFORT not in ("low", "medium", "high"): REASONING_EFFORT = "low"
+def chat_create(sampling=True, **kw):
+    """One place every AI call goes through.
+    - gpt-oss models think before answering and that thinking uses output tokens, so give them room and a low thinking effort (REASONING_EFFORT, deep uses medium).
+    - sampling=True adds top_p + repeat penalties. If Groq rejects any extra setting, retry once without them and stop sending them."""
+    model = str(kw.get("model", "")); extra = {}
+    if "gpt-oss" in model:
+        kw["max_tokens"] = max(int(kw.get("max_tokens") or 1000) + 800, 1200)
+        extra["reasoning_effort"] = "medium" if model == GROQ_MODEL and sampling else REASONING_EFFORT
+    if sampling: extra.update(top_p=AI_TOP_P, frequency_penalty=AI_FREQ_PEN, presence_penalty=AI_PRES_PEN)
+    if extra and _SAMPLING_OK[0]:
+        try: return make_client().chat.completions.create(**kw, **extra)
         except Exception as exc:
             m = str(exc).lower()
-            if not any(w in m for w in ("top_p", "penalty", "unsupported", "unrecognized", "unknown")): raise
-            _SAMPLING_OK[0] = False; log.warning("provider rejected sampling settings; continuing without them")
+            if not any(w in m for w in ("top_p", "penalty", "reasoning", "unsupported", "unrecognized", "unknown")): raise
+            _SAMPLING_OK[0] = False; log.warning("provider rejected extra settings; continuing without them")
     return make_client().chat.completions.create(**kw)
 OWNER_PROMPT = os.environ.get("OWNER_PROMPT", "").strip()[:4000]  # your own instructions added to the AI's brain for every chat
 OWNER_PROMPT_MIN_PLAN = os.environ.get("OWNER_PROMPT_MIN_PLAN", "business").strip().lower()  # your prompt applies from this plan upward
@@ -947,7 +956,7 @@ def project_summarize(project_id):
     ctx += "".join(f"\nFile {f['filename']}: {f['content'][:1200]}" for f in files)
     ctx += "".join(f"\nChat \"{c['title']}\" latest answer: {(c['last_answer'] or '')[:500]}" for c in chats)
     try:
-        r = make_client().chat.completions.create(model=GROQ_BALANCED_MODEL, temperature=0.3, max_tokens=700, messages=[
+        r = chat_create(sampling=False, model=GROQ_BALANCED_MODEL, temperature=0.3, max_tokens=700, messages=[
             {"role": "system", "content": "Summarise this project for its owner: what it is about, what has been done, key facts from the files, and 3 sensible next steps. Use short headings and bullet points. Do not invent anything that is not in the material."},
             {"role": "user", "content": ctx[:9000]}])
         text = (r.choices[0].message.content or "").strip()
@@ -1758,7 +1767,7 @@ def shrink_for_storage(data, mime):
 def enhance_image_prompt(prompt):
     """Turns a short idea into a rich image prompt with the fast model. Any problem returns the original text."""
     try:
-        r = make_client().chat.completions.create(model=GROQ_FAST_MODEL, temperature=0.7, max_tokens=200, timeout=10, messages=[
+        r = chat_create(sampling=False, model=GROQ_FAST_MODEL, temperature=0.7, max_tokens=200, timeout=10, messages=[
             {"role": "system", "content": "Rewrite the user's image idea as ONE vivid, detailed prompt for an AI image generator, max 70 words. Cover subject, setting, style, lighting, camera angle/composition and mood. Keep the user's meaning and keep any words they want written in the image, in quotes. Output only the prompt, in English."},
             {"role": "user", "content": prompt}])
         t = (r.choices[0].message.content or "").strip().strip('"').strip()
@@ -2272,7 +2281,7 @@ def message_followups(message_id):
     if not GROQ_API_KEY: return jsonify({"followups": []})
     prev = q_one("SELECT content FROM evil_messages WHERE conversation_id=%s AND id < %s AND role='user' ORDER BY id DESC LIMIT 1", (m["conversation_id"], message_id))
     try:
-        r = make_client().chat.completions.create(model=GROQ_FAST_MODEL, temperature=0.6, max_tokens=80, messages=[
+        r = chat_create(sampling=False, model=GROQ_FAST_MODEL, temperature=0.6, max_tokens=80, messages=[
             {"role": "system", "content": "Suggest 3 short follow-up questions the user might ask next. One per line, each under 8 words, no numbering, no quotes. Reply with the 3 lines only, in the same language as the user."},
             {"role": "user", "content": f"User asked: {(prev or {}).get('content', '')[:300]}\nAssistant answered: {m['content'][:700]}"}])
         return jsonify({"followups": clean_followups(r.choices[0].message.content)})
@@ -2338,7 +2347,7 @@ def make_client(): return OpenAI(api_key=GROQ_API_KEY, base_url="https://api.gro
 
 def auto_title(conv_id, question, answer):
     try:
-        r = make_client().chat.completions.create(model=GROQ_FAST_MODEL, temperature=0.3, max_tokens=16, messages=[
+        r = chat_create(sampling=False, model=GROQ_FAST_MODEL, temperature=0.3, max_tokens=16, messages=[
             {"role": "system", "content": "Write a 3 to 6 word title for this chat. Reply with the title only. No quotes, no full stop."},
             {"role": "user", "content": f"User: {question[:300]}\nAssistant: {answer[:300]}"}])
         t = re.sub(r"[\"'\n]", "", (r.choices[0].message.content or "")).strip()[:80]
@@ -2520,7 +2529,7 @@ def ask_stream():
                             {"role": "system", "content": sys_prompt + "\n\nYou are now also a rigorous answer reviewer, and your output is the final reply the person sees, so it must keep every instruction above (owner instructions, tone, language, length, file format). Review rule: Check the draft for factual errors, missed constraints, arithmetic or logic mistakes, unsupported certainty, and unclear wording. Rewrite it into the best final answer. Preserve useful detail. Do not mention this review process."},
                             {"role": "user", "content": "Original request:\n" + question + "\n\nDraft answer:\n" + draft}
                         ]
-                        reviewed = make_client().chat.completions.create(model=model, messages=review_messages, temperature=min(temp, 0.4), stream=False, max_tokens=2000)
+                        reviewed = chat_create(sampling=False, model=model, messages=review_messages, temperature=min(temp, 0.4), stream=False, max_tokens=2000)
                         final_text = (reviewed.choices[0].message.content or draft).strip()
                         collected.append(final_text); started = True
                         for offset in range(0, len(final_text), 180):

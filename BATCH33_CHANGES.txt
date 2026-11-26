@@ -1,0 +1,5 @@
+Batch 33 - Groq retired the Llama models (logs showed 404 'model llama-3.1-8b-instant does not exist')
+- Fast default model -> openai/gpt-oss-20b, Deep default -> openai/gpt-oss-120b (env GROQ_FAST_MODEL / GROQ_MODEL / GROQ_BALANCED_MODEL still override)
+- All AI calls go through one helper that gives these 'thinking' models enough output room and low thinking effort (env REASONING_EFFORT, default low; Deep uses medium)
+- Fixes follow-ups, auto titles, Fast mode and the Deep->Fast fallback that were failing
+File: app.py
