@@ -1,0 +1,4 @@
+Batch 30 - analyze a zip/tar, fix it, get a zip back
+- When a zip/tar is attached the AI is told to analyze it, cite file paths, and return changed/new files as full vyrafile blocks with the original paths (downloads as one zip)
+- Those replies can be up to 6000 tokens (was 1500) and skip Deep's rewrite pass so file blocks are not cut or mangled
+File: app.py

@@ -2485,6 +2485,12 @@ def ask_stream():
         if st: sys_prompt += " Reply style to follow: " + st["instruction"]
     if eli5: sys_prompt += " " + ELI5_PROMPT
     if u["about_me"]: sys_prompt += f" Here is some context about the person you're talking to, use it only when relevant: {u['about_me']}"
+    is_archive = extra.startswith("Files in the archive")
+    if is_archive:
+        sys_prompt += ("\n\nARCHIVE TASK: the user attached a zip/tar project. The attached text lists every file and gives the contents of the readable ones (files marked 'not read' were too big, binary or secret). "
+                       "Analyze it for real: say what it does, find bugs and risks, and cite file paths. If the user asks you to fix, change, improve or add anything, return the work as downloadable files: one ```vyrafile block per changed or new file, "
+                       "with the SAME path as in the archive on the first line and the COMPLETE new file content (never partial snippets or '...rest unchanged'). Include only files you changed or added. "
+                       "End with a short list of what you changed and why. Never invent files you were not shown; if you need a file that was not read, ask the user to paste it. Never output secrets or tokens.")
     user_content = f"{question}\n\n[Attached file text]\n{extra}" if extra else question
     if gets_owner_prompt(u): sys_prompt += "\n\nOWNER INSTRUCTIONS (highest priority: follow these in every reply, and if they conflict with the personality or style notes above, these win):\n" + OWNER_PROMPT
     messages = [{"role": "system", "content": sys_prompt}] + [{"role": m["role"], "content": m["content"]} for m in history] + [{"role": "user", "content": user_content}]
@@ -2503,7 +2509,7 @@ def ask_stream():
         try:
             while True:
                 try:
-                    if model_type == "deep":
+                    if model_type == "deep" and not is_archive:  # archive jobs skip the rewrite pass so full file blocks stay intact
                         draft_resp = chat_create(model=model, messages=messages, temperature=temp, stream=False, max_tokens=2000)
                         draft = (draft_resp.choices[0].message.content or "").strip()
                         if not draft: raise RuntimeError("The model returned an empty draft.")
@@ -2517,7 +2523,7 @@ def ask_stream():
                         for offset in range(0, len(final_text), 180):
                             yield sse({"t": final_text[offset:offset+180]})
                         break
-                    stream = chat_create(model=model, messages=messages, temperature=temp, stream=True, max_tokens=1500)
+                    stream = chat_create(model=model, messages=messages, temperature=temp, stream=True, max_tokens=(6000 if is_archive else 1500))
                     for chunk in stream:
                         if not chunk.choices: continue
                         delta = chunk.choices[0].delta.content or ""
