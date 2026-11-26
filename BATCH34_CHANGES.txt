@@ -1,0 +1,4 @@
+Batch 34 - Groq free-tier size limit + old-chat database fix
+- Groq free tier rejected requests over 8000 tokens (error 413). Every AI call now trims input/reply to fit (env GROQ_TPM_LIMIT, default 8000; set 0 on a paid Groq tier)
+- Adds missing database columns evil_messages.attachment_type / attachment_url (additive). Their absence caused 'column attachment_type does not exist' when opening a chat
+Includes Batch 33. File: app.py

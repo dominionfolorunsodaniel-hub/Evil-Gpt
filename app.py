@@ -274,6 +274,8 @@ SCHEMA = [
     # ---- Vyra batch 1: chat features (additive only) ----
     "ALTER TABLE evil_messages ADD COLUMN IF NOT EXISTS pinned BOOLEAN NOT NULL DEFAULT FALSE",
     "ALTER TABLE evil_messages ADD COLUMN IF NOT EXISTS mode VARCHAR(10)",
+    "ALTER TABLE evil_messages ADD COLUMN IF NOT EXISTS attachment_type VARCHAR(20)",
+    "ALTER TABLE evil_messages ADD COLUMN IF NOT EXISTS attachment_url TEXT",
     "CREATE TABLE IF NOT EXISTS evil_notes (id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES evil_users(id) ON DELETE CASCADE, conversation_id UUID REFERENCES evil_conversations(id) ON DELETE SET NULL, title VARCHAR(120) NOT NULL DEFAULT '', content TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
     "CREATE INDEX IF NOT EXISTS evil_notes_user_idx ON evil_notes(user_id, id DESC)",
     # ---- Vyra batch 2: chat folders (additive only) ----
@@ -482,6 +484,23 @@ AI_PRES_PEN = _env_float("AI_PRESENCE_PENALTY", 0.2, 0.0, 1.0)
 _SAMPLING_OK = [True]
 REASONING_EFFORT = os.environ.get("REASONING_EFFORT", "low").strip().lower()
 if REASONING_EFFORT not in ("low", "medium", "high"): REASONING_EFFORT = "low"
+try: GROQ_TPM_LIMIT = max(0, int(os.environ.get("GROQ_TPM_LIMIT", "8000")))  # Groq free tier allows ~8000 tokens per request (input + reply). Set 0 on a paid Groq tier to turn the trimming off.
+except ValueError: GROQ_TPM_LIMIT = 8000
+def fit_token_budget(kw):
+    """Keeps input + reply under Groq's per-request token limit: shrinks the reply room first, then trims the tail of the longest (attached-file) message."""
+    if not GROQ_TPM_LIMIT: return
+    msgs = kw.get("messages") or []
+    est = lambda: sum(len(str(m.get("content", ""))) for m in msgs) // 3 + 40 * len(msgs)  # ~3 characters per token, on the safe side
+    want = int(kw.get("max_tokens") or 1000); floor = min(want, 700)
+    room = GROQ_TPM_LIMIT - 150
+    if est() + floor > room and msgs:
+        big = max(range(len(msgs)), key=lambda i: len(str(msgs[i].get("content", ""))))
+        over_chars = (est() + floor - room) * 3
+        text = str(msgs[big].get("content", ""))
+        if over_chars < len(text) - 500:
+            msgs[big] = {**msgs[big], "content": text[:len(text) - over_chars] + "\n[...the rest was cut to fit the AI's size limit]"}
+    kw["max_tokens"] = max(floor, min(want, room - est()))
+
 def chat_create(sampling=True, **kw):
     """One place every AI call goes through.
     - gpt-oss models think before answering and that thinking uses output tokens, so give them room and a low thinking effort (REASONING_EFFORT, deep uses medium).
@@ -490,6 +509,7 @@ def chat_create(sampling=True, **kw):
     if "gpt-oss" in model:
         kw["max_tokens"] = max(int(kw.get("max_tokens") or 1000) + 800, 1200)
         extra["reasoning_effort"] = "medium" if model == GROQ_MODEL and sampling else REASONING_EFFORT
+    fit_token_budget(kw)
     if sampling: extra.update(top_p=AI_TOP_P, frequency_penalty=AI_FREQ_PEN, presence_penalty=AI_PRES_PEN)
     if extra and _SAMPLING_OK[0]:
         try: return make_client().chat.completions.create(**kw, **extra)
