@@ -187,7 +187,9 @@ async function enterApp() {
   await refreshMe(); paintHistoryEarly();
   const tasks = [loadPersonas(), loadHistory(), loadNotifs(), loadDailyPrompt(), loadStyles()];
   await Promise.all(tasks.map((t) => t.catch(() => {})));
-  offerPendingGift(); setGreeting(); const rememberedPage = store.get("vyra-page"); newChat(); maybeTour(); if (["chat","toolbox","images","plans","workspace","settings"].includes(rememberedPage)) showPage(rememberedPage);
+  offerPendingGift(); setGreeting(); const rememberedPage = store.get("vyra-page"); const lastConv = store.get("vyra-conv-" + userKey());
+  newChat(); if (lastConv) { openConversation(lastConv, true).then(() => { if (S.conv !== lastConv) { newChat(); rememberConv(lastConv); } if (["chat","toolbox","images","plans","workspace","settings"].includes(rememberedPage)) showPage(rememberedPage); }); }
+  maybeTour(); if (["chat","toolbox","images","plans","workspace","settings"].includes(rememberedPage)) showPage(rememberedPage);
   const paid = new URLSearchParams(location.search).get("paid");
   if (paid) {
     history.replaceState(null, "", "/?login=1"); showPage("plans");
@@ -423,15 +425,16 @@ function refreshActions() { S.msgs.forEach((m) => { if (m.pending || !m.el) retu
 function newChat(keepProject) {
   if (S.busy && S.abort) S.abort.abort();
   if (!keepProject) S.projectId = null; // a normal new chat never inherits a project
-  S.conv = null; S.msgs = []; S.editFromId = null; S.memoryOn = true; $("mem-switch").checked = !!(S.user && S.user.canUseMemory); clearFile(); renderMessages(); $("message-input").value = store.get(draftKey()) || ""; autosize(); markActive(); showPage("chat"); $("message-input").focus();
+  rememberConv(""); S.conv = null; S.msgs = []; S.editFromId = null; S.memoryOn = true; $("mem-switch").checked = !!(S.user && S.user.canUseMemory); clearFile(); renderMessages(); $("message-input").value = store.get(draftKey()) || ""; autosize(); markActive(); showPage("chat"); $("message-input").focus();
 }
 $("new-chat").onclick = newChat;
-async function openConversation(id) {
+function rememberConv(id) { store.set("vyra-conv-" + userKey(), id || ""); }
+async function openConversation(id, quiet) {
   showChatSkeleton();
   try {
     const d = await api("/api/conversations/" + id); S.conv = id; S.editFromId = null; S.projectId = d.projectId || null; S.memoryOn = d.useMemory !== false; $("mem-switch").checked = S.memoryOn && !!(S.user && S.user.canUseMemory); updateOptsDot(); // each chat keeps its own project and memory switch
-    S.msgs = d.messages.map((m) => ({ id: m.id, role: m.role, content: m.content, feedback: m.feedback, pinned: m.pinned, mode: m.mode, createdAt: m.created_at })); renderMessages(); $("message-input").value = store.get(draftKey()) || ""; autosize(); markActive(); showPage("chat"); toBottom();
-  } catch (e) { toast(e.message, "error"); renderMessages(); }
+    S.msgs = d.messages.map((m) => ({ id: m.id, role: m.role, content: m.content, feedback: m.feedback, pinned: m.pinned, mode: m.mode, createdAt: m.created_at })); renderMessages(); rememberConv(id); $("message-input").value = store.get(draftKey()) || ""; autosize(); markActive(); showPage("chat"); toBottom();
+  } catch (e) { if (!quiet) toast(e.message, "error"); renderMessages(); }
 }
 function autosize() { const t = $("message-input"); t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 180) + "px"; updateChips(); }
 $("message-input").addEventListener("input", autosize);
@@ -505,7 +508,7 @@ async function send(text, opts = {}) {
       while ((i = buf.indexOf("\n\n")) >= 0) {
         const raw = buf.slice(0, i); buf = buf.slice(i + 2); if (!raw.startsWith("data: ")) continue;
         const ev = JSON.parse(raw.slice(6));
-        if (ev.start) S.conv = ev.start;
+        if (ev.start) { S.conv = ev.start; rememberConv(ev.start); }
         if (ev.t) { started = true; ai.content += ev.t; if (!raf) raf = requestAnimationFrame(paint); }
         if (ev.notice) { body.insertAdjacentHTML("beforebegin", `<div class="notice-line">${esc(ev.notice)}</div>`); }
         if (ev.error) failed = ev.error;
