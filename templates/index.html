@@ -280,6 +280,22 @@
     <section id="settings-page" class="page hidden">
       <div class="page-wrap">
         <div class="page-head"><h2>Settings</h2><p>Tune how {{ brand }} talks to you. These apply to your chats.</p></div>
+        <div class="card set-card" style="max-width:640px" id="dev-card"><h3>Developer API</h3>
+          <p class="muted tiny">Use {{ brand }} in your own app. Pay only for what you use, per token, from prepaid credit.</p>
+          <div class="muted tiny" id="dev-balance">Loading...</div>
+          <div class="muted tiny" id="dev-prices"></div>
+          <h4 style="margin:14px 0 6px">Your API keys</h4>
+          <div id="dev-keys" class="muted tiny"></div>
+          <div style="display:flex;gap:8px;margin-top:8px"><input id="dev-key-name" class="input" maxlength="60" placeholder="Key name, e.g. My website" style="flex:1"><button type="button" class="btn" id="dev-key-create">Create key</button></div>
+          <pre id="dev-new-key" class="hidden" style="white-space:pre-wrap;word-break:break-all;margin-top:8px;padding:10px;border-radius:10px;background:var(--raised)"></pre>
+          <h4 style="margin:16px 0 6px">Add credit</h4>
+          <p class="muted tiny" id="dev-bank"></p>
+          <div style="display:flex;gap:8px;flex-wrap:wrap"><input id="dev-topup-amt" class="input" type="number" inputmode="numeric" placeholder="Amount paid (naira)" style="flex:1;min-width:150px"><input id="dev-topup-note" class="input" maxlength="200" placeholder="Transfer reference or name" style="flex:1;min-width:150px"><button type="button" class="btn" id="dev-topup-send">I have paid</button></div>
+          <div id="dev-topups" class="muted tiny" style="margin-top:6px"></div>
+          <details style="margin-top:14px"><summary class="muted tiny">How to call the API</summary><pre id="dev-snippet" style="white-space:pre-wrap;word-break:break-all;font-size:12px;margin-top:8px"></pre></details>
+          <div id="dev-admin" class="hidden" style="margin-top:16px"><h4 style="margin:0 0 6px">Admin: credit requests</h4><div id="dev-admin-list" class="muted tiny"></div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><input id="dev-grant-user" class="input" placeholder="Username" style="flex:1;min-width:120px"><input id="dev-grant-usd" class="input" type="number" step="0.01" placeholder="USD credit" style="flex:1;min-width:100px"><button type="button" class="btn" id="dev-grant-btn">Add credit</button></div></div>
+        </div>
         <div class="card set-card" style="max-width:640px"><h3>Chat preferences</h3>
             <button type="button" id="opts-btn" class="chip hidden" aria-expanded="false" aria-controls="opts-panel"><svg class="ico sm"><use href="#i-settings"/></svg>Options<span id="opts-dot" class="opts-dot hidden"></span></button>
           <div class="opts-panel" id="opts-panel">
