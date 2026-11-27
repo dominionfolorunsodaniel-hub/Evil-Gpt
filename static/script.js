@@ -210,11 +210,11 @@ function applyTempRange() {
   el.max = t.max; el.value = t.default; el.dataset.ready = "1";
 }
 function applyMemoryLock() {
-  const ok = !!(S.user && S.user.canUseMemory), plan = (S.user && S.user.memoryPlan) || "Enterprise";
+  const ok = !!(S.user && S.user.canUseMemory), plan = "paid";
   const lock = $("memory-lock"); lock.classList.toggle("hidden", ok);
-  lock.textContent = ok ? "" : `Each chat starts fresh and does not know your other chats. Memory that carries across chats is on the ${plan} plan.`;
+  lock.textContent = ok ? "" : `Each chat starts fresh and does not know your other chats. Memory that carries across chats unlocks when you upgrade to any paid plan.`;
   ["memory-input", "memory-cat", "memory-exp", "memory-add"].forEach((id) => { const el = $(id); if (el) el.disabled = !ok; });
-  const sw = $("mem-switch"); if (sw) { sw.disabled = !ok; if (!ok) sw.checked = false; const lbl = sw.parentElement && sw.parentElement.querySelector("span"); if (lbl) lbl.textContent = ok ? "Use my memory in this chat" : `Use my memory in this chat (${plan} plan)`; }
+  const sw = $("mem-switch"); if (sw) { sw.disabled = !ok; if (!ok) sw.checked = false; const lbl = sw.parentElement && sw.parentElement.querySelector("span"); if (lbl) lbl.textContent = ok ? "Use my memory in this chat" : "Use my memory in this chat (paid plans)"; }
 }
 function resetIn(iso) {
   const ms = new Date(iso) - Date.now(); if (!(ms > 0)) return "";
@@ -285,8 +285,64 @@ function updateHeading(name) {
   const proj = name === "chat" && S.projectId ? (S.projectCache || []).find((x) => x.id === S.projectId) : null;
   $("page-heading").textContent = proj ? "Project: " + proj.name : (TITLES[name] || document.querySelector(".brand").textContent.trim());
 }
+
+// ---------- Developer API (keys, credit, top-up requests) ----------
+const fmtN = (n) => Number(n || 0).toLocaleString();
+async function loadDev() {
+  if (!$("dev-card")) return;
+  try {
+    const d = await api("/api/dev/overview");
+    $("dev-balance").innerHTML = `Credit: <strong>$${d.balanceUsd}</strong> (about ₦${fmtN(d.balanceNgn)}). Last 30 days: ${fmtN(d.usage30d.requests)} requests, $${d.usage30d.costUsd} spent.`;
+    $("dev-prices").textContent = Object.entries(d.prices).map(([k, v]) => `${k}: $${v.in} in / $${v.out} out per 1M tokens`).join("  |  ");
+    $("dev-keys").innerHTML = d.keys.length ? d.keys.map((k) => `<div class="board-row"><span>${esc(k.name)} <code>${esc(k.prefix)}...</code></span><button type="button" class="chip" data-delkey="${k.id}">Delete</button></div>`).join("") : "No keys yet.";
+    $("dev-bank").textContent = d.bank ? `Pay at least ₦${fmtN(d.minTopupNgn)} to ${d.bank.bank_name}, ${d.bank.account_number} (${d.bank.account_name}), then tap "I have paid". Rate: ₦${fmtN(d.ngnPerUsd)} = $1. Credit is added after we confirm.` : `Minimum ₦${fmtN(d.minTopupNgn)}. Ask the admin for payment details.`;
+    $("dev-topups").innerHTML = d.topups.map((t) => `₦${fmtN(t.amountNgn)}: ${esc(t.status)}`).join("<br>");
+    $("dev-snippet").textContent = `curl ${location.origin}/v1/chat/completions \\\n  -H "Authorization: Bearer YOUR_KEY" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model":"vyra-fast","messages":[{"role":"user","content":"Hello"}]}'\n\nModels: vyra-fast, vyra-deep. Works with OpenAI SDKs: set base_url to ${location.origin}/v1`;
+    $("dev-admin").classList.toggle("hidden", !d.isAdmin);
+    if (d.isAdmin) {
+      const a = await api("/api/admin/dev/topups");
+      $("dev-admin-list").innerHTML = a.topups.length ? a.topups.map((t) => `<div class="board-row"><span>${esc(t.username)}: ₦${fmtN(t.amountNgn)} ${esc(t.note)}</span><span><button type="button" class="chip" data-tp="${t.id}" data-act="approve">Approve</button> <button type="button" class="chip" data-tp="${t.id}" data-act="reject">Reject</button></span></div>`).join("") : "No requests waiting.";
+    }
+  } catch (e) { $("dev-balance").textContent = e.message; }
+}
+document.addEventListener("click", async (ev) => {
+  const t = ev.target.closest("[data-delkey],[data-tp],#dev-key-create,#dev-topup-send,#dev-grant-btn"); if (!t) return;
+  try {
+    if (t.dataset.delkey) { if (!confirm("Delete this key? Apps using it will stop working.")) return; await api("/api/dev/keys/" + t.dataset.delkey, { method: "DELETE" }); toast("Key deleted"); loadDev(); }
+    else if (t.id === "dev-key-create") { const d = await post("/api/dev/keys", { name: $("dev-key-name").value }); const box = $("dev-new-key"); box.textContent = d.key + "\n" + d.note; box.classList.remove("hidden"); $("dev-key-name").value = ""; loadDev(); }
+    else if (t.id === "dev-topup-send") { await post("/api/dev/topup", { amountNgn: $("dev-topup-amt").value, note: $("dev-topup-note").value }); toast("Sent. Credit is added after we confirm your payment."); $("dev-topup-amt").value = ""; $("dev-topup-note").value = ""; loadDev(); }
+    else if (t.dataset.tp) { await post(`/api/admin/dev/topups/${t.dataset.tp}/${t.dataset.act}`); toast("Done"); loadDev(); }
+    else if (t.id === "dev-grant-btn") { await post("/api/admin/dev/grant", { username: $("dev-grant-user").value, amountUsd: $("dev-grant-usd").value }); toast("Credit added"); $("dev-grant-usd").value = ""; loadDev(); }
+  } catch (e) { toast(e.message, "error"); }
+});
+
+// ---------- Continue in a new chat (full chat, or pull up at the bottom and hold) ----------
+async function continueChat(id) {
+  id = id || S.conv; if (!id || S.busy) return;
+  try {
+    toast("Starting a new chat with where you stopped...");
+    const d = await post(`/api/conversations/${id}/continue`);
+    await loadHistory().catch(() => {}); await openConversation(d.id); toast(d.title);
+  } catch (e) { toast(e.message, "error"); }
+}
+document.addEventListener("click", (ev) => { const b = ev.target.closest("[data-continue]"); if (b) continueChat(S.conv); });
+(function pullToContinue() {
+  const sc = $("chat-scroll"); if (!sc) return;
+  const ind = document.createElement("div"); ind.className = "pull-new"; ind.innerHTML = '<div class="pull-ring"></div><span>New chat</span>'; if (getComputedStyle(sc.parentElement).position === "static") sc.parentElement.style.position = "relative"; sc.parentElement.appendChild(ind);
+  let y0 = null, timer = null, armed = false;
+  const atBottom = () => sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 3;
+  const reset = () => { clearTimeout(timer); timer = null; armed = false; y0 = null; ind.classList.remove("show", "armed"); };
+  sc.addEventListener("touchstart", (e) => { y0 = atBottom() && S.conv && S.msgs.length >= 2 ? e.touches[0].clientY : null; armed = false; }, { passive: true });
+  sc.addEventListener("touchmove", (e) => {
+    if (y0 == null) return; const dy = y0 - e.touches[0].clientY;
+    if (dy > 40 && atBottom()) { ind.classList.add("show"); if (!timer && !armed) timer = setTimeout(() => { armed = true; ind.classList.add("armed"); if (navigator.vibrate) navigator.vibrate(15); }, 650); }
+    else if (dy < 20) { clearTimeout(timer); timer = null; ind.classList.remove("show", "armed"); armed = false; }
+  }, { passive: true });
+  const end = () => { const go = armed; reset(); if (go) continueChat(S.conv); };
+  sc.addEventListener("touchend", end); sc.addEventListener("touchcancel", reset);
+})();
 function showPage(name) {
-  S.page = name; store.set("vyra-page", name);
+  S.page = name; store.set("vyra-page", name); if (name === "settings") loadDev();
   ["chat", "toolbox", "workspace", "images", "plans", "settings", "admin"].forEach((p) => $(p + "-page").classList.toggle("hidden", p !== name));
   document.querySelectorAll(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.page === name));
   updateHeading(name);
@@ -494,7 +550,7 @@ async function send(text, opts = {}) {
   $("message-input").value = ""; autosize(); setBusy(true);
   const ctrl = new AbortController(); S.abort = ctrl; let idle = setTimeout(() => ctrl.abort("timeout"), 60000);
   const fileText = S.fileText; clearFile();
-  let started = false, failed = null, raf = 0; const body = ai.el.querySelector(".msg-body");
+  let started = false, failed = null, raf = 0, chatFull = false; const body = ai.el.querySelector(".msg-body");
   const paint = () => { raf = 0; const stick = nearBottom(); body.innerHTML = md(ai.content); if (stick) toBottom(); };
   try {
     const res = await fetch("/ask/stream", { method: "POST", credentials: "same-origin", signal: ctrl.signal, headers: { "Content-Type": "application/json", "X-Requested-With": "vyra" },
@@ -517,13 +573,13 @@ async function send(text, opts = {}) {
     }
   } catch (e) {
     if (ctrl.signal.aborted) { if (ctrl.signal.reason === "timeout") failed = "The AI took too long to answer."; else if (!started) { S.msgs = S.msgs.slice(0, -2); if (wasNew) S.conv = null; } else stopped = true; }
-    else { failed = e.message; if (e.data && e.data.limitReached) { toast(e.message); refreshMe(); } }
+    else { failed = e.message; if (e.data && e.data.code === "chat_full") chatFull = true; if (e.data && e.data.limitReached) { toast(e.message); refreshMe(); } }
   }
   clearTimeout(idle); cancelAnimationFrame(raf); delete ai.pending; setBusy(false); S.abort = null;
   if (failed && !started) {
     if (wasNew) S.conv = null; // the server removes an empty chat whose first answer failed
     S.msgs = S.msgs.slice(0, -1); renderMessages();
-    const last = S.msgs[S.msgs.length - 1]; if (last) last.el.insertAdjacentHTML("beforeend", `<div class="msg-error">${ico("x", "sm")}<span>${esc(failed)}</span><button type="button" class="btn sm" data-retry>Try again</button></div>`);
+    const last = S.msgs[S.msgs.length - 1]; if (last) last.el.insertAdjacentHTML("beforeend", `<div class="msg-error">${ico("x", "sm")}<span>${esc(failed)}</span>${chatFull ? `<button type="button" class="btn sm" data-continue>Continue in a new chat</button>` : `<button type="button" class="btn sm" data-retry>Try again</button>`}</div>`);
     S.lastFailed = text; S.msgs = S.msgs.slice(0, -1); // the failed question isn't saved on the server, so retry re-sends it
     if (last) last.el.dataset.failed = "1";
   } else { if (failed) toast(failed, "error"); if (stopped) ai.truncated = true; renderMessages(); if (!ai.id && S.conv) await syncIds(stopped); }

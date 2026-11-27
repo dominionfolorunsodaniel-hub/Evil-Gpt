@@ -543,3 +543,18 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible{
 .suggest button strong{font-size:13.5px;font-weight:600;display:inline}
 .suggest button span,.suggest button small,.suggest button p{display:none}
 @media(max-width:860px){.welcome{padding-top:10vh}.suggest{grid-template-columns:none}}
+
+/* Batch 37: sidebar can always scroll to the bottom (streak/check-in, profile) on short phone screens */
+.sidebar{overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+.history{flex:1 0 auto;min-height:170px}
+.side-bottom{padding-bottom:calc(6px + env(safe-area-inset-bottom))}
+@media(max-width:860px){.sidebar{height:100vh;height:100dvh}}
+
+/* Batch 39: pull up and hold at the bottom of a chat to continue in a new chat */
+.chat-scroll{overscroll-behavior-y:contain}
+.pull-new{position:absolute;left:50%;bottom:104px;transform:translate(-50%,16px);display:flex;flex-direction:column;align-items:center;gap:6px;color:var(--muted);font-size:13px;opacity:0;pointer-events:none;transition:opacity .15s,transform .15s;z-index:20}
+.pull-new.show{opacity:1;transform:translate(-50%,0)}
+.pull-ring{width:44px;height:44px;border-radius:50%;border:3px solid var(--line);border-top-color:var(--brand)}
+.pull-new.armed .pull-ring{animation:pullspin .8s linear infinite;border-top-color:var(--brand)}
+.pull-new.armed span{color:var(--text)}
+@keyframes pullspin{to{transform:rotate(360deg)}}
