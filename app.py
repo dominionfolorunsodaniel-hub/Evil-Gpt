@@ -5,7 +5,7 @@ chat (Deep/Fast), personas, custom persona, Image Studio, plans, daily check-in,
 leaderboard, notifications, email-code verification with admin approval, 2-day trial,
 admin console (users / payments / OTPs / broadcast), payment proof upload.
 """
-import os, re, io, json, uuid, hmac, hashlib, secrets, logging, smtplib, threading, time, zipfile
+import os, re, io, math, json, uuid, hmac, hashlib, secrets, logging, smtplib, threading, time, zipfile
 from urllib.parse import quote, urlparse
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -69,18 +69,18 @@ except ValueError: FILE_TEXT_CAP = 40000
 
 # VYRA subscription catalog: five paid tiers plus Free.
 PLANS = {
-    "free": {"name": "Free", "price": 0, "price_usd": 0, "window_messages": 8, "monthly_messages": 150, "max_chars": 1500, "max_file_mb": 6, "max_chats": 15, "daily_images": 3},
-    "starter": {"name": "Starter", "price": 1500, "price_usd": 5.00, "window_messages": 25, "monthly_messages": 500, "max_chars": 3000, "max_file_mb": 10, "max_chats": 40, "daily_images": 10},
-    "plus": {"name": "Plus", "price": 5000, "price_usd": 12.99, "window_messages": 60, "monthly_messages": 1500, "max_chars": 5000, "max_file_mb": 15, "max_chats": 100, "daily_images": 30},
-    "pro": {"name": "Pro", "price": 15000, "price_usd": 29.99, "window_messages": 150, "monthly_messages": 4000, "max_chars": 8000, "max_file_mb": 25, "max_chats": 300, "daily_images": 100},
-    "business": {"name": "Business", "price": 40000, "price_usd": 59.99, "window_messages": 400, "monthly_messages": 12000, "max_chars": 12000, "max_file_mb": 40, "max_chats": 1000, "daily_images": 300},
-    "enterprise": {"name": "Enterprise", "price": 100000, "price_usd": 99.99, "window_messages": 1000, "monthly_messages": 30000, "max_chars": 20000, "max_file_mb": 50, "max_chats": 0, "daily_images": 800},
+    "free": {"name": "Free", "price": 0, "price_usd": 0, "window_messages": 8, "monthly_messages": 150, "max_chars": 1500, "max_file_mb": 6, "max_chat_msgs": 30, "max_chats": 15, "daily_images": 3},
+    "starter": {"name": "Starter", "price": 1500, "price_usd": 5.00, "window_messages": 25, "monthly_messages": 500, "max_chars": 3000, "max_file_mb": 10, "max_chat_msgs": 60, "max_chats": 40, "daily_images": 10},
+    "plus": {"name": "Plus", "price": 5000, "price_usd": 12.99, "window_messages": 60, "monthly_messages": 1500, "max_chars": 5000, "max_file_mb": 15, "max_chat_msgs": 100, "max_chats": 100, "daily_images": 30},
+    "pro": {"name": "Pro", "price": 15000, "price_usd": 29.99, "window_messages": 150, "monthly_messages": 4000, "max_chars": 8000, "max_file_mb": 25, "max_chat_msgs": 200, "max_chats": 300, "daily_images": 100},
+    "business": {"name": "Business", "price": 40000, "price_usd": 59.99, "window_messages": 400, "monthly_messages": 12000, "max_chars": 12000, "max_file_mb": 40, "max_chat_msgs": 400, "max_chats": 1000, "daily_images": 300},
+    "enterprise": {"name": "Enterprise", "price": 100000, "price_usd": 99.99, "window_messages": 1000, "monthly_messages": 30000, "max_chars": 20000, "max_file_mb": 50, "max_chat_msgs": 1000, "max_chats": 0, "daily_images": 800},
 }
 try: WINDOW_HOURS = max(1, min(24, int(os.environ.get("WINDOW_HOURS", "4"))))  # message limits reset this many hours after a person's first message
 except ValueError: WINDOW_HOURS = 4
 PLAN_ORDER = list(PLANS.keys())
 # Memory that carries over between chats is a top-plan feature (admin always has it). Every chat otherwise starts fresh.
-MEMORY_PLANS = {p.strip() for p in os.environ.get("MEMORY_PLANS", "enterprise").split(",") if p.strip() in PLANS} or {"enterprise"}
+MEMORY_PLANS = {p.strip() for p in os.environ.get("MEMORY_PLANS", "starter,plus,pro,business,enterprise").split(",") if p.strip() in PLANS} or set(PLAN_ORDER[1:])
 MEMORY_PLAN_NAME = PLANS[min(MEMORY_PLANS, key=PLAN_ORDER.index)]["name"]
 LEGACY_PLAN_MAP = {"ultra": "pro", "business_elite": "enterprise", "infinity": "enterprise"}
 BILLING_DAYS = {"weekly": 7, "monthly": 30, "annual": 365}
@@ -276,6 +276,13 @@ SCHEMA = [
     "ALTER TABLE evil_messages ADD COLUMN IF NOT EXISTS mode VARCHAR(10)",
     "ALTER TABLE evil_messages ADD COLUMN IF NOT EXISTS attachment_type VARCHAR(20)",
     "ALTER TABLE evil_messages ADD COLUMN IF NOT EXISTS attachment_url TEXT",
+    "ALTER TABLE evil_users ADD COLUMN IF NOT EXISTS api_credit_micro BIGINT NOT NULL DEFAULT 0",
+    "CREATE TABLE IF NOT EXISTS evil_api_keys (id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES evil_users(id) ON DELETE CASCADE, name VARCHAR(60) NOT NULL, key_prefix VARCHAR(16) NOT NULL, key_hash CHAR(64) NOT NULL UNIQUE, revoked BOOLEAN NOT NULL DEFAULT FALSE, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), last_used_at TIMESTAMPTZ)",
+    "CREATE INDEX IF NOT EXISTS evil_api_keys_user_idx ON evil_api_keys(user_id)",
+    "CREATE TABLE IF NOT EXISTS evil_api_usage (id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES evil_users(id) ON DELETE CASCADE, key_id BIGINT REFERENCES evil_api_keys(id) ON DELETE SET NULL, model VARCHAR(40) NOT NULL, in_tokens INT NOT NULL, out_tokens INT NOT NULL, cost_micro BIGINT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
+    "CREATE INDEX IF NOT EXISTS evil_api_usage_user_idx ON evil_api_usage(user_id, created_at)",
+    "CREATE TABLE IF NOT EXISTS evil_api_topups (id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES evil_users(id) ON DELETE CASCADE, amount_ngn BIGINT NOT NULL, note VARCHAR(200), status VARCHAR(12) NOT NULL DEFAULT 'pending', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), reviewed_at TIMESTAMPTZ)",
+    "CREATE INDEX IF NOT EXISTS evil_api_topups_status_idx ON evil_api_topups(status, created_at)",
     "CREATE TABLE IF NOT EXISTS evil_notes (id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES evil_users(id) ON DELETE CASCADE, conversation_id UUID REFERENCES evil_conversations(id) ON DELETE SET NULL, title VARCHAR(120) NOT NULL DEFAULT '', content TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
     "CREATE INDEX IF NOT EXISTS evil_notes_user_idx ON evil_notes(user_id, id DESC)",
     # ---- Vyra batch 2: chat folders (additive only) ----
@@ -508,7 +515,7 @@ def fit_token_budget(kw):
             msgs[big] = {**msgs[big], "content": text[:len(text) - over_chars] + "\n[...the rest was cut to fit the AI's size limit]"}
     kw["max_tokens"] = max(floor, min(want, room - est()))
 
-def chat_create(sampling=True, **kw):
+def chat_create(sampling=True, trim=True, **kw):
     """One place every AI call goes through.
     - gpt-oss models think before answering and that thinking uses output tokens, so give them room and a low thinking effort (REASONING_EFFORT, deep uses medium).
     - sampling=True adds top_p + repeat penalties. If Groq rejects any extra setting, retry once without them and stop sending them."""
@@ -528,7 +535,7 @@ def chat_create(sampling=True, **kw):
     if "gpt-oss" in model:
         kw["max_tokens"] = max(int(kw.get("max_tokens") or 1000) + 800, 1200)
         extra["reasoning_effort"] = DEEP_REASONING_EFFORT if model == GROQ_MODEL and sampling else REASONING_EFFORT
-    fit_token_budget(kw)
+    if trim: fit_token_budget(kw)
     if sampling: extra.update(top_p=AI_TOP_P, frequency_penalty=AI_FREQ_PEN, presence_penalty=AI_PRES_PEN)
     if extra and _SAMPLING_OK[0]:
         try: return make_client().chat.completions.create(**kw, **extra)
@@ -565,6 +572,12 @@ def message_limit(u):
     """Longest single message (characters) a person can send; grows with the plan. Trials/admin count as Enterprise."""
     plan_key, _t = effective_plan(u)
     return int(PLANS.get(plan_key, PLANS["free"]).get("max_chars", MAX_MESSAGE_CHARS))
+
+def chat_msg_limit(u):
+    """Most messages one chat can hold; grows with the plan. 0 = no limit (admin). Trials count as their trial plan."""
+    if u["is_admin"]: return 0
+    plan_key, _t = effective_plan(u)
+    return int(PLANS.get(plan_key, PLANS["free"]).get("max_chat_msgs", 0) or 0)
 
 def chat_limit(u):
     """Most active (not archived) chats a person can keep. 0 = no limit. Admin has no limit; trials count as their plan."""
@@ -769,7 +782,7 @@ def _allow_big_uploads():
 @app.before_request
 def guard():
     if request.endpoint == "static": return
-    if request.method in ("POST", "PUT", "PATCH", "DELETE") and request.path != "/api/paystack/webhook":
+    if request.method in ("POST", "PUT", "PATCH", "DELETE") and request.path != "/api/paystack/webhook" and not request.path.startswith("/v1/"):
         origin = request.headers.get("Origin")
         if origin:
             allowed = {request.host, request.headers.get("Host", ""), request.headers.get("X-Forwarded-Host", ""), SITE_URL.split("://", 1)[-1]}
@@ -1027,7 +1040,7 @@ def parse_expiry(d):
 @login_required
 def add_memory():
     d = body(); memory = str(d.get("memory", "")).strip()[:1000]
-    if not can_use_memory(request.user): return err(f"Memory that carries across chats is available on the {MEMORY_PLAN_NAME} plan.", 403)
+    if not can_use_memory(request.user): return err("Memory that carries across chats is available when you upgrade to any paid plan.", 403)
     if len(memory) < 3: return err("Enter a useful memory.")
     count = q_one("SELECT COUNT(*) AS n FROM evil_memories WHERE user_id=%s AND (expires_at IS NULL OR expires_at > NOW())", (request.user["id"],))["n"]
     if count >= 100: return err("Memory limit reached. Review or delete older memories first.", 429)
@@ -1430,6 +1443,166 @@ def register_device(u):
     except Exception: log.exception("device registration failed")
 
 
+# ---------- Developer API: customers pay with credits, per token (like Anthropic's pay-as-you-go) ----------
+NGN_PER_USD = _env_float("NGN_PER_USD", 1600.0, 100.0, 100000.0)  # your naira-per-dollar rate for top-ups; set it in Render
+API_MIN_TOPUP_NGN = int(_env_float("API_MIN_TOPUP_NGN", 2000, 100, 10000000))
+API_PRICES = {  # USD per 1 million tokens
+    "vyra-fast": {"in": _env_float("API_FAST_IN", 0.35, 0, 1000), "out": _env_float("API_FAST_OUT", 1.40, 0, 1000), "label": "Vyra Fast"},
+    "vyra-deep": {"in": _env_float("API_DEEP_IN", 1.20, 0, 1000), "out": _env_float("API_DEEP_OUT", 4.80, 0, 1000), "label": "Vyra Deep"},
+}
+API_KEY_PREFIX = "vyra_sk_"
+
+
+def _hash_key(k): return hashlib.sha256(k.encode()).hexdigest()
+
+
+def api_err(msg, code=400, kind="invalid_request_error"):
+    return jsonify({"error": {"message": msg, "type": kind}}), code
+
+
+def api_credit_adjust(user_id, delta_micro):
+    q_run("UPDATE evil_users SET api_credit_micro = GREATEST(api_credit_micro + %s, 0) WHERE id=%s", (int(delta_micro), user_id))
+
+
+@app.post("/v1/chat/completions")
+def v1_chat_completions():
+    """OpenAI-compatible endpoint. Auth: Authorization: Bearer vyra_sk_... Billed per token from the owner's credit."""
+    h = request.headers.get("Authorization", "")
+    key = h[7:].strip() if h.lower().startswith("bearer ") else ""
+    if not key.startswith(API_KEY_PREFIX) or len(key) > 120: return api_err("Missing or invalid API key.", 401, "authentication_error")
+    try: init_db()
+    except Exception: return api_err("Service is waking up. Try again in a few seconds.", 503, "server_error")
+    row = q_one("SELECT id, user_id FROM evil_api_keys WHERE key_hash=%s AND revoked=FALSE", (_hash_key(key),))
+    if not row: return api_err("Missing or invalid API key.", 401, "authentication_error")
+    if not rate_limit(f"apikey:{row['id']}", 60, 60): return api_err("Too many requests. Limit is 60 per minute per key.", 429, "rate_limit_error")
+    d = request.get_json(silent=True) or {}
+    alias = str(d.get("model") or "vyra-fast")
+    if alias not in API_PRICES: return api_err("Unknown model. Use vyra-fast or vyra-deep.")
+    if d.get("stream"): return api_err("Streaming is not supported yet. Send stream:false.")
+    msgs = d.get("messages")
+    if not isinstance(msgs, list) or not msgs or len(msgs) > 60: return api_err("messages must be a list of 1 to 60 items.")
+    clean, chars = [], 0
+    for m in msgs:
+        if not isinstance(m, dict) or m.get("role") not in ("system", "user", "assistant") or not isinstance(m.get("content"), str):
+            return api_err("Each message needs a role (system, user or assistant) and a text content.")
+        chars += len(m["content"]); clean.append({"role": m["role"], "content": m["content"]})
+    if chars > 200000: return api_err("Input too long (limit about 200,000 characters).")
+    try: temperature = max(0.0, min(1.5, float(d.get("temperature", 0.7))))
+    except (TypeError, ValueError): temperature = 0.7
+    try: max_out = max(1, min(4096, int(d.get("max_tokens", 1024))))
+    except (TypeError, ValueError): max_out = 1024
+    pr = API_PRICES[alias]; uid = row["user_id"]
+    in_est = chars // 3 + 10 * len(clean)
+    reserve = int(math.ceil(in_est * pr["in"] + (max_out + 800) * pr["out"]))  # USD per 1M tokens == micro-USD per token
+    if q_run("UPDATE evil_users SET api_credit_micro = api_credit_micro - %s WHERE id=%s AND api_credit_micro >= %s", (reserve, uid, reserve)) == 0:
+        return api_err("Not enough API credit for this request. Top up in Settings, Developer API.", 402, "insufficient_credit")
+    try:
+        r = chat_create(sampling=False, trim=False, model=api_model_name(alias), messages=clean, temperature=temperature, max_tokens=max_out)
+        text = (r.choices[0].message.content or "").strip(); finish = r.choices[0].finish_reason or "stop"
+        u_in = int(getattr(r.usage, "prompt_tokens", 0) or 0) if getattr(r, "usage", None) else 0
+        u_out = int(getattr(r.usage, "completion_tokens", 0) or 0) if getattr(r, "usage", None) else 0
+        if not u_in: u_in = chars // 4 + 4 * len(clean)
+        if not u_out: u_out = len(text) // 4 + 1
+    except Exception as exc:
+        api_credit_adjust(uid, reserve)  # nothing was delivered, give the whole hold back
+        log.warning("api call failed: %s", str(exc)[:200])
+        return api_err("The AI could not answer just now. You were not charged. Try again.", 502, "server_error")
+    cost = max(1, int(math.ceil(u_in * pr["in"] + u_out * pr["out"])))
+    api_credit_adjust(uid, reserve - cost)  # return the unused part of the hold
+    try:
+        q_run("INSERT INTO evil_api_usage(user_id,key_id,model,in_tokens,out_tokens,cost_micro) VALUES (%s,%s,%s,%s,%s,%s)", (uid, row["id"], alias, u_in, u_out, cost))
+        q_run("UPDATE evil_api_keys SET last_used_at=NOW() WHERE id=%s", (row["id"],))
+    except Exception: log.exception("api usage log failed")
+    return jsonify({"id": "chatcmpl-" + uuid.uuid4().hex[:24], "object": "chat.completion", "created": int(time.time()), "model": alias,
+                    "choices": [{"index": 0, "message": {"role": "assistant", "content": text}, "finish_reason": finish}],
+                    "usage": {"prompt_tokens": u_in, "completion_tokens": u_out, "total_tokens": u_in + u_out, "cost_usd": round(cost / 1e6, 6)}})
+
+
+def api_model_name(alias): return GROQ_FAST_MODEL if alias == "vyra-fast" else GROQ_MODEL
+
+
+@app.get("/api/dev/overview")
+@login_required
+def dev_overview():
+    u = request.user
+    bal = (q_one("SELECT api_credit_micro FROM evil_users WHERE id=%s", (u["id"],)) or {}).get("api_credit_micro", 0)
+    keys = q_all("SELECT id,name,key_prefix,created_at,last_used_at FROM evil_api_keys WHERE user_id=%s AND revoked=FALSE ORDER BY id DESC", (u["id"],))
+    use = q_one("SELECT COUNT(*) AS n, COALESCE(SUM(in_tokens),0) AS i, COALESCE(SUM(out_tokens),0) AS o, COALESCE(SUM(cost_micro),0) AS c FROM evil_api_usage WHERE user_id=%s AND created_at > NOW() - INTERVAL '30 days'", (u["id"],)) or {}
+    tops = q_all("SELECT id,amount_ngn,status,created_at FROM evil_api_topups WHERE user_id=%s ORDER BY id DESC LIMIT 5", (u["id"],))
+    bank = q_one("SELECT account_name, account_number, bank_name FROM evil_payment_settings WHERE id=1")
+    return jsonify({"balanceUsd": round(bal / 1e6, 4), "balanceNgn": int(bal / 1e6 * NGN_PER_USD), "ngnPerUsd": NGN_PER_USD, "minTopupNgn": API_MIN_TOPUP_NGN,
+                    "prices": {k: {"label": v["label"], "in": v["in"], "out": v["out"]} for k, v in API_PRICES.items()},
+                    "keys": [{"id": k["id"], "name": k["name"], "prefix": k["key_prefix"], "createdAt": iso(k["created_at"]), "lastUsedAt": iso(k["last_used_at"]) if k["last_used_at"] else None} for k in keys],
+                    "usage30d": {"requests": use.get("n", 0), "inTokens": int(use.get("i", 0)), "outTokens": int(use.get("o", 0)), "costUsd": round((use.get("c", 0) or 0) / 1e6, 4)},
+                    "topups": [{"id": t["id"], "amountNgn": t["amount_ngn"], "status": t["status"], "createdAt": iso(t["created_at"])} for t in tops],
+                    "bank": dict(bank) if bank else None, "isAdmin": bool(u["is_admin"])})
+
+
+@app.post("/api/dev/keys")
+@login_required
+@limited("devkey", 10, 3600, per="user")
+def dev_create_key():
+    u = request.user; name = str(body().get("name") or "My key").strip()[:60] or "My key"
+    if (q_one("SELECT COUNT(*) AS n FROM evil_api_keys WHERE user_id=%s AND revoked=FALSE", (u["id"],)) or {}).get("n", 0) >= 5:
+        return err("You can have up to 5 active keys. Delete one first.")
+    key = API_KEY_PREFIX + secrets.token_urlsafe(32)
+    q_run("INSERT INTO evil_api_keys(user_id,name,key_prefix,key_hash) VALUES (%s,%s,%s,%s)", (u["id"], name, key[:12], _hash_key(key)))
+    return jsonify({"key": key, "name": name, "note": "Copy it now. It is shown only once."})
+
+
+@app.delete("/api/dev/keys/<int:key_id>")
+@login_required
+def dev_delete_key(key_id):
+    n = q_run("UPDATE evil_api_keys SET revoked=TRUE WHERE id=%s AND user_id=%s AND revoked=FALSE", (key_id, request.user["id"]))
+    return jsonify({"ok": bool(n)}) if n else err("Key not found.", 404)
+
+
+@app.post("/api/dev/topup")
+@login_required
+@limited("devtopup", 10, 3600, per="user")
+def dev_topup_request():
+    u = request.user; d = body()
+    try: amt = int(d.get("amountNgn"))
+    except (TypeError, ValueError): return err("Enter the amount in naira.")
+    if amt < API_MIN_TOPUP_NGN or amt > 5000000: return err(f"Top-up must be between ₦{API_MIN_TOPUP_NGN:,} and ₦5,000,000.")
+    if (q_one("SELECT COUNT(*) AS n FROM evil_api_topups WHERE user_id=%s AND status='pending'", (u["id"],)) or {}).get("n", 0) >= 3:
+        return err("You already have 3 top-ups waiting for approval.")
+    q_run("INSERT INTO evil_api_topups(user_id,amount_ngn,note) VALUES (%s,%s,%s)", (u["id"], amt, str(d.get("note") or "")[:200]))
+    return jsonify({"ok": True})
+
+
+@app.get("/api/admin/dev/topups")
+@admin_required
+def admin_dev_topups():
+    rows = q_all("SELECT t.id,t.amount_ngn,t.note,t.created_at,u.username FROM evil_api_topups t JOIN evil_users u ON u.id=t.user_id WHERE t.status='pending' ORDER BY t.id", ())
+    return jsonify({"topups": [{"id": r["id"], "username": r["username"], "amountNgn": r["amount_ngn"], "note": r["note"] or "", "createdAt": iso(r["created_at"])} for r in rows]})
+
+
+@app.post("/api/admin/dev/topups/<int:tid>/<action>")
+@admin_required
+def admin_dev_topup_action(tid, action):
+    if action not in ("approve", "reject"): return err("Unknown action.", 404)
+    t = q_one("SELECT user_id, amount_ngn FROM evil_api_topups WHERE id=%s AND status='pending'", (tid,))
+    if not t: return err("Top-up not found or already handled.", 404)
+    if q_run("UPDATE evil_api_topups SET status=%s, reviewed_at=NOW() WHERE id=%s AND status='pending'", ("approved" if action == "approve" else "rejected", tid)) == 0:
+        return err("Already handled.", 409)
+    if action == "approve": api_credit_adjust(t["user_id"], int(t["amount_ngn"] / NGN_PER_USD * 1e6))
+    return jsonify({"ok": True})
+
+
+@app.post("/api/admin/dev/grant")
+@admin_required
+def admin_dev_grant():
+    d = body(); uname = str(d.get("username") or "").strip()
+    try: usd = float(d.get("amountUsd"))
+    except (TypeError, ValueError): return err("Enter an amount in USD.")
+    if not uname or usd == 0 or abs(usd) > 10000: return err("Enter a username and a USD amount (not 0).")
+    t = q_one("SELECT id FROM evil_users WHERE LOWER(username)=LOWER(%s)", (uname,))
+    if not t: return err("User not found.", 404)
+    api_credit_adjust(t["id"], int(usd * 1e6))
+    return jsonify({"ok": True})
+
+
 @app.get("/api/admin/prompt-check")
 @admin_required
 def prompt_check():
@@ -1525,7 +1698,7 @@ def me():
                  "hasNewsUpdate": (u["last_seen_changelog"] or 0) < CHANGELOG_VERSION,
                  "country": u.get("country_code"), "currency": u.get("preferred_currency") or "NGN",
                  "language": u.get("preferred_language") or "English", "trialEndsAt": iso(u["trial_ends_at"]),
-                 "canUseMemory": can_use_memory(u), "aiTemp": {"default": AI_TEMP_DEFAULT, "max": AI_TEMP_MAX}, "maxChats": chat_limit(u), "maxChars": message_limit(u), "maxFileMb": file_limit_mb(u), "memoryPlan": MEMORY_PLAN_NAME},
+                 "canUseMemory": can_use_memory(u), "aiTemp": {"default": AI_TEMP_DEFAULT, "max": AI_TEMP_MAX}, "maxChats": chat_limit(u), "maxChatMsgs": chat_msg_limit(u), "maxChars": message_limit(u), "maxFileMb": file_limit_mb(u), "memoryPlan": MEMORY_PLAN_NAME},
         "usage": usage_status(u),
         "images": {"used": u["images_today"], "limit": 99999 if u["is_admin"] else PLANS[plan_key]["daily_images"], "edit": cf_enabled()},
         "badges": badges_for(u),
@@ -2202,6 +2375,40 @@ def branch_conversation(conversation_id):
     return jsonify({"success": True, "id": new_id})
 
 
+@app.post("/api/conversations/<uuid:conversation_id>/continue")
+@login_required
+@limited("continue", 10, 60, per="user")
+def continue_conversation(conversation_id):
+    """Starts a new chat named '<old name> (n)' that opens with a short recap of where the old chat stopped."""
+    u = request.user; uid = u["id"]
+    c = q_one("SELECT title,project_id,folder_id,use_memory FROM evil_conversations WHERE id=%s AND user_id=%s", (str(conversation_id), uid))
+    if not c: return err("Chat not found.", 404)
+    lim = chat_limit(u)
+    if lim and (q_one("SELECT COUNT(*) AS n FROM evil_conversations WHERE user_id=%s AND archived=FALSE", (uid,)) or {}).get("n", 0) >= lim:
+        return err(f"You have reached your limit of {lim} chats. Archive or delete one to continue.", 403, code="chat_limit")
+    base = re.sub(r"\s*\(\d+\)\s*$", "", c["title"] or "Chat").strip()[:140] or "Chat"
+    nums = [0]
+    for r in q_all("SELECT title FROM evil_conversations WHERE user_id=%s AND (title=%s OR title LIKE %s)", (uid, base, base.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + " (%)")):
+        m = re.fullmatch(re.escape(base) + r"(?: \((\d+)\))?", r["title"] or "")
+        if m: nums.append(int(m.group(1) or 0))
+    title = f"{base} ({max(nums) + 1})"
+    rows = list(reversed(q_all("SELECT role,content FROM evil_messages WHERE conversation_id=%s ORDER BY id DESC LIMIT 12", (str(conversation_id),))))
+    transcript = "\n".join(f"{'User' if r['role'] == 'user' else 'Assistant'}: {r['content'][:600]}" for r in rows)
+    try:
+        r = chat_create(sampling=False, model=GROQ_FAST_MODEL, temperature=0.2, max_tokens=450, messages=[
+            {"role": "system", "content": "Write a short recap of this chat so the user can continue in a fresh chat. Cover the goal, key facts and decisions, file or code names, and exactly where it stopped and what comes next. Under 220 words. Plain text, no preamble."},
+            {"role": "user", "content": transcript}])
+        recap = (r.choices[0].message.content or "").strip()
+    except Exception:
+        log.warning("continue recap failed; using the last messages instead"); recap = ""
+    if len(recap) < 20: recap = "Here is where we stopped:\n" + "\n".join(f"- {'You' if x['role'] == 'user' else 'Vyra'}: {x['content'][:200]}" for x in rows[-4:])
+    new_id = str(uuid.uuid4())
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("INSERT INTO evil_conversations(id,user_id,title,project_id,folder_id,use_memory) VALUES (%s,%s,%s,%s,%s,%s)", (new_id, uid, title, c["project_id"], c["folder_id"], c["use_memory"] is not False))
+        cur.execute("INSERT INTO evil_messages(conversation_id,user_id,role,content) VALUES (%s,%s,'assistant',%s)", (new_id, uid, f"**Continuing from \"{c['title']}\"**\n\n{recap}\n\nTell me what to do next and we will pick up from here."))
+    return jsonify({"success": True, "id": new_id, "title": title})
+
+
 @app.post("/api/conversations/<uuid:conversation_id>/tags")
 @login_required
 def tag_conversation(conversation_id):
@@ -2462,6 +2669,11 @@ def ask_stream():
                 if not existing_conv: refund(); return err("Chat not found.", 404)
                 if not project_id: project_id = existing_conv.get("project_id")
                 mem_on = existing_conv.get("use_memory") is not False
+                mlim = chat_msg_limit(u)
+                if mlim and not trunc:
+                    cur.execute("SELECT COUNT(*) AS n FROM evil_messages WHERE conversation_id=%s AND role='user'", (str(conv_id),))
+                    if (cur.fetchone() or {}).get("n", 0) >= mlim:
+                        refund(); return err(f"This chat is full ({mlim} messages on your plan). Continue in a new chat and Vyra will bring along where you stopped.", 403, code="chat_full", conversationId=str(conv_id))
             else:
                 lim = chat_limit(u)
                 if lim:
@@ -2493,7 +2705,7 @@ def ask_stream():
     remember_note = ""
     m_rem = re.match(r"^\s*(?:please\s+)?remember(?:\s+that\b|\s*:)\s*(.{3,500})$", question, re.I | re.S)
     if m_rem and not can_mem:
-        remember_note = f"\nMemory that carries across chats is only on the {MEMORY_PLAN_NAME} plan, so NOTHING was saved. Tell the user kindly in one sentence; this chat still remembers everything said in it."
+        remember_note = f"\nMemory that carries across chats needs an upgrade to any paid plan, so NOTHING was saved. Tell the user kindly in one sentence; this chat still remembers everything said in it."
     elif m_rem and not mem_on:
         remember_note = "\nThe user's memory is switched off for this chat, so NOTHING was saved. Tell them to turn on 'Use my memory in this chat' in Options if they want it remembered."
     elif m_rem:  # "remember that ..." really saves to the user's memory (same table the Memory page shows)

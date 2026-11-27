@@ -1,0 +1,19 @@
+Batch 37 - sidebar scrolls to the bottom on phones
+- Whole sidebar now scrolls (check-in/streak, profile were cut off on short screens); history list keeps a minimum height; uses dynamic viewport height so the browser bar doesn't hide the bottom
+Files: static/style.css, static/sw.js
+Batch 38 - Developer API with prepaid credit
+- Customers: Settings > Developer API: create/delete keys (max 5, shown once, stored hashed), see credit + 30-day usage, request a top-up by bank transfer
+- Public endpoint POST /v1/chat/completions (OpenAI-compatible, non-streaming), models vyra-fast and vyra-deep, 60 requests/min per key, billed per token
+- Prices per 1M tokens: fast $0.35 in / $1.40 out, deep $1.20 in / $4.80 out (env API_FAST_IN/OUT, API_DEEP_IN/OUT)
+- Credit held before each call and the unused part returned; failed calls are free
+- Admin: approve/reject top-ups (credit = naira / NGN_PER_USD) or grant USD credit by username, in the same card
+- Env: NGN_PER_USD (default 1600 - set your real rate), API_MIN_TOPUP_NGN (default 2000)
+- New tables/columns, additive only. Includes Batches 33-36 (app.py is cumulative). Batch 37 (style.css) is separate.
+Files: app.py, templates/index.html, static/script.js, static/sw.js
+Batch 39 - chats stay separate, full chats continue, cross-chat memory for paid plans
+- Memory across chats now unlocks on ANY paid plan (starter..enterprise); free/trial/lower get fresh chats (env MEMORY_PLANS to change)
+- Max messages per chat: free 30, starter 60, plus 100, pro 200, business 400, enterprise/trial 1000, admin unlimited (max_chat_msgs in PLANS)
+- Full chat: friendly message + 'Continue in a new chat' button
+- New chat is named '<old name> (1)', '(2)'... and opens with a short recap of where the old chat stopped (works on every plan)
+- Pull up at the bottom of a chat and hold ~0.7s: 'New chat' ring appears; release to continue in a new chat
+Includes Batches 33-38 in app.py. Files: app.py, static/script.js, static/style.css, static/sw.js
