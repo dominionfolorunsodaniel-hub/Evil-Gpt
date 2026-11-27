@@ -484,6 +484,13 @@ AI_PRES_PEN = _env_float("AI_PRESENCE_PENALTY", 0.2, 0.0, 1.0)
 _SAMPLING_OK = [True]
 REASONING_EFFORT = os.environ.get("REASONING_EFFORT", "low").strip().lower()
 if REASONING_EFFORT not in ("low", "medium", "high"): REASONING_EFFORT = "low"
+DEEP_REASONING_EFFORT = os.environ.get("DEEP_REASONING_EFFORT", "medium").strip().lower()  # how hard Deep mode thinks; "high" is smartest but slower and uses more tokens
+if DEEP_REASONING_EFFORT not in ("low", "medium", "high"): DEEP_REASONING_EFFORT = "medium"
+# Optional second AI provider for Deep mode (DeepSeek, or any OpenAI-compatible service). Fast/Balanced and small jobs stay on Groq.
+DEEP_API_KEY = os.environ.get("DEEP_API_KEY", "").strip()
+DEEP_BASE_URL = os.environ.get("DEEP_BASE_URL", "https://api.deepseek.com").strip().rstrip("/")
+DEEP_MODEL = os.environ.get("DEEP_MODEL", "deepseek-flash").strip()
+_EXT_DOWN_UNTIL = [0.0]
 try: GROQ_TPM_LIMIT = max(0, int(os.environ.get("GROQ_TPM_LIMIT", "8000")))  # Groq free tier allows ~8000 tokens per request (input + reply). Set 0 on a paid Groq tier to turn the trimming off.
 except ValueError: GROQ_TPM_LIMIT = 8000
 def fit_token_budget(kw):
@@ -505,10 +512,22 @@ def chat_create(sampling=True, **kw):
     """One place every AI call goes through.
     - gpt-oss models think before answering and that thinking uses output tokens, so give them room and a low thinking effort (REASONING_EFFORT, deep uses medium).
     - sampling=True adds top_p + repeat penalties. If Groq rejects any extra setting, retry once without them and stop sending them."""
+    if DEEP_API_KEY and kw.get("model") == GROQ_MODEL and time.time() >= _EXT_DOWN_UNTIL[0]:
+        # Deep mode goes to the second provider first; if it fails, fall through to Groq (and pause the second provider for a minute).
+        k2 = {**kw, "model": DEEP_MODEL}
+        pens = dict(top_p=AI_TOP_P, frequency_penalty=AI_FREQ_PEN, presence_penalty=AI_PRES_PEN) if sampling else {}
+        client = OpenAI(api_key=DEEP_API_KEY, base_url=DEEP_BASE_URL, timeout=90)
+        try: return client.chat.completions.create(**k2, **pens)
+        except Exception as exc:
+            if pens and any(w in str(exc).lower() for w in ("top_p", "penalty", "unsupported", "unrecognized", "unknown")):
+                try: return client.chat.completions.create(**k2)
+                except Exception as exc2: exc = exc2
+            _EXT_DOWN_UNTIL[0] = time.time() + 60
+            log.warning("Deep provider failed (%s: %s); using Groq for now", type(exc).__name__, str(exc)[:160])
     model = str(kw.get("model", "")); extra = {}
     if "gpt-oss" in model:
         kw["max_tokens"] = max(int(kw.get("max_tokens") or 1000) + 800, 1200)
-        extra["reasoning_effort"] = "medium" if model == GROQ_MODEL and sampling else REASONING_EFFORT
+        extra["reasoning_effort"] = DEEP_REASONING_EFFORT if model == GROQ_MODEL and sampling else REASONING_EFFORT
     fit_token_budget(kw)
     if sampling: extra.update(top_p=AI_TOP_P, frequency_penalty=AI_FREQ_PEN, presence_penalty=AI_PRES_PEN)
     if extra and _SAMPLING_OK[0]:
@@ -1418,7 +1437,8 @@ def prompt_check():
     u = request.user
     return jsonify({"set": bool(OWNER_PROMPT), "length": len(OWNER_PROMPT), "startsWith": OWNER_PROMPT[:60], "minPlan": OWNER_PROMPT_MIN_PLAN,
                     "appliesToYou": gets_owner_prompt(u), "temperatureDefault": AI_TEMP_DEFAULT, "temperatureMax": AI_TEMP_MAX,
-                    "top_p": AI_TOP_P, "frequencyPenalty": AI_FREQ_PEN, "presencePenalty": AI_PRES_PEN, "samplingActive": _SAMPLING_OK[0]})
+                    "top_p": AI_TOP_P, "frequencyPenalty": AI_FREQ_PEN, "presencePenalty": AI_PRES_PEN, "samplingActive": _SAMPLING_OK[0],
+                    "deepProvider": {"on": bool(DEEP_API_KEY), "baseUrl": DEEP_BASE_URL if DEEP_API_KEY else None, "model": DEEP_MODEL if DEEP_API_KEY else None, "pausedForSeconds": max(0, int(_EXT_DOWN_UNTIL[0] - time.time()))}})
 
 
 @app.get("/api/admin/2fa")

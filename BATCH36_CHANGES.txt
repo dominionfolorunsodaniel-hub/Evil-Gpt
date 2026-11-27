@@ -1,0 +1,6 @@
+Batch 36 - second AI provider for Deep mode (DeepSeek, or Anthropic later)
+- Render env: DEEP_API_KEY (turns it on), DEEP_BASE_URL (default https://api.deepseek.com), DEEP_MODEL (default deepseek-flash)
+- Only Deep mode uses it; Fast/Balanced/titles stay on Groq. If it fails, that message falls back to Groq and the provider is paused for 60s
+- Groq's 8000-token trimming does not apply to the second provider
+- /api/admin/prompt-check now shows deepProvider status (no keys shown)
+Includes 33-35. File: app.py
