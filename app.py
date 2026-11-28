@@ -279,6 +279,7 @@ SCHEMA = [
     "ALTER TABLE evil_users ADD COLUMN IF NOT EXISTS api_credit_micro BIGINT NOT NULL DEFAULT 0",
     "CREATE TABLE IF NOT EXISTS evil_api_keys (id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES evil_users(id) ON DELETE CASCADE, name VARCHAR(60) NOT NULL, key_prefix VARCHAR(16) NOT NULL, key_hash CHAR(64) NOT NULL UNIQUE, revoked BOOLEAN NOT NULL DEFAULT FALSE, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), last_used_at TIMESTAMPTZ)",
     "CREATE INDEX IF NOT EXISTS evil_api_keys_user_idx ON evil_api_keys(user_id)",
+    "ALTER TABLE evil_api_keys ADD COLUMN IF NOT EXISTS key_last4 VARCHAR(8)",
     "CREATE TABLE IF NOT EXISTS evil_api_usage (id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES evil_users(id) ON DELETE CASCADE, key_id BIGINT REFERENCES evil_api_keys(id) ON DELETE SET NULL, model VARCHAR(40) NOT NULL, in_tokens INT NOT NULL, out_tokens INT NOT NULL, cost_micro BIGINT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
     "CREATE INDEX IF NOT EXISTS evil_api_usage_user_idx ON evil_api_usage(user_id, created_at)",
     "CREATE TABLE IF NOT EXISTS evil_api_topups (id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES evil_users(id) ON DELETE CASCADE, amount_ngn BIGINT NOT NULL, note VARCHAR(200), status VARCHAR(12) NOT NULL DEFAULT 'pending', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), reviewed_at TIMESTAMPTZ)",
@@ -1450,7 +1451,8 @@ API_PRICES = {  # USD per 1 million tokens
     "vyra-fast": {"in": _env_float("API_FAST_IN", 0.35, 0, 1000), "out": _env_float("API_FAST_OUT", 1.40, 0, 1000), "label": "Vyra Fast"},
     "vyra-deep": {"in": _env_float("API_DEEP_IN", 1.20, 0, 1000), "out": _env_float("API_DEEP_OUT", 4.80, 0, 1000), "label": "Vyra Deep"},
 }
-API_KEY_PREFIX = "vyra_sk_"
+API_KEY_PREFIX = "vy-"  # new keys; keys starting with vyra_ (older format) keep working
+API_KEY_PREFIXES = ("vy-", "vyra_")
 
 
 def _hash_key(k): return hashlib.sha256(k.encode()).hexdigest()
@@ -1466,10 +1468,10 @@ def api_credit_adjust(user_id, delta_micro):
 
 @app.post("/v1/chat/completions")
 def v1_chat_completions():
-    """OpenAI-compatible endpoint. Auth: Authorization: Bearer vyra_sk_... Billed per token from the owner's credit."""
+    """OpenAI-compatible endpoint. Auth: Authorization: Bearer vy-... (or an older vyra_ key) Billed per token from the owner's credit."""
     h = request.headers.get("Authorization", "")
     key = h[7:].strip() if h.lower().startswith("bearer ") else ""
-    if not key.startswith(API_KEY_PREFIX) or len(key) > 120: return api_err("Missing or invalid API key.", 401, "authentication_error")
+    if not key.startswith(API_KEY_PREFIXES) or len(key) > 120: return api_err("Missing or invalid API key.", 401, "authentication_error")
     try: init_db()
     except Exception: return api_err("Service is waking up. Try again in a few seconds.", 503, "server_error")
     row = q_one("SELECT id, user_id FROM evil_api_keys WHERE key_hash=%s AND revoked=FALSE", (_hash_key(key),))
@@ -1526,13 +1528,15 @@ def api_model_name(alias): return GROQ_FAST_MODEL if alias == "vyra-fast" else G
 def dev_overview():
     u = request.user
     bal = (q_one("SELECT api_credit_micro FROM evil_users WHERE id=%s", (u["id"],)) or {}).get("api_credit_micro", 0)
-    keys = q_all("SELECT id,name,key_prefix,created_at,last_used_at FROM evil_api_keys WHERE user_id=%s AND revoked=FALSE ORDER BY id DESC", (u["id"],))
+    keys = q_all("SELECT id,name,key_prefix,key_last4,created_at,last_used_at FROM evil_api_keys WHERE user_id=%s AND revoked=FALSE ORDER BY id DESC", (u["id"],))
     use = q_one("SELECT COUNT(*) AS n, COALESCE(SUM(in_tokens),0) AS i, COALESCE(SUM(out_tokens),0) AS o, COALESCE(SUM(cost_micro),0) AS c FROM evil_api_usage WHERE user_id=%s AND created_at > NOW() - INTERVAL '30 days'", (u["id"],)) or {}
+    bym = q_all("SELECT model, COUNT(*) AS n, COALESCE(SUM(in_tokens),0) AS i, COALESCE(SUM(out_tokens),0) AS o, COALESCE(SUM(cost_micro),0) AS c FROM evil_api_usage WHERE user_id=%s AND created_at > NOW() - INTERVAL '30 days' GROUP BY model ORDER BY model", (u["id"],))
     tops = q_all("SELECT id,amount_ngn,status,created_at FROM evil_api_topups WHERE user_id=%s ORDER BY id DESC LIMIT 5", (u["id"],))
     bank = q_one("SELECT account_name, account_number, bank_name FROM evil_payment_settings WHERE id=1")
     return jsonify({"balanceUsd": round(bal / 1e6, 4), "balanceNgn": int(bal / 1e6 * NGN_PER_USD), "ngnPerUsd": NGN_PER_USD, "minTopupNgn": API_MIN_TOPUP_NGN,
                     "prices": {k: {"label": v["label"], "in": v["in"], "out": v["out"]} for k, v in API_PRICES.items()},
-                    "keys": [{"id": k["id"], "name": k["name"], "prefix": k["key_prefix"], "createdAt": iso(k["created_at"]), "lastUsedAt": iso(k["last_used_at"]) if k["last_used_at"] else None} for k in keys],
+                    "keys": [{"id": k["id"], "name": k["name"], "prefix": k["key_prefix"], "last4": k["key_last4"], "createdAt": iso(k["created_at"]), "lastUsedAt": iso(k["last_used_at"]) if k["last_used_at"] else None} for k in keys],
+                    "byModel": [{"model": m["model"], "requests": m["n"], "inTokens": int(m["i"]), "outTokens": int(m["o"]), "costUsd": round((m["c"] or 0) / 1e6, 4)} for m in bym],
                     "usage30d": {"requests": use.get("n", 0), "inTokens": int(use.get("i", 0)), "outTokens": int(use.get("o", 0)), "costUsd": round((use.get("c", 0) or 0) / 1e6, 4)},
                     "topups": [{"id": t["id"], "amountNgn": t["amount_ngn"], "status": t["status"], "createdAt": iso(t["created_at"])} for t in tops],
                     "bank": dict(bank) if bank else None, "isAdmin": bool(u["is_admin"])})
@@ -1546,8 +1550,8 @@ def dev_create_key():
     if (q_one("SELECT COUNT(*) AS n FROM evil_api_keys WHERE user_id=%s AND revoked=FALSE", (u["id"],)) or {}).get("n", 0) >= 5:
         return err("You can have up to 5 active keys. Delete one first.")
     key = API_KEY_PREFIX + secrets.token_urlsafe(32)
-    q_run("INSERT INTO evil_api_keys(user_id,name,key_prefix,key_hash) VALUES (%s,%s,%s,%s)", (u["id"], name, key[:12], _hash_key(key)))
-    return jsonify({"key": key, "name": name, "note": "Copy it now. It is shown only once."})
+    q_run("INSERT INTO evil_api_keys(user_id,name,key_prefix,key_hash,key_last4) VALUES (%s,%s,%s,%s,%s)", (u["id"], name, API_KEY_PREFIX, _hash_key(key), key[-4:]))
+    return jsonify({"key": key, "name": name, "display": f"{API_KEY_PREFIX}...{key[-4:]}", "note": "Copy it now. It is shown only once."})
 
 
 @app.delete("/api/dev/keys/<int:key_id>")

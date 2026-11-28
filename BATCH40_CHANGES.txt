@@ -1,0 +1,6 @@
+Batch 40 - API moved to its own sidebar page
+- New sidebar item "API" (key icon): keys table (name, vy-...last4, created, last used, delete), "Create new secret key" modal (name, then full key once + Copy + warning), credit balance, 30-day usage by model, top-up request, cURL/Python quickstart with Copy. Admin credit requests/grant shown at the bottom for admin.
+- Developer API card removed from Settings.
+- New keys start with vy-. Old vyra_sk_ keys still work (shown as vyra_sk_...).
+- DB: one additive column evil_api_keys.key_last4 (auto-created at start).
+Files: app.py, templates/index.html, templates/_icons.html, static/script.js, static/style.css, static/sw.js
