@@ -188,8 +188,8 @@ async function enterApp() {
   const tasks = [loadPersonas(), loadHistory(), loadNotifs(), loadDailyPrompt(), loadStyles()];
   await Promise.all(tasks.map((t) => t.catch(() => {})));
   offerPendingGift(); setGreeting(); const rememberedPage = store.get("vyra-page"); const lastConv = store.get("vyra-conv-" + userKey());
-  newChat(); if (lastConv) { openConversation(lastConv, true).then(() => { if (S.conv !== lastConv) { newChat(); rememberConv(lastConv); } if (["chat","toolbox","images","plans","workspace","settings"].includes(rememberedPage)) showPage(rememberedPage); }); }
-  maybeTour(); if (["chat","toolbox","images","plans","workspace","settings"].includes(rememberedPage)) showPage(rememberedPage);
+  newChat(); if (lastConv) { openConversation(lastConv, true).then(() => { if (S.conv !== lastConv) { newChat(); rememberConv(lastConv); } if (["chat","toolbox","images","plans","workspace","api","settings"].includes(rememberedPage)) showPage(rememberedPage); }); }
+  maybeTour(); if (["chat","toolbox","images","plans","workspace","api","settings"].includes(rememberedPage)) showPage(rememberedPage);
   const paid = new URLSearchParams(location.search).get("paid");
   if (paid) {
     history.replaceState(null, "", "/?login=1"); showPage("plans");
@@ -280,7 +280,7 @@ async function loadDailyPrompt() {
 }
 
 /* ---------------------------------------------------------------- navigation */
-const TITLES = { chat: "", toolbox: "AI Toolbox", workspace: "Projects & Memory", images: "Image Studio", plans: "Plans", settings: "Settings", admin: "Admin" };
+const TITLES = { chat: "", toolbox: "AI Toolbox", workspace: "Projects & Memory", images: "Image Studio", plans: "Plans", api: "API", settings: "Settings", admin: "Admin" };
 function updateHeading(name) {
   const proj = name === "chat" && S.projectId ? (S.projectCache || []).find((x) => x.id === S.projectId) : null;
   $("page-heading").textContent = proj ? "Project: " + proj.name : (TITLES[name] || document.querySelector(".brand").textContent.trim());
@@ -288,28 +288,39 @@ function updateHeading(name) {
 
 // ---------- Developer API (keys, credit, top-up requests) ----------
 const fmtN = (n) => Number(n || 0).toLocaleString();
+const fmtD = (iso) => { try { return new Date(iso).toLocaleDateString("en-NG", { day: "numeric", month: "short", year: "numeric" }); } catch (e) { return ""; } };
 async function loadDev() {
   if (!$("dev-card")) return;
   try {
     const d = await api("/api/dev/overview");
-    $("dev-balance").innerHTML = `Credit: <strong>$${d.balanceUsd}</strong> (about ₦${fmtN(d.balanceNgn)}). Last 30 days: ${fmtN(d.usage30d.requests)} requests, $${d.usage30d.costUsd} spent.`;
+    $("dev-balance").textContent = "$" + Number(d.balanceUsd).toFixed(2);
+    $("dev-balance-ngn").textContent = `About ₦${fmtN(d.balanceNgn)} available. Credit is used per token and never expires.`;
+    const u = d.usage30d;
+    $("dev-stats").innerHTML = [["Requests", fmtN(u.requests)], ["Tokens in", fmtN(u.inTokens)], ["Tokens out", fmtN(u.outTokens)], ["Spent", "$" + u.costUsd]].map(([a, b]) => `<div><b>${b}</b><small>${a}</small></div>`).join("");
+    $("dev-bymodel").innerHTML = d.byModel.length ? d.byModel.map((m) => `<tr><td>${esc(m.model)}</td><td>${fmtN(m.requests)}</td><td>${fmtN(m.inTokens)} / ${fmtN(m.outTokens)}</td><td>$${m.costUsd}</td></tr>`).join("") : `<tr><td colspan="4" class="muted">No usage yet.</td></tr>`;
     $("dev-prices").textContent = Object.entries(d.prices).map(([k, v]) => `${k}: $${v.in} in / $${v.out} out per 1M tokens`).join("  |  ");
-    $("dev-keys").innerHTML = d.keys.length ? d.keys.map((k) => `<div class="board-row"><span>${esc(k.name)} <code>${esc(k.prefix)}...</code></span><button type="button" class="chip" data-delkey="${k.id}">Delete</button></div>`).join("") : "No keys yet.";
+    $("dev-keys").innerHTML = d.keys.length ? d.keys.map((k) => `<tr><td>${esc(k.name)}</td><td><code>${esc(k.last4 ? k.prefix + "..." + k.last4 : k.prefix + "...")}</code></td><td>${fmtD(k.createdAt)}</td><td>${k.lastUsedAt ? fmtD(k.lastUsedAt) : "Never"}</td><td><button type="button" class="icon-btn" data-delkey="${k.id}" aria-label="Delete key">${ico("trash")}</button></td></tr>`).join("") : `<tr><td colspan="5" class="muted">No keys yet. Tap "Create new secret key".</td></tr>`;
+    $("dev-key-open").disabled = d.keys.length >= 5; $("dev-key-open").title = d.keys.length >= 5 ? "You can have up to 5 active keys" : "";
     $("dev-bank").textContent = d.bank ? `Pay at least ₦${fmtN(d.minTopupNgn)} to ${d.bank.bank_name}, ${d.bank.account_number} (${d.bank.account_name}), then tap "I have paid". Rate: ₦${fmtN(d.ngnPerUsd)} = $1. Credit is added after we confirm.` : `Minimum ₦${fmtN(d.minTopupNgn)}. Ask the admin for payment details.`;
-    $("dev-topups").innerHTML = d.topups.map((t) => `₦${fmtN(t.amountNgn)}: ${esc(t.status)}`).join("<br>");
-    $("dev-snippet").textContent = `curl ${location.origin}/v1/chat/completions \\\n  -H "Authorization: Bearer YOUR_KEY" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model":"vyra-fast","messages":[{"role":"user","content":"Hello"}]}'\n\nModels: vyra-fast, vyra-deep. Works with OpenAI SDKs: set base_url to ${location.origin}/v1`;
+    $("dev-topups").innerHTML = d.topups.map((t) => `<div class="board-row"><span>₦${fmtN(t.amountNgn)} <span class="muted">${fmtD(t.createdAt)}</span></span><span class="pill">${esc(t.status)}</span></div>`).join("");
+    const base = location.origin + "/v1";
+    $("dev-snip-curl").textContent = `curl ${base}/chat/completions \\\n  -H "Authorization: Bearer $VYRA_API_KEY" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model":"vyra-fast","messages":[{"role":"user","content":"Hello"}]}'`;
+    $("dev-snip-py").textContent = `from openai import OpenAI\n\nclient = OpenAI(base_url="${base}", api_key="YOUR_VYRA_KEY")\nr = client.chat.completions.create(\n    model="vyra-fast",\n    messages=[{"role": "user", "content": "Hello"}],\n)\nprint(r.choices[0].message.content)`;
     $("dev-admin").classList.toggle("hidden", !d.isAdmin);
     if (d.isAdmin) {
       const a = await api("/api/admin/dev/topups");
       $("dev-admin-list").innerHTML = a.topups.length ? a.topups.map((t) => `<div class="board-row"><span>${esc(t.username)}: ₦${fmtN(t.amountNgn)} ${esc(t.note)}</span><span><button type="button" class="chip" data-tp="${t.id}" data-act="approve">Approve</button> <button type="button" class="chip" data-tp="${t.id}" data-act="reject">Reject</button></span></div>`).join("") : "No requests waiting.";
     }
-  } catch (e) { $("dev-balance").textContent = e.message; }
+  } catch (e) { $("dev-balance").textContent = "-"; toast(e.message, "error"); }
 }
 document.addEventListener("click", async (ev) => {
-  const t = ev.target.closest("[data-delkey],[data-tp],#dev-key-create,#dev-topup-send,#dev-grant-btn"); if (!t) return;
+  const t = ev.target.closest("[data-delkey],[data-tp],[data-copy],#dev-key-open,#dev-key-copy,#dev-key-create,#dev-topup-send,#dev-grant-btn"); if (!t) return;
   try {
     if (t.dataset.delkey) { if (!confirm("Delete this key? Apps using it will stop working.")) return; await api("/api/dev/keys/" + t.dataset.delkey, { method: "DELETE" }); toast("Key deleted"); loadDev(); }
-    else if (t.id === "dev-key-create") { const d = await post("/api/dev/keys", { name: $("dev-key-name").value }); const box = $("dev-new-key"); box.textContent = d.key + "\n" + d.note; box.classList.remove("hidden"); $("dev-key-name").value = ""; loadDev(); }
+    else if (t.id === "dev-key-open") { $("dev-key-name").value = ""; $("dev-new-key").textContent = ""; $("key-step1").classList.remove("hidden"); $("key-step2").classList.add("hidden"); openModal("key-modal"); $("dev-key-name").focus(); }
+    else if (t.id === "dev-key-create") { setBtn(t, true); try { const d = await post("/api/dev/keys", { name: $("dev-key-name").value }); $("dev-new-key").textContent = d.key; $("key-step1").classList.add("hidden"); $("key-step2").classList.remove("hidden"); loadDev(); } finally { setBtn(t, false); } }
+    else if (t.id === "dev-key-copy") { toast(await copyText($("dev-new-key").textContent) ? "Key copied" : "Copy failed. Select and copy it by hand.", "ok"); }
+    else if (t.dataset.copy) { toast(await copyText($(t.dataset.copy).textContent) ? "Copied" : "Copy failed", "ok"); }
     else if (t.id === "dev-topup-send") { await post("/api/dev/topup", { amountNgn: $("dev-topup-amt").value, note: $("dev-topup-note").value }); toast("Sent. Credit is added after we confirm your payment."); $("dev-topup-amt").value = ""; $("dev-topup-note").value = ""; loadDev(); }
     else if (t.dataset.tp) { await post(`/api/admin/dev/topups/${t.dataset.tp}/${t.dataset.act}`); toast("Done"); loadDev(); }
     else if (t.id === "dev-grant-btn") { await post("/api/admin/dev/grant", { username: $("dev-grant-user").value, amountUsd: $("dev-grant-usd").value }); toast("Credit added"); $("dev-grant-usd").value = ""; loadDev(); }
@@ -342,8 +353,8 @@ document.addEventListener("click", (ev) => { const b = ev.target.closest("[data-
   sc.addEventListener("touchend", end); sc.addEventListener("touchcancel", reset);
 })();
 function showPage(name) {
-  S.page = name; store.set("vyra-page", name); if (name === "settings") loadDev();
-  ["chat", "toolbox", "workspace", "images", "plans", "settings", "admin"].forEach((p) => $(p + "-page").classList.toggle("hidden", p !== name));
+  S.page = name; store.set("vyra-page", name); if (name === "api") loadDev();
+  ["chat", "toolbox", "workspace", "images", "plans", "api", "settings", "admin"].forEach((p) => $(p + "-page").classList.toggle("hidden", p !== name));
   document.querySelectorAll(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.page === name));
   updateHeading(name);
   closeSidebar(); $("notif-panel").classList.add("hidden");
