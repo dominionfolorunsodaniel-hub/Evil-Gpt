@@ -1451,6 +1451,24 @@ API_PRICES = {  # USD per 1 million tokens
     "vyra-fast": {"in": _env_float("API_FAST_IN", 0.35, 0, 1000), "out": _env_float("API_FAST_OUT", 1.40, 0, 1000), "label": "Vyra Fast"},
     "vyra-deep": {"in": _env_float("API_DEEP_IN", 1.20, 0, 1000), "out": _env_float("API_DEEP_OUT", 4.80, 0, 1000), "label": "Vyra Deep"},
 }
+ANALYSIS_WORDS = re.compile(r"\b(analy[sz]e|analy[sz]is|audit|reconcil\w*|insights?|breakdown|trends?|variance|summari[sz]e (this|the|my) (data|file|sheet|report|document)|find (errors|anomal\w+|duplicates))\b", re.I)
+ANALYSIS_PROMPT_OWNER = (
+    "ANALYSIS MODE: use only what the user gave you, name the file, sheet or column you read, quote real figures, never invent numbers or sources, check arithmetic, and say plainly if text was cut off or unreadable. "
+    "If the result is something the user will keep or send (report, cleaned data, spreadsheet, document), deliver it as a downloadable file with a vyrafile block (CSV for Excel, simple markdown for .docx or .pdf) and keep the chat reply short. "
+    "The OWNER INSTRUCTIONS below decide the tone, structure, length and style of the answer; follow them exactly, and where they differ from anything else, they win."
+)
+ANALYSIS_PROMPT = (
+    "ANALYSIS MODE (overrides the playful personality for this reply: stay calm, precise and professional, no jokes or slang, at most one emoji, only if natural). "
+    "Work like a careful analyst. Start with the answer: one or two sentences giving the main finding, then the detail. "
+    "Use only what the user gave you: name the exact file, sheet, column or section you read, quote real figures, and never invent numbers, rows or sources. "
+    "Do arithmetic step by step and double-check totals; if the text was cut off or a part was not readable, say so plainly instead of guessing. "
+    "Then give: Key findings (short bullets, each with its number), a small markdown table when comparing items, anything odd you noticed (duplicates, gaps, mismatches, outliers), "
+    "assumptions and limits in one or two lines, and one clear suggested next step. Keep it as short as the question allows; do not pad. "
+    "If the result is something the user will keep or send (a report, cleaned or summarised data, a spreadsheet, a document), deliver it as a downloadable file with a vyrafile block "
+    "(CSV for Excel, simple markdown for .docx or .pdf), keep the chat reply to a short summary of the findings plus one line saying what the file contains, and do not paste the whole file into the chat. "
+    "If a request is unclear and a wrong guess would waste effort, ask one short question first."
+)
+
 API_KEY_PREFIX = "vy-"  # new keys; keys starting with vyra_ (older format) keep working
 API_KEY_PREFIXES = ("vy-", "vyra_")
 
@@ -2754,6 +2772,8 @@ def ask_stream():
     if eli5: sys_prompt += " " + ELI5_PROMPT
     if u["about_me"]: sys_prompt += f" Here is some context about the person you're talking to, use it only when relevant: {u['about_me']}"
     is_archive = extra.startswith("Files in the archive")
+    is_analysis = (not extra.startswith("Files in the archive")) and bool(extra or ANALYSIS_WORDS.search(question))
+    if is_analysis: sys_prompt += "\n\n" + (ANALYSIS_PROMPT_OWNER if gets_owner_prompt(u) else ANALYSIS_PROMPT)
     if is_archive:
         sys_prompt += ("\n\nARCHIVE TASK: the user attached a zip/tar project. The attached text lists every file and gives the contents of the readable ones (files marked 'not read' were too big, binary or secret). "
                        "Analyze it for real: say what it does, find bugs and risks, and cite file paths. If the user asks you to fix, change, improve or add anything, return the work as downloadable files: one ```vyrafile block per changed or new file, "
@@ -2778,20 +2798,20 @@ def ask_stream():
             while True:
                 try:
                     if model_type == "deep" and not is_archive:  # archive jobs skip the rewrite pass so full file blocks stay intact
-                        draft_resp = chat_create(model=model, messages=messages, temperature=temp, stream=False, max_tokens=2000)
+                        draft_resp = chat_create(model=model, messages=messages, temperature=temp, stream=False, max_tokens=(3500 if is_analysis else 2000))
                         draft = (draft_resp.choices[0].message.content or "").strip()
                         if not draft: raise RuntimeError("The model returned an empty draft.")
                         review_messages = [
                             {"role": "system", "content": sys_prompt + "\n\nYou are now also a rigorous answer reviewer, and your output is the final reply the person sees, so it must keep every instruction above (owner instructions, tone, language, length, file format). Review rule: Check the draft for factual errors, missed constraints, arithmetic or logic mistakes, unsupported certainty, and unclear wording. Rewrite it into the best final answer. Preserve useful detail. Do not mention this review process."},
                             {"role": "user", "content": "Original request:\n" + question + "\n\nDraft answer:\n" + draft}
                         ]
-                        reviewed = chat_create(sampling=False, model=model, messages=review_messages, temperature=min(temp, 0.4), stream=False, max_tokens=2000)
+                        reviewed = chat_create(sampling=False, model=model, messages=review_messages, temperature=min(temp, 0.4), stream=False, max_tokens=(3500 if is_analysis else 2000))
                         final_text = (reviewed.choices[0].message.content or draft).strip()
                         collected.append(final_text); started = True
                         for offset in range(0, len(final_text), 180):
                             yield sse({"t": final_text[offset:offset+180]})
                         break
-                    stream = chat_create(model=model, messages=messages, temperature=temp, stream=True, max_tokens=(6000 if is_archive else 1500))
+                    stream = chat_create(model=model, messages=messages, temperature=temp, stream=True, max_tokens=(6000 if is_archive else (3500 if is_analysis else 1500)))
                     for chunk in stream:
                         if not chunk.choices: continue
                         delta = chunk.choices[0].delta.content or ""

@@ -1,6 +1,17 @@
-Batch 40 - API moved to its own sidebar page
+Batch 40 (+41 below) - API moved to its own sidebar page
 - New sidebar item "API" (key icon): keys table (name, vy-...last4, created, last used, delete), "Create new secret key" modal (name, then full key once + Copy + warning), credit balance, 30-day usage by model, top-up request, cURL/Python quickstart with Copy. Admin credit requests/grant shown at the bottom for admin.
 - Developer API card removed from Settings.
 - New keys start with vy-. Old vyra_sk_ keys still work (shown as vyra_sk_...).
 - DB: one additive column evil_api_keys.key_last4 (auto-created at start).
 Files: app.py, templates/index.html, templates/_icons.html, static/script.js, static/style.css, static/sw.js
+
+Batch 41 - analysis answers in Claude's style
+- When a file/data is attached (or the message asks to analyse, audit, reconcile, find duplicates, etc.) the AI switches to ANALYSIS MODE: calm and professional, answer first, exact figures and file/column names, no invented numbers, says when text was cut off, key findings + table + oddities + limits + one next step.
+- Results meant to be kept (reports, cleaned data, spreadsheets, documents) come back as downloadable file cards, with a short summary in chat instead of pasted contents.
+- Analysis replies get more output room (3500 tokens instead of 1500/2000) so files are not cut short.
+- Fix: API page code-block styles were colliding with chat code blocks (renamed to api-code).
+Files: app.py, static/style.css, templates/index.html
+
+Batch 42 - owner prompt rules analysis too
+- For admin, trial and Business+ (anyone who gets OWNER_PROMPT) analysis mode keeps only the accuracy and file rules; tone, structure and length come from your owner prompt, which wins. Other plans keep the standard analysis style.
+Files: app.py
